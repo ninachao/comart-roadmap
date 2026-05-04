@@ -1,0 +1,2908 @@
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { Search, Plus, X, Edit2, Trash2, Download, Upload, ChevronDown, ChevronRight, Image as ImageIcon, Calendar, Tag, AlertCircle, Filter, MessageSquare, Info, LogOut, Lock, Eye, EyeOff } from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+
+// === Firebase 設定 ===
+const firebaseConfig = {
+  apiKey: "AIzaSyBC9Iq-HL3w7yklHQHhuS8u1eFh861eKJg",
+  authDomain: "comart-roadmap.firebaseapp.com",
+  projectId: "comart-roadmap",
+  storageBucket: "comart-roadmap.firebasestorage.app",
+  messagingSenderId: "104108613534",
+  appId: "1:104108613534:web:314f16d77bed32906e808f"
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+const PROJECTS_COL = 'roadmap_projects';
+
+// === 簡易密碼設定 ===
+// 之後可改成從 Firestore users collection 讀取
+const USERS = {
+  'nina': { password: 'nina2026', role: 'admin', name: 'Nina' },
+  'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
+};
+
+const APP_VERSION = 'v0.9.0';
+
+const VERSION_HISTORY = [
+  {
+    version: 'v0.9.0',
+    date: '2026-05-04',
+    changes: [
+      '624067094f7f7528800590fd53ef770b5230516890e851675bb9Ff08542b624b677f30016a2151778a0255ae300150f9683cFf09',
+      '6aa28996800553ea662f300c4e0d80fd4fee6539300dFf0c4ecd53ef770b516890e88cc78a0a',
+    ],
+  },
+  {
+    version: 'v0.8.0',
+    date: '2026-05-04',
+    changes: [
+      '🎉 重大升級：接上 Firebase 雲端資料庫',
+      '所有裝置即時同步（手機、電腦、家裡公司都看到最新資料）',
+      '新增登入機制（admin / viewer 兩種權限）',
+      '檢視者看不到價格、供應商、訂單編號等敏感資訊',
+      '保留 JSON 匯出 / 匯入作為備份',
+      '架構與 COMART 報價系統一致（Firebase + GitHub Pages）',
+    ],
+  },
+  {
+    version: 'v0.7.0',
+    date: '2026-05-04',
+    changes: [
+      '🎉 重大升級：資料自動保存到瀏覽器',
+      '關閉視窗後重新打開，所有資料都還在',
+      'Header 加入「已保存」即時狀態指示燈',
+      '不再需要每次手動匯入 JSON',
+      '建議仍每週匯出 JSON 備份一次',
+    ],
+  },
+  {
+    version: 'v0.6.0',
+    date: '2026-05-04',
+    changes: [
+      'COMART logo 尺寸縮小（更精緻的 header）',
+      '新增資料持久化說明文件',
+    ],
+  },
+  {
+    version: 'v0.5.0',
+    date: '2026-05-04',
+    changes: [
+      '新增 COMART 公司 logo 與版本號顯示',
+      '導入 EVT/DVT/PVT/MP 業界標準階段',
+      '「目前階段」改為顯示流程節點而非訂單數量',
+      '系統自動判斷階段，可手動覆蓋',
+      '新增版本歷史檢視功能',
+    ],
+  },
+  {
+    version: 'v0.4.0',
+    date: '2026-05-04',
+    changes: [
+      '重大升級：完整生命週期管理',
+      '新增設計圖紙版本控制（ID/3D/BOM）',
+      '新增手板訂單系統（單號、料號、價格、存放位置、評價）',
+      '新增模具訂單系統',
+      '新增 T1~T4 試模紀錄',
+      '新增料號申請狀態追蹤',
+      'DFM 改為可選項目',
+    ],
+  },
+  {
+    version: 'v0.3.0',
+    date: '2026-05-04',
+    changes: [
+      '新增產品圖片功能（可上傳多張、設定主圖）',
+      '列表卡片左側顯示產品縮圖',
+      '移除預設展覽用樣標籤',
+    ],
+  },
+  {
+    version: 'v0.2.0',
+    date: '2026-05-04',
+    changes: [
+      '依週會工作流簡化為單視圖',
+      '新增進度時間軸（每筆紀錄帶日期）',
+      '最新更新明顯顯示，舊紀錄可摺疊',
+      '更新可附圖片',
+      '新增自定義標籤系統',
+    ],
+  },
+  {
+    version: 'v0.1.0',
+    date: '2026-05-04',
+    changes: [
+      '初始版本',
+      '三視圖架構（總覽 / 看板 / 列表）',
+      '基本 CRUD 與 Excel 匯入匯出',
+    ],
+  },
+];
+
+const COMART_LOGO_BASE64 = 'data:image/png;base64,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';
+
+const PHASE_DEFINITIONS = [
+  { key: '規劃', label: '規劃', subtitle: '設計階段', desc: '尚未開始手板，仍在 ID/3D/BOM 設計' },
+  { key: 'EVT', label: 'EVT', subtitle: '工程驗證 / 手板', desc: '透過手板驗證設計可行性' },
+  { key: 'DVT', label: 'DVT', subtitle: '設計驗證 / T1-T2', desc: '模具開出來試模，確認設計' },
+  { key: 'PVT', label: 'PVT', subtitle: '量產驗證 / T3-T4', desc: '量產前最終驗證' },
+  { key: 'MP', label: 'MP', subtitle: '量產', desc: '料號已申請，正式量產' },
+];
+
+const PHASE_COLORS = {
+  '規劃': { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300', dot: 'bg-slate-400' },
+  'EVT': { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-300', dot: 'bg-amber-500' },
+  'DVT': { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-300', dot: 'bg-blue-500' },
+  'PVT': { bg: 'bg-violet-100', text: 'text-violet-700', border: 'border-violet-300', dot: 'bg-violet-500' },
+  'MP': { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-300', dot: 'bg-emerald-500' },
+};
+
+
+const STATUS_OPTIONS = ['進行中', '暫停', '完成', '取消', '待開案'];
+const STATUS_COLORS = {
+  '進行中': 'bg-blue-100 text-blue-800 border-blue-300',
+  '暫停': 'bg-amber-100 text-amber-800 border-amber-300',
+  '完成': 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  '取消': 'bg-rose-100 text-rose-800 border-rose-300',
+  '待開案': 'bg-slate-100 text-slate-700 border-slate-300',
+};
+const STATUS_DOTS = {
+  '進行中': 'bg-blue-500',
+  '暫停': 'bg-amber-500',
+  '完成': 'bg-emerald-500',
+  '取消': 'bg-rose-500',
+  '待開案': 'bg-slate-400',
+};
+
+const LIFECYCLE_PHASES = ['設計', 'DFM', '手板', '模具', '試模', '料號'];
+
+const TRIAL_ROUNDS = ['T1', 'T2', 'T3', 'T4'];
+
+const ORDER_STATUS = ['已下單', '生產中', '已收到', '已取消'];
+const ORDER_STATUS_COLORS = {
+  '已下單': 'bg-blue-100 text-blue-700 border-blue-200',
+  '生產中': 'bg-amber-100 text-amber-700 border-amber-200',
+  '已收到': 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  '已取消': 'bg-slate-100 text-slate-600 border-slate-200',
+};
+
+const STAGES = [];  // legacy, kept for backward compat with old data imports
+
+
+const SEED_DATA = [
+  {
+    id: 1,
+    name: '可折疊連結桿 Big screen bracket',
+    code: 'CMMS0005',
+    status: '進行中',
+    supplier: '恆群',
+    idDesigner: '素亦',
+    threeDDesigner: '恆群',
+    openDate: '2025-12-23',
+    category: 'MagSafe 系列',
+    productImages: [],
+    tags: [],
+    designs: {
+      ID: [
+        { version: 'V2', date: '2026-04-26', notes: '磁鐵頭要去掉平台，兩邊維持雙面使用', images: [] },
+        { version: 'V1', date: '2026-02-24', notes: '初版設計：可正反使用、裝飾蓋遮擋孔洞', images: [] },
+      ],
+      '3D': [
+        { version: 'V2', date: '2026-03-11', notes: '硅膠裝飾蓋改塑膠（先開一套模）', images: [] },
+        { version: 'V1', date: '2026-02-02', notes: '初版 3D，固定頭可拆卸換面', images: [] },
+      ],
+      BOM: [
+        { version: 'V1', date: '2026-03-15', notes: '主結構塑膠 + 磁鐵 N52 ×4', images: [] },
+      ],
+    },
+    hasDFM: false,
+    dfmNotes: '',
+    prototypeOrders: [
+      {
+        id: 'p1', orderNo: 'PT-CMMS0005-01', partNo: 'CMMS0005-PT-V1',
+        supplier: '恆群', quantity: 6, unitPrice: 1200, currency: 'TWD',
+        orderDate: '2026-03-20', status: '已收到', storageLocation: '辦公室樣品櫃 A-3',
+        review: 'V1 共 6 套：MagSafe 轉 MagSafe×2、17mm 轉強磁×2、3M 轉 MagSafe×1、強磁轉 MagSafe×1。整體 OK，磁吸力足夠',
+      },
+    ],
+    mouldOrders: [],
+    trialRuns: [],
+    materialCodeStatus: '未申請',
+    trialNotes: '',
+    updates: [
+      { date: '2026-04-26', text: '按照最新圖面安排手板，磁鐵頭要去掉平台，兩邊維持雙面使用', images: [] },
+      { date: '2026-03-11', text: '硅膠裝飾蓋改塑膠（現階段先開一套模）', images: [] },
+      { date: '2026-02-24', text: '優化外觀：比例要可正反使用、裝飾蓋遮擋孔洞', images: [] },
+    ],
+    notes: 'V1 手板共 6 套已完成，效果良好',
+  },
+  {
+    id: 2,
+    name: 'MagSafe 磁吸式健身器材握把支架',
+    code: 'CMMS0012',
+    status: '進行中',
+    supplier: '恆群',
+    idDesigner: '素亦',
+    threeDDesigner: '恆群',
+    openDate: '2025-12-19',
+    category: 'Gym 系列',
+    productImages: [],
+    tags: ['#高優先', '#通路要'],
+    designs: {
+      ID: [
+        { version: 'V1', date: '2026-01-10', notes: '初版：MagSafe + 17mm 球頭通用設計', images: [] },
+      ],
+      '3D': [
+        { version: 'V2', date: '2026-03-19', notes: '吸力修正：增加磁鐵數量到 5 顆 N52', images: [] },
+        { version: 'V1', date: '2026-02-15', notes: '初版 3D', images: [] },
+      ],
+      BOM: [
+        { version: 'V1', date: '2026-02-20', notes: '5 顆強力 N52 磁鐵 + 17mm 球頭', images: [] },
+      ],
+    },
+    hasDFM: false,
+    dfmNotes: '',
+    prototypeOrders: [
+      {
+        id: 'p1', orderNo: 'PT-CMMS0012-01', partNo: 'CMMS0012-PT-V1',
+        supplier: '恆群', quantity: 3, unitPrice: 800, currency: 'TWD',
+        orderDate: '2026-02-25', status: '已收到', storageLocation: '辦公室樣品櫃 A-5',
+        review: 'V1 樣品 - 吸力不夠，需調整磁鐵配置',
+      },
+      {
+        id: 'p2', orderNo: 'PT-CMMS0012-02', partNo: 'CMMS0012-PT-V2',
+        supplier: '恆群', quantity: 5, unitPrice: 950, currency: 'TWD',
+        orderDate: '2026-03-15', status: '已收到', storageLocation: '辦公室樣品櫃 A-5',
+        review: 'V2 樣品 OK，吸力符合需求。第一批先跟越南購買 1K 球頭',
+      },
+    ],
+    mouldOrders: [],
+    trialRuns: [],
+    materialCodeStatus: '未申請',
+    trialNotes: '',
+    updates: [
+      { date: '2026-04-30', text: '球頭用標準 17mm，第一批先跟越南購買 1K 球頭，之後可能要從恆群直接開', images: [] },
+      { date: '2026-03-19', text: 'V2 樣品 OK', images: [] },
+    ],
+    notes: '採用 5 顆強力 N52 磁鐵，相容 MagSafe 磁吸功能',
+  },
+  {
+    id: 3,
+    name: '平板夾具-IDA HDUTG',
+    code: 'CMBH0002',
+    status: '進行中',
+    supplier: '恆群',
+    idDesigner: '素亦',
+    threeDDesigner: '恆群',
+    openDate: '2025-08-12',
+    category: 'HD 系列',
+    productImages: [],
+    tags: ['#高優先'],
+    designs: {
+      ID: [
+        { version: 'V1', date: '2025-09-05', notes: 'SS 發起的自我開發，香港展用', images: [] },
+      ],
+      '3D': [
+        { version: 'V2', date: '2026-01-20', notes: '優化夾具結構', images: [] },
+        { version: 'V1', date: '2025-10-15', notes: '初版 3D', images: [] },
+      ],
+      BOM: [
+        { version: 'V1', date: '2025-11-10', notes: '完整 BOM', images: [] },
+      ],
+    },
+    hasDFM: true,
+    dfmNotes: 'DFM 已給 Chris，T1 預計 3/26',
+    prototypeOrders: [
+      {
+        id: 'p1', orderNo: 'PT-CMBH0002-01', partNo: 'CMBH0002-PT-V1',
+        supplier: '恆群', quantity: 2, unitPrice: 1500, currency: 'TWD',
+        orderDate: '2025-11-25', status: '已收到', storageLocation: '辦公室樣品櫃 B-2',
+        review: 'V1 手板 OK',
+      },
+      {
+        id: 'p2', orderNo: 'PT-CMBH0002-02', partNo: 'CMBH0002-PT-V2',
+        supplier: '恆群', quantity: 5, unitPrice: 1500, currency: 'TWD',
+        orderDate: '2026-01-15', status: '已收到', storageLocation: '已寄客戶 (FedEx #888539381808)',
+        review: 'V2 手板已寄客人確認',
+      },
+    ],
+    mouldOrders: [
+      {
+        id: 'm1', orderNo: 'MD-CMBH0002-01', partNo: 'CMBH0002-MD-01',
+        supplier: '恆群', quantity: 1, unitPrice: 280000, currency: 'TWD',
+        orderDate: '2026-02-10', status: '生產中',
+        notes: '主結構模具',
+      },
+    ],
+    trialRuns: [
+      { round: 'T1', date: '2026-03-26', issues: '預計 3/26 試模，等待結果' },
+    ],
+    materialCodeStatus: '未申請',
+    trialNotes: '',
+    updates: [
+      { date: '2026-03-26', text: 'DFM/3D/DFA 已給 Chris，T1 預計 3/26', images: [] },
+      { date: '2026-02-06', text: '手板 V2 已寄給客人 (FedEx #888539381808)', images: [] },
+    ],
+    notes: 'SS 發起的自我開發，香港展 LOGO 部分要帶平整的樣品',
+  },
+  {
+    id: 4,
+    name: 'Qi2.2 磁鐵頭 (球窩版)',
+    code: 'CMBH0001',
+    status: '進行中',
+    supplier: '素亦',
+    idDesigner: '素亦',
+    threeDDesigner: '素亦',
+    openDate: '2025-08-19',
+    category: 'Qi 充電系列',
+    productImages: [],
+    tags: ['#高優先', '#認證中'],
+    designs: {
+      ID: [
+        { version: 'V1', date: '2025-09-10', notes: '初版設計', images: [] },
+      ],
+      '3D': [
+        { version: 'V1', date: '2025-10-05', notes: '初版 3D', images: [] },
+      ],
+      BOM: [
+        { version: 'V2', date: '2025-12-20', notes: '修正後 BOM', images: [] },
+        { version: 'V1', date: '2025-11-15', notes: '初版 BOM', images: [] },
+      ],
+    },
+    hasDFM: true,
+    dfmNotes: 'DFM 已完成',
+    prototypeOrders: [
+      {
+        id: 'p1', orderNo: 'PT-CMBH0001-01', partNo: 'CMBH0001-PT-V1',
+        supplier: '素亦', quantity: 5, unitPrice: 600, currency: 'TWD',
+        orderDate: '2025-12-01', status: '已收到', storageLocation: '辦公室樣品櫃 C-1',
+        review: '手板 OK',
+      },
+    ],
+    mouldOrders: [
+      {
+        id: 'm1', orderNo: 'MD-CMBH0001-01', partNo: 'CMBH0001-MD-01',
+        supplier: '素亦', quantity: 1, unitPrice: 350000, currency: 'TWD',
+        orderDate: '2026-01-05', status: '已收到',
+        notes: '模具已開好',
+      },
+    ],
+    trialRuns: [
+      { round: 'T1', date: '2026-01-20', issues: 'EMC 沒過，需修正' },
+      { round: 'T2', date: '2026-02-15', issues: '修正後通過 EMC，但細節需調整' },
+    ],
+    materialCodeStatus: '申請中',
+    trialNotes: '台灣做 BSMI 認證中',
+    updates: [
+      { date: '2026-03-17', text: '測試都完成了，阿杏驗證報告下周遞文件，兩周後證書下來', images: [] },
+      { date: '2026-03-03', text: '樣品寄回台做認證 要一個月', images: [] },
+    ],
+    notes: '台灣做 BSMI 認證中，模具已開好',
+  },
+  {
+    id: 5,
+    name: '螢幕後摺疊支架 (塑膠)',
+    code: 'CMMS0018',
+    status: '進行中',
+    supplier: '恆群',
+    idDesigner: '素亦',
+    threeDDesigner: '恆群',
+    openDate: '2025-09-16',
+    category: 'MagSafe 系列',
+    productImages: [],
+    tags: ['#專利評估中'],
+    designs: {
+      ID: [
+        { version: 'V2', date: '2026-02-24', notes: '大型手機直立時不能卡到', images: [] },
+        { version: 'V1', date: '2025-10-20', notes: '初版設計', images: [] },
+      ],
+      '3D': [
+        { version: 'V2', date: '2026-02-24', notes: '驗證彎折機構平整度問題', images: [] },
+        { version: 'V1', date: '2025-11-30', notes: '初版 3D', images: [] },
+      ],
+      BOM: [],
+    },
+    hasDFM: false,
+    dfmNotes: '',
+    prototypeOrders: [],
+    mouldOrders: [],
+    trialRuns: [],
+    materialCodeStatus: '未申請',
+    trialNotes: '',
+    updates: [
+      { date: '2026-03-23', text: '要評估專利，展覽要有 3 套樣品', images: [] },
+      { date: '2026-02-24', text: '大型手機直立時不能卡到，驗證彎折機構平整度問題，更新 3D', images: [] },
+    ],
+    notes: '一邊 MagSafe，一邊也可以是凝膠/奈米膠。要做一個可替換的 MAGSAFE 頭進去',
+  },
+  {
+    id: 6,
+    name: '通用手機夾具',
+    code: 'CMBH0008',
+    status: '進行中',
+    supplier: '恆群',
+    idDesigner: '恆群',
+    threeDDesigner: '恆群',
+    openDate: '2025-12-30',
+    category: '車用系列',
+    productImages: [],
+    tags: [],
+    designs: {
+      ID: [
+        { version: 'V1', date: '2026-01-20', notes: '初版設計：左右夾臂手動調整', images: [] },
+      ],
+      '3D': [],
+      BOM: [],
+    },
+    hasDFM: false,
+    dfmNotes: '',
+    prototypeOrders: [],
+    mouldOrders: [],
+    trialRuns: [],
+    materialCodeStatus: '未申請',
+    trialNotes: '',
+    updates: [
+      { date: '2026-03-11', text: '排隊出 3D', images: [] },
+      { date: '2026-02-02', text: '左右夾臂手動調整在用工具固定（用螺絲固定），背後減震要是獨立模組', images: [] },
+    ],
+    notes: '放在機車上，要再詳細定義產品',
+  },
+  {
+    id: 7,
+    name: '雙 MagSafe 磁吸支架',
+    code: '7PP6MT0069',
+    status: '完成',
+    supplier: '素亦',
+    idDesigner: '素亦',
+    threeDDesigner: '素亦',
+    openDate: '2024-08-09',
+    category: 'MagSafe 系列',
+    productImages: [],
+    tags: ['#待開模', '#已推廣'],
+    designs: {
+      ID: [{ version: 'V1', date: '2024-09-01', notes: '完整設計', images: [] }],
+      '3D': [{ version: 'V1', date: '2024-10-01', notes: '完整 3D', images: [] }],
+      BOM: [{ version: 'V1', date: '2024-10-15', notes: '完整 BOM', images: [] }],
+    },
+    hasDFM: true,
+    dfmNotes: '',
+    prototypeOrders: [
+      {
+        id: 'p1', orderNo: 'PT-MS0069-01', partNo: 'MS0069-PT-V1',
+        supplier: '素亦', quantity: 10, unitPrice: 500, currency: 'TWD',
+        orderDate: '2024-10-20', status: '已收到', storageLocation: '辦公室樣品櫃 A-1',
+        review: '量產前最終樣品確認 OK',
+      },
+    ],
+    mouldOrders: [
+      {
+        id: 'm1', orderNo: 'MD-MS0069-01', partNo: 'MS0069-MD-01',
+        supplier: '素亦', quantity: 1, unitPrice: 250000, currency: 'TWD',
+        orderDate: '2024-11-01', status: '已收到',
+        notes: '主模具',
+      },
+    ],
+    trialRuns: [
+      { round: 'T1', date: '2024-11-20', issues: '小調整' },
+      { round: 'T2', date: '2024-12-05', issues: '無問題' },
+    ],
+    materialCodeStatus: '已申請',
+    trialNotes: '',
+    updates: [
+      { date: '2024-12-13', text: '素亦出貨，開始推廣', images: [] },
+    ],
+    notes: '完成但等客戶需求再開新批次模具',
+  },
+  {
+    id: 8,
+    name: '頸繩手袋磁吸扣',
+    code: '',
+    status: '暫停',
+    supplier: '恆群',
+    idDesigner: '恆群',
+    threeDDesigner: '恆群',
+    openDate: '2025-12-22',
+    category: '配件系列',
+    productImages: [],
+    tags: [],
+    designs: {
+      ID: [{ version: 'V1', date: '2026-01-15', notes: '塑膠版方案', images: [] }],
+      '3D': [{ version: 'V1', date: '2026-02-01', notes: '左右按鈕做大一點', images: [] }],
+      BOM: [],
+    },
+    hasDFM: false,
+    dfmNotes: '',
+    prototypeOrders: [],
+    mouldOrders: [],
+    trialRuns: [],
+    materialCodeStatus: '未申請',
+    trialNotes: '',
+    updates: [
+      { date: '2026-03-11', text: '暫停', images: [] },
+      { date: '2026-02-02', text: '做便宜塑膠版方案，預計 2/10 提供圖面', images: [] },
+    ],
+    notes: '福威買競品，待越南',
+  },
+];
+
+export default function ProductRoadmap() {
+  // === 登入狀態（用 sessionStorage 保存，關閉瀏覽器就要重登）===
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('comart_roadmap_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) { return null; }
+  });
+
+  const [projects, setProjects] = useState([]);
+  const [saveStatus, setSaveStatus] = useState('idle');
+  const [isLoading, setIsLoading] = useState(true);
+
+  // === Firestore 即時同步 ===
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const colRef = collection(db, PROJECTS_COL);
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snapshot) => {
+        const docs = snapshot.docs.map(d => ({ ...d.data(), _docId: d.id }));
+        // 過濾掉舊的測試文件（沒有 id 欄位的）
+        const valid = docs.filter(d => d.id !== undefined && d.id !== null);
+        valid.sort((a, b) => (a.id || 0) - (b.id || 0));
+
+        // 第一次載入：如果雲端是空的，自動把 SEED_DATA 寫入
+        if (valid.length === 0 && currentUser.role === 'admin') {
+          SEED_DATA.forEach(p => {
+            setDoc(doc(db, PROJECTS_COL, String(p.id)), p);
+          });
+          // SEED_DATA 寫入後 onSnapshot 會自動再觸發
+        } else {
+          setProjects(valid);
+        }
+        setIsLoading(false);
+      },
+      (error) => {
+        console.error('Firestore 同步錯誤:', error);
+        setIsLoading(false);
+        alert('連線雲端資料庫失敗：' + error.message);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [currentUser]);
+
+  // 寫入單一 project 到 Firestore
+  const saveProjectToCloud = async (project) => {
+    setSaveStatus('saving');
+    try {
+      await setDoc(doc(db, PROJECTS_COL, String(project.id)), project);
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 1500);
+    } catch (e) {
+      console.error('雲端儲存失敗:', e);
+      setSaveStatus('idle');
+      alert('雲端儲存失敗：' + e.message);
+    }
+  };
+
+  // 從 Firestore 刪除
+  const deleteProjectFromCloud = async (projectId, docId) => {
+    try {
+      // 用 docId 刪（如果有），否則用 id 字串
+      await deleteDoc(doc(db, PROJECTS_COL, docId || String(projectId)));
+    } catch (e) {
+      console.error('雲端刪除失敗:', e);
+      alert('雲端刪除失敗：' + e.message);
+    }
+  };
+
+  const handleLogin = (user) => {
+    setCurrentUser(user);
+    try {
+      sessionStorage.setItem('comart_roadmap_user', JSON.stringify(user));
+    } catch (e) {}
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    try {
+      sessionStorage.removeItem('comart_roadmap_user');
+    } catch (e) {}
+  };
+
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('進行中');
+  const [tagFilter, setTagFilter] = useState('全部');
+  const [selectedProject, setSelectedProject] = useState(null);
+  const [showNewModal, setShowNewModal] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+
+  // 登入前畫面（移到所有 hook 之後才能 return）
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
+  const isAdmin = currentUser.role === 'admin';
+  const isViewer = currentUser.role === 'viewer';
+  const fileInputRef = useRef(null);
+
+  const allTags = useMemo(() => {
+    const set = new Set();
+    projects.forEach(p => (p.tags || []).forEach(t => set.add(t)));
+    return Array.from(set).sort();
+  }, [projects]);
+
+  const filteredProjects = useMemo(() => {
+    return projects.filter(p => {
+      const matchSearch = !searchTerm ||
+        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (p.code || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (p.supplier || '').toLowerCase().includes(searchTerm.toLowerCase());
+      const matchStatus = statusFilter === '全部' || p.status === statusFilter;
+      const matchTag = tagFilter === '全部' || (p.tags || []).includes(tagFilter);
+      return matchSearch && matchStatus && matchTag;
+    });
+  }, [projects, searchTerm, statusFilter, tagFilter]);
+
+  const counts = useMemo(() => {
+    const c = { 全部: projects.length };
+    STATUS_OPTIONS.forEach(s => { c[s] = projects.filter(p => p.status === s).length; });
+    return c;
+  }, [projects]);
+
+  const handleSaveProject = (project) => {
+    if (!isAdmin) return; // viewer 不能寫
+    let toSave = project;
+    if (!project.id) {
+      const newId = Math.max(0, ...projects.map(p => p.id || 0)) + 1;
+      toSave = { ...project, id: newId };
+    }
+    saveProjectToCloud(toSave);
+    setShowNewModal(false);
+  };
+
+  const handleAddUpdate = (projectId, update) => {
+    if (!isAdmin) return;
+    const target = projects.find(p => p.id === projectId);
+    if (!target) return;
+    const updated = { ...target, updates: [update, ...(target.updates || [])] };
+    saveProjectToCloud(updated);
+    setSelectedProject(prev => prev && prev.id === projectId ? updated : prev);
+  };
+
+  const handleEditUpdate = (projectId, idx, newUpdate) => {
+    if (!isAdmin) return;
+    const target = projects.find(p => p.id === projectId);
+    if (!target) return;
+    const updates = [...(target.updates || [])];
+    updates[idx] = newUpdate;
+    const updated = { ...target, updates };
+    saveProjectToCloud(updated);
+    setSelectedProject(prev => prev && prev.id === projectId ? updated : prev);
+  };
+
+  const handleDeleteUpdate = (projectId, idx) => {
+    if (!isAdmin) return;
+    const target = projects.find(p => p.id === projectId);
+    if (!target) return;
+    const updates = (target.updates || []).filter((_, i) => i !== idx);
+    const updated = { ...target, updates };
+    saveProjectToCloud(updated);
+    setSelectedProject(prev => prev && prev.id === projectId ? updated : prev);
+  };
+
+  const handleUpdateProjectField = (projectId, field, value) => {
+    if (!isAdmin) return;
+    const target = projects.find(p => p.id === projectId);
+    if (!target) return;
+    const updated = { ...target, [field]: value };
+    saveProjectToCloud(updated);
+    setSelectedProject(prev => prev && prev.id === projectId ? updated : prev);
+  };
+
+  const handleToggleStage = (projectId, stage) => {
+    if (!isAdmin) return;
+    const target = projects.find(p => p.id === projectId);
+    if (!target) return;
+    const updated = { ...target, stages: { ...target.stages, [stage]: !target.stages?.[stage] } };
+    saveProjectToCloud(updated);
+    setSelectedProject(prev => prev && prev.id === projectId ? updated : prev);
+  };
+
+  const handleDelete = (id) => {
+    if (!isAdmin) return;
+    const target = projects.find(p => p.id === id);
+    deleteProjectFromCloud(id, target?._docId);
+    setConfirmDelete(null);
+    if (selectedProject?.id === id) setSelectedProject(null);
+  };
+
+  const exportJSON = () => {
+    const dataStr = JSON.stringify(projects, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `產品進度_${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportCSV = () => {
+    const headers = ['品名', '料號', '狀態', '供應商', 'ID設計', '3D設計', '開案日', '類別', '標籤', 'ID版本', '3D版本', 'BOM版本', 'DFM', '手板訂單數', '手板總額', '模具訂單數', '模具總額', '試模進度', '料號狀態', '最新進度日期', '最新進度', '備註'];
+    const rows = projects.map(p => {
+      const latest = p.updates?.[0];
+      const idLatest = p.designs?.ID?.[0]?.version || '';
+      const threeDLatest = p.designs?.['3D']?.[0]?.version || '';
+      const bomLatest = p.designs?.BOM?.[0]?.version || '';
+      const protoCount = (p.prototypeOrders || []).length;
+      const protoTotal = (p.prototypeOrders || []).reduce((s, o) => s + (Number(o.quantity || 0) * Number(o.unitPrice || 0)), 0);
+      const mouldCount = (p.mouldOrders || []).length;
+      const mouldTotal = (p.mouldOrders || []).reduce((s, o) => s + (Number(o.quantity || 0) * Number(o.unitPrice || 0)), 0);
+      const trialLatest = (p.trialRuns || []).length > 0 ? p.trialRuns[p.trialRuns.length - 1].round : '';
+      return [
+        p.name, p.code, p.status, p.supplier, p.idDesigner, p.threeDDesigner,
+        p.openDate, p.category, (p.tags || []).join(' '),
+        idLatest, threeDLatest, bomLatest,
+        p.hasDFM ? '有' : '無',
+        protoCount, protoTotal, mouldCount, mouldTotal,
+        trialLatest, p.materialCodeStatus || '未申請',
+        latest?.date || '', latest?.text || '', p.notes
+      ].map(v => `"${(v || v === 0 ? v : '').toString().replace(/"/g, '""')}"`).join(',');
+    });
+    const csv = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `產品進度_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (Array.isArray(data)) {
+          if (!isAdmin) {
+            alert('只有管理員可以匯入資料');
+            return;
+          }
+          if (!confirm(`即將匯入 ${data.length} 筆專案到雲端，會覆蓋現有資料。確定？`)) return;
+          // 批次寫入 Firestore
+          data.forEach(p => {
+            if (p.id !== undefined && p.id !== null) {
+              setDoc(doc(db, PROJECTS_COL, String(p.id)), p);
+            }
+          });
+          alert(`已匯入 ${data.length} 筆專案到雲端`);
+        }
+      } catch (err) {
+        alert('匯入失敗：檔案格式錯誤');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 antialiased">
+      <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <img
+              src={COMART_LOGO_BASE64}
+              alt="COMART"
+              className="h-5 sm:h-6 w-auto flex-shrink-0"
+            />
+            <div className="min-w-0 border-l border-slate-200 pl-3 hidden sm:block">
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-sm font-medium truncate">產品進度管理</h1>
+                <button
+                  onClick={() => setShowVersionHistory(true)}
+                  title="版本歷史"
+                  className="text-[10px] text-slate-400 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 rounded font-mono transition"
+                >
+                  {APP_VERSION}
+                </button>
+              </div>
+              <p className="text-xs text-slate-500">怡業股份有限公司 · Roadmap</p>
+            </div>
+            <button
+              onClick={() => setShowVersionHistory(true)}
+              className="sm:hidden text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded font-mono"
+            >
+              {APP_VERSION}
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <SaveStatusIndicator status={saveStatus} />
+            <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-600 bg-slate-50 border border-slate-200 px-2 py-1 rounded">
+              <span>{currentUser.name}</span>
+              <span className={`text-[9px] px-1 rounded font-medium ${isAdmin ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'}`}>
+                {isAdmin ? '管理員' : '檢視'}
+              </span>
+            </div>
+            <button onClick={handleLogout} title="登出" className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
+              <LogOut className="w-4 h-4" />
+            </button>
+            <input ref={fileInputRef} type="file" accept=".json" onChange={handleImport} className="hidden" />
+            <button onClick={() => fileInputRef.current?.click()} title="匯入 JSON" className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
+              <Upload className="w-4 h-4" />
+            </button>
+            <div className="relative group">
+              <button title="匯出" className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
+                <Download className="w-4 h-4" />
+              </button>
+              <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg w-32 hidden group-hover:block z-20">
+                <button onClick={exportCSV} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 rounded-t-lg">CSV (Excel)</button>
+                <button onClick={exportJSON} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 rounded-b-lg">JSON (備份)</button>
+              </div>
+            </div>
+            {isAdmin && (
+              <button
+                onClick={() => setShowNewModal(true)}
+                className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-sm hover:bg-slate-800"
+              >
+                <Plus className="w-4 h-4" />
+                <span className="hidden sm:inline">新增</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-6xl mx-auto px-4 py-4">
+        {isLoading && (
+          <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
+            <p className="text-slate-400 text-sm">載入雲端資料中...</p>
+          </div>
+        )}
+        {!isLoading && (
+        <>
+        <div className="bg-white rounded-xl border border-slate-200 p-3 mb-4">
+          <div className="flex flex-col sm:flex-row gap-2 mb-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="搜尋品名、料號、供應商..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+              />
+            </div>
+            {allTags.length > 0 && (
+              <select
+                value={tagFilter}
+                onChange={(e) => setTagFilter(e.target.value)}
+                className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+              >
+                <option value="全部">全部標籤</option>
+                {allTags.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            )}
+          </div>
+
+          <div className="flex gap-1 overflow-x-auto pb-1">
+            {['全部', ...STATUS_OPTIONS].map(s => {
+              const active = statusFilter === s;
+              return (
+                <button
+                  key={s}
+                  onClick={() => setStatusFilter(s)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg whitespace-nowrap transition ${
+                    active
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {s !== '全部' && <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOTS[s]} ${active ? 'opacity-90' : ''}`}></span>}
+                  <span>{s}</span>
+                  <span className={`text-xs ${active ? 'text-white/70' : 'text-slate-400'}`}>{counts[s] || 0}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {filteredProjects.length === 0 ? (
+          <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
+            <p className="text-slate-400 text-sm">沒有符合條件的專案</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filteredProjects.map(p => (
+              <ProjectRow
+                key={p.id}
+                project={p}
+                onClick={() => setSelectedProject(p)}
+              />
+            ))}
+          </div>
+        )}
+        </>
+        )}
+      </main>
+
+      {selectedProject && (
+        <ProjectDetail
+          project={selectedProject}
+          allTags={allTags}
+          isViewer={isViewer}
+          onClose={() => setSelectedProject(null)}
+          onAddUpdate={(u) => handleAddUpdate(selectedProject.id, u)}
+          onEditUpdate={(idx, u) => handleEditUpdate(selectedProject.id, idx, u)}
+          onDeleteUpdate={(idx) => handleDeleteUpdate(selectedProject.id, idx)}
+          onUpdateField={(field, value) => handleUpdateProjectField(selectedProject.id, field, value)}
+          onToggleStage={(stage) => handleToggleStage(selectedProject.id, stage)}
+          onDelete={() => setConfirmDelete(selectedProject.id)}
+        />
+      )}
+
+      {showNewModal && (
+        <NewProjectModal
+          onSave={handleSaveProject}
+          onClose={() => setShowNewModal(false)}
+        />
+      )}
+
+      {confirmDelete !== null && (
+        <ConfirmDialog
+          message="確定要刪除此專案嗎？所有更新紀錄都會一併刪除，此操作無法復原。"
+          onConfirm={() => handleDelete(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
+      {showVersionHistory && (
+        <VersionHistoryModal onClose={() => setShowVersionHistory(false)} />
+      )}
+    </div>
+  );
+}
+
+// 根據資料自動判斷目前階段
+function computeAutoPhase(project) {
+  if (project.materialCodeStatus === '已申請') return 'MP';
+  if (project.materialCodeStatus === '申請中') return 'PVT';
+
+  const trialRounds = (project.trialRuns || []).map(r => r.round);
+  if (trialRounds.includes('T3') || trialRounds.includes('T4')) return 'PVT';
+  if (trialRounds.includes('T1') || trialRounds.includes('T2')) return 'DVT';
+
+  if ((project.mouldOrders || []).length > 0) return 'DVT';
+  if ((project.prototypeOrders || []).length > 0) return 'EVT';
+
+  return '規劃';
+}
+
+// 取得實際階段（手動覆蓋優先）
+function getCurrentPhase(project) {
+  if (project.phaseOverride) return project.phaseOverride;
+  return computeAutoPhase(project);
+}
+
+// 取得階段內的詳細子進度文字
+function getPhaseDetail(project) {
+  const phase = getCurrentPhase(project);
+
+  if (phase === '規劃') {
+    const idCount = project.designs?.ID?.length || 0;
+    const td = project.designs?.['3D']?.length || 0;
+    const bom = project.designs?.BOM?.length || 0;
+    if (idCount > 0 && td > 0 && bom > 0) return 'BOM 完成';
+    if (idCount > 0 && td > 0) return '3D 完成';
+    if (idCount > 0) return 'ID 完成';
+    if (td > 0) return '3D 進行中';
+    return '尚未開始';
+  }
+
+  if (phase === 'EVT') {
+    const orders = project.prototypeOrders || [];
+    const received = orders.filter(o => o.status === '已收到').length;
+    return `手板 ${received}/${orders.length} 已收到`;
+  }
+
+  if (phase === 'DVT') {
+    const trials = project.trialRuns || [];
+    const dvt = trials.filter(t => t.round === 'T1' || t.round === 'T2');
+    if (dvt.length > 0) {
+      const last = dvt[dvt.length - 1];
+      return `${last.round} 完成`;
+    }
+    if ((project.mouldOrders || []).length > 0) return '模具下訂';
+    return '進行中';
+  }
+
+  if (phase === 'PVT') {
+    const trials = project.trialRuns || [];
+    const pvt = trials.filter(t => t.round === 'T3' || t.round === 'T4');
+    if (pvt.length > 0) {
+      const last = pvt[pvt.length - 1];
+      return `${last.round} 完成`;
+    }
+    if (project.materialCodeStatus === '申請中') return '料號申請中';
+    return '進行中';
+  }
+
+  if (phase === 'MP') return '已量產';
+
+  return '';
+}
+
+function ProjectRow({ project, onClick }) {
+  const latest = project.updates?.[0];
+  const cfg = STATUS_COLORS[project.status];
+
+  const mainImage = project.productImages?.[0];
+  const currentPhase = getCurrentPhase(project);
+  const phaseDetail = getPhaseDetail(project);
+  const phaseColor = PHASE_COLORS[currentPhase];
+  const isOverridden = !!project.phaseOverride;
+
+  return (
+    <button
+      onClick={onClick}
+      className="w-full text-left bg-white rounded-xl border border-slate-200 p-4 hover:border-slate-300 hover:shadow-sm transition group"
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex-shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center">
+          {mainImage ? (
+            <img src={mainImage.dataUrl} alt={project.name} className="w-full h-full object-cover" />
+          ) : (
+            <ImageIcon className="w-5 h-5 text-slate-300" />
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <h3 className="text-sm font-medium text-slate-900 line-clamp-1">{project.name}</h3>
+                {project.code && <span className="text-xs text-slate-400">{project.code}</span>}
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-xs px-2 py-0.5 rounded border ${cfg}`}>{project.status}</span>
+                {project.supplier && <span className="text-xs text-slate-500">{project.supplier}</span>}
+                {project.category && <span className="text-xs text-slate-400">· {project.category}</span>}
+                {(project.tags || []).map(t => (
+                  <span key={t} className="text-xs px-2 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="flex-shrink-0 text-right">
+              <p className="text-xs text-slate-400 mb-0.5 flex items-center justify-end gap-1">
+                目前階段
+                {isOverridden && <span className="text-[9px] text-amber-600" title="已手動覆蓋">●</span>}
+              </p>
+              <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border font-medium ${phaseColor.bg} ${phaseColor.text} ${phaseColor.border}`}>
+                {currentPhase}
+              </span>
+              {phaseDetail && (
+                <p className="text-[10px] text-slate-500 mt-0.5">{phaseDetail}</p>
+              )}
+            </div>
+          </div>
+
+          {latest && (
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              <div className="flex items-baseline gap-2 mb-0.5">
+                <span className="text-xs text-blue-600 font-medium tabular-nums flex-shrink-0">
+                  {latest.date}
+                </span>
+                <span className="text-xs text-slate-400">最新進度</span>
+              </div>
+              <p className="text-sm text-slate-700 line-clamp-2 leading-relaxed">{latest.text}</p>
+              {project.updates.length > 1 && (
+                <p className="text-xs text-slate-400 mt-1.5">+ {project.updates.length - 1} 筆歷史紀錄</p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete }) {
+  const [showAddUpdate, setShowAddUpdate] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [editingUpdateIdx, setEditingUpdateIdx] = useState(null);
+  const [editingField, setEditingField] = useState(null);
+  const [tempValue, setTempValue] = useState('');
+  const [newTag, setNewTag] = useState('');
+  const cfg = STATUS_COLORS[project.status];
+
+  const updates = project.updates || [];
+  const latest = updates[0];
+  const history = updates.slice(1);
+
+  const startEditField = (field, currentValue) => {
+    setEditingField(field);
+    setTempValue(currentValue || '');
+  };
+
+  const saveField = () => {
+    onUpdateField(editingField, tempValue);
+    setEditingField(null);
+  };
+
+  const handleAddTag = () => {
+    if (!newTag.trim()) return;
+    let tag = newTag.trim();
+    if (!tag.startsWith('#')) tag = '#' + tag;
+    if (!(project.tags || []).includes(tag)) {
+      onUpdateField('tags', [...(project.tags || []), tag]);
+    }
+    setNewTag('');
+  };
+
+  const handleRemoveTag = (tag) => {
+    onUpdateField('tags', (project.tags || []).filter(t => t !== tag));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
+      <div className="bg-white w-full sm:max-w-3xl sm:rounded-xl min-h-screen sm:min-h-0 sm:max-h-[92vh] flex flex-col">
+        <div className="flex items-start justify-between px-5 py-4 border-b border-slate-200 sticky top-0 bg-white z-10">
+          <div className="flex-1 min-w-0 pr-3">
+            {editingField === 'name' ? (
+              <input
+                type="text"
+                value={tempValue}
+                onChange={(e) => setTempValue(e.target.value)}
+                onBlur={saveField}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveField(); if (e.key === 'Escape') setEditingField(null); }}
+                autoFocus
+                className="w-full text-base font-medium border border-slate-300 rounded px-2 py-1"
+              />
+            ) : (
+              <h2
+                className="text-base font-medium leading-snug cursor-text hover:bg-slate-50 -mx-2 px-2 py-1 rounded"
+                onClick={() => startEditField('name', project.name)}
+              >
+                {project.name}
+              </h2>
+            )}
+            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+              <select
+                value={project.status}
+                onChange={(e) => onUpdateField('status', e.target.value)}
+                className={`text-xs px-2 py-0.5 rounded border cursor-pointer ${cfg}`}
+              >
+                {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              {editingField === 'code' ? (
+                <input
+                  type="text"
+                  value={tempValue}
+                  onChange={(e) => setTempValue(e.target.value)}
+                  onBlur={saveField}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveField(); if (e.key === 'Escape') setEditingField(null); }}
+                  autoFocus
+                  placeholder="料號"
+                  className="text-xs border border-slate-300 rounded px-2 py-0.5 w-32"
+                />
+              ) : (
+                <span
+                  onClick={() => startEditField('code', project.code)}
+                  className="text-xs text-slate-500 cursor-text hover:bg-slate-100 px-1 py-0.5 rounded"
+                >
+                  {project.code || '+ 料號'}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button onClick={onDelete} title="刪除專案" className="p-1.5 hover:bg-rose-50 rounded text-slate-400 hover:text-rose-600">
+              <Trash2 className="w-4 h-4" />
+            </button>
+            <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+              <X className="w-5 h-5 text-slate-500" />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          <section>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3">
+              <InfoField label="供應商" value={project.supplier} onSave={(v) => onUpdateField('supplier', v)} />
+              <InfoField label="ID 設計" value={project.idDesigner} onSave={(v) => onUpdateField('idDesigner', v)} />
+              <InfoField label="3D 設計" value={project.threeDDesigner} onSave={(v) => onUpdateField('threeDDesigner', v)} />
+              <InfoField label="類別" value={project.category} onSave={(v) => onUpdateField('category', v)} />
+              <InfoField label="開案日" value={project.openDate} type="date" onSave={(v) => onUpdateField('openDate', v)} />
+            </div>
+          </section>
+
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide">標籤</h3>
+            </div>
+            <div className="flex flex-wrap gap-1.5 items-center">
+              {(project.tags || []).map(t => (
+                <span key={t} className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-violet-50 text-violet-700 border border-violet-200">
+                  {t}
+                  <button onClick={() => handleRemoveTag(t)} className="hover:text-violet-900">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+              <div className="inline-flex items-center gap-1">
+                <input
+                  type="text"
+                  value={newTag}
+                  onChange={(e) => setNewTag(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAddTag(); }}
+                  placeholder="+ 新增標籤"
+                  list="all-tags"
+                  className="text-xs px-2 py-1 border border-slate-200 rounded w-28 focus:outline-none focus:border-slate-400"
+                />
+                <datalist id="all-tags">
+                  {allTags.map(t => <option key={t} value={t} />)}
+                </datalist>
+                {newTag && (
+                  <button onClick={handleAddTag} className="text-xs text-blue-600 hover:underline">加入</button>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <ProductImagesSection
+            images={project.productImages || []}
+            onChange={(imgs) => onUpdateField('productImages', imgs)}
+          />
+
+          <PhaseTimeline
+            project={project}
+            onOverride={(phase) => onUpdateField('phaseOverride', phase)}
+          />
+
+          <DesignSection
+            designs={project.designs || { ID: [], '3D': [], BOM: [] }}
+            onChange={(d) => onUpdateField('designs', d)}
+          />
+
+          <DFMSection
+            hasDFM={project.hasDFM || false}
+            dfmNotes={project.dfmNotes || ''}
+            onToggle={(v) => onUpdateField('hasDFM', v)}
+            onNotesChange={(v) => onUpdateField('dfmNotes', v)}
+          />
+
+          <PrototypeSection
+            orders={project.prototypeOrders || []}
+            onChange={(o) => onUpdateField('prototypeOrders', o)}
+            defaultSupplier={project.supplier}
+            readOnly={isViewer}
+          />
+
+          <MouldSection
+            orders={project.mouldOrders || []}
+            onChange={(o) => onUpdateField('mouldOrders', o)}
+            defaultSupplier={project.supplier}
+            readOnly={isViewer}
+          />
+
+          <TrialSection
+            trialRuns={project.trialRuns || []}
+            trialNotes={project.trialNotes || ''}
+            onChangeRuns={(r) => onUpdateField('trialRuns', r)}
+            onChangeNotes={(v) => onUpdateField('trialNotes', v)}
+          />
+
+          <MaterialCodeSection
+            status={project.materialCodeStatus || '未申請'}
+            onChange={(v) => onUpdateField('materialCodeStatus', v)}
+          />
+
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide">進度紀錄</h3>
+              <button
+                onClick={() => setShowAddUpdate(true)}
+                className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
+              >
+                <Plus className="w-3 h-3" />
+                新增更新
+              </button>
+            </div>
+
+            {showAddUpdate && (
+              <UpdateForm
+                onCancel={() => setShowAddUpdate(false)}
+                onSave={(u) => { onAddUpdate(u); setShowAddUpdate(false); }}
+              />
+            )}
+
+            {updates.length === 0 && !showAddUpdate ? (
+              <p className="text-sm text-slate-400 py-4 text-center bg-slate-50 rounded-lg">尚無更新紀錄</p>
+            ) : (
+              <div className="space-y-2.5">
+                {latest && (
+                  <UpdateCard
+                    update={latest}
+                    isLatest
+                    isEditing={editingUpdateIdx === 0}
+                    onStartEdit={() => setEditingUpdateIdx(0)}
+                    onCancelEdit={() => setEditingUpdateIdx(null)}
+                    onSave={(u) => { onEditUpdate(0, u); setEditingUpdateIdx(null); }}
+                    onDelete={() => onDeleteUpdate(0)}
+                  />
+                )}
+
+                {history.length > 0 && (
+                  <button
+                    onClick={() => setShowHistory(!showHistory)}
+                    className="w-full flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700 px-2 py-1"
+                  >
+                    {showHistory ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                    歷史紀錄 ({history.length})
+                  </button>
+                )}
+
+                {showHistory && history.map((u, i) => (
+                  <UpdateCard
+                    key={i}
+                    update={u}
+                    isLatest={false}
+                    isEditing={editingUpdateIdx === i + 1}
+                    onStartEdit={() => setEditingUpdateIdx(i + 1)}
+                    onCancelEdit={() => setEditingUpdateIdx(null)}
+                    onSave={(updated) => { onEditUpdate(i + 1, updated); setEditingUpdateIdx(null); }}
+                    onDelete={() => onDeleteUpdate(i + 1)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide mb-2">備註 / 特色</h3>
+            {editingField === 'notes' ? (
+              <div>
+                <textarea
+                  value={tempValue}
+                  onChange={(e) => setTempValue(e.target.value)}
+                  rows={3}
+                  autoFocus
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-slate-400 resize-none"
+                />
+                <div className="flex gap-2 mt-2">
+                  <button onClick={saveField} className="text-xs px-3 py-1 bg-slate-900 text-white rounded">儲存</button>
+                  <button onClick={() => setEditingField(null)} className="text-xs px-3 py-1 hover:bg-slate-100 rounded">取消</button>
+                </div>
+              </div>
+            ) : (
+              <div
+                onClick={() => startEditField('notes', project.notes)}
+                className="text-sm text-slate-700 leading-relaxed cursor-text hover:bg-slate-50 px-3 py-2 -mx-3 rounded-lg whitespace-pre-wrap min-h-[2.5rem]"
+              >
+                {project.notes || <span className="text-slate-400">點擊新增備註...</span>}
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InfoField({ label, value, type = 'text', onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [temp, setTemp] = useState(value || '');
+
+  const start = () => { setTemp(value || ''); setEditing(true); };
+  const commit = () => { onSave(temp); setEditing(false); };
+
+  return (
+    <div>
+      <p className="text-xs text-slate-500 mb-0.5">{label}</p>
+      {editing ? (
+        <input
+          type={type}
+          value={temp}
+          onChange={(e) => setTemp(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+          autoFocus
+          className="text-sm w-full border border-slate-300 rounded px-2 py-0.5"
+        />
+      ) : (
+        <p
+          onClick={start}
+          className="text-sm text-slate-800 cursor-text hover:bg-slate-50 -mx-1 px-1 py-0.5 rounded min-h-[1.5rem]"
+        >
+          {value || <span className="text-slate-400">—</span>}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ProductImagesSection({ images, onChange }) {
+  const [previewIdx, setPreviewIdx] = useState(null);
+  const fileRef = useRef(null);
+
+  const handleUpload = (e) => {
+    const files = Array.from(e.target.files || []);
+    const promises = files.map(file => new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => resolve({ name: file.name, dataUrl: ev.target.result });
+      reader.readAsDataURL(file);
+    }));
+    Promise.all(promises).then(newImgs => {
+      onChange([...images, ...newImgs]);
+    });
+    e.target.value = '';
+  };
+
+  const handleSetAsMain = (idx) => {
+    if (idx === 0) return;
+    const newImgs = [...images];
+    const [picked] = newImgs.splice(idx, 1);
+    newImgs.unshift(picked);
+    onChange(newImgs);
+  };
+
+  const handleRemove = (idx) => {
+    onChange(images.filter((_, i) => i !== idx));
+    setPreviewIdx(null);
+  };
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide">產品圖片</h3>
+        <button
+          onClick={() => fileRef.current?.click()}
+          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
+        >
+          <Plus className="w-3 h-3" />
+          上傳圖片
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={handleUpload}
+          className="hidden"
+        />
+      </div>
+
+      {images.length === 0 ? (
+        <button
+          onClick={() => fileRef.current?.click()}
+          className="w-full py-6 bg-slate-50 hover:bg-slate-100 border border-dashed border-slate-300 rounded-lg flex flex-col items-center justify-center gap-2 text-slate-400 hover:text-slate-600 transition"
+        >
+          <ImageIcon className="w-6 h-6" />
+          <span className="text-xs">點擊上傳產品圖片（可多張）</span>
+        </button>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+            {images.map((img, i) => (
+              <div key={i} className="relative group">
+                <button
+                  onClick={() => setPreviewIdx(i)}
+                  className="block w-full aspect-square rounded-lg border border-slate-200 overflow-hidden bg-slate-50 hover:border-slate-400"
+                >
+                  <img src={img.dataUrl} alt={img.name} className="w-full h-full object-cover" />
+                </button>
+                {i === 0 && (
+                  <span className="absolute top-1 left-1 text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded">主圖</span>
+                )}
+                <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition">
+                  {i !== 0 && (
+                    <button
+                      onClick={() => handleSetAsMain(i)}
+                      title="設為主圖"
+                      className="bg-white/90 hover:bg-white text-slate-700 rounded w-5 h-5 flex items-center justify-center text-[10px] border border-slate-200"
+                    >
+                      ★
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleRemove(i)}
+                    title="刪除"
+                    className="bg-white/90 hover:bg-rose-50 text-rose-600 rounded w-5 h-5 flex items-center justify-center border border-slate-200"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-slate-400 mt-1.5">第一張為主圖（顯示在列表縮圖），滑鼠移上去可改主圖或刪除</p>
+        </>
+      )}
+
+      {previewIdx !== null && images[previewIdx] && (
+        <div
+          className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
+          onClick={() => setPreviewIdx(null)}
+        >
+          <img src={images[previewIdx].dataUrl} alt={images[previewIdx].name} className="max-w-full max-h-full rounded" />
+        </div>
+      )}
+    </section>
+  );
+}
+function CollapsibleSection({ title, badge, children, defaultOpen = false, accent = 'slate' }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const accentMap = {
+    slate: 'border-slate-200',
+    blue: 'border-blue-200',
+    emerald: 'border-emerald-200',
+    amber: 'border-amber-200',
+    violet: 'border-violet-200',
+  };
+  return (
+    <section className={`bg-white border ${accentMap[accent] || accentMap.slate} rounded-lg overflow-hidden`}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition"
+      >
+        <div className="flex items-center gap-2">
+          {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+          <h3 className="text-sm font-medium text-slate-800">{title}</h3>
+          {badge !== undefined && badge !== null && (
+            <span className="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{badge}</span>
+          )}
+        </div>
+      </button>
+      {open && <div className="px-4 pb-4 pt-1 border-t border-slate-100">{children}</div>}
+    </section>
+  );
+}
+
+function PhaseTimeline({ project, onOverride }) {
+  const [showPicker, setShowPicker] = useState(false);
+  const autoPhase = computeAutoPhase(project);
+  const currentPhase = getCurrentPhase(project);
+  const phaseDetail = getPhaseDetail(project);
+  const isOverridden = !!project.phaseOverride && project.phaseOverride !== autoPhase;
+
+  const currentIdx = PHASE_DEFINITIONS.findIndex(p => p.key === currentPhase);
+
+  return (
+    <section className="bg-white border border-slate-200 rounded-lg p-4">
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div>
+          <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide">產品階段</h3>
+          <p className="text-[11px] text-slate-400 mt-0.5">EVT/DVT/PVT/MP 業界標準流程</p>
+        </div>
+        <button
+          onClick={() => setShowPicker(true)}
+          className="text-xs text-blue-600 hover:underline"
+        >
+          手動調整
+        </button>
+      </div>
+
+      <div className="relative pt-2 pb-1">
+        <div className="absolute top-[18px] left-3 right-3 h-0.5 bg-slate-200"></div>
+        <div
+          className="absolute top-[18px] left-3 h-0.5 bg-blue-500 transition-all"
+          style={{ width: currentIdx > 0 ? `calc((100% - 24px) * ${currentIdx} / ${PHASE_DEFINITIONS.length - 1})` : '0%' }}
+        ></div>
+
+        <div className="relative grid grid-cols-5 gap-1">
+          {PHASE_DEFINITIONS.map((p, i) => {
+            const cfg = PHASE_COLORS[p.key];
+            const isCurrent = p.key === currentPhase;
+            const isPast = i < currentIdx;
+            return (
+              <div key={p.key} className="flex flex-col items-center text-center">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-medium border-2 transition mb-1.5 z-10 ${
+                  isCurrent
+                    ? `${cfg.dot} text-white border-white shadow-md ring-2 ${cfg.border}`
+                    : isPast
+                      ? 'bg-blue-500 text-white border-white'
+                      : 'bg-white text-slate-400 border-slate-300'
+                }`}>
+                  {isPast ? '✓' : i + 1}
+                </div>
+                <p className={`text-[11px] font-medium ${isCurrent ? cfg.text : isPast ? 'text-slate-700' : 'text-slate-400'}`}>
+                  {p.label}
+                </p>
+                <p className={`text-[9px] leading-tight mt-0.5 ${isCurrent ? 'text-slate-600' : 'text-slate-400'}`}>
+                  {p.subtitle}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-3 pt-3 border-t border-slate-100 flex items-baseline justify-between gap-2 flex-wrap">
+        <div>
+          <span className="text-xs text-slate-500">目前：</span>
+          <span className={`text-sm font-medium ${PHASE_COLORS[currentPhase].text}`}>
+            {currentPhase}
+          </span>
+          {phaseDetail && (
+            <span className="text-xs text-slate-500 ml-2">· {phaseDetail}</span>
+          )}
+        </div>
+        {isOverridden && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+              已覆蓋（自動：{autoPhase}）
+            </span>
+            <button
+              onClick={() => onOverride(null)}
+              className="text-[10px] text-blue-600 hover:underline"
+            >
+              還原自動
+            </button>
+          </div>
+        )}
+      </div>
+
+      {showPicker && (
+        <PhasePickerModal
+          currentPhase={currentPhase}
+          autoPhase={autoPhase}
+          onSelect={(phase) => {
+            onOverride(phase === autoPhase ? null : phase);
+            setShowPicker(false);
+          }}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
+    </section>
+  );
+}
+
+function PhasePickerModal({ currentPhase, autoPhase, onSelect, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl max-w-md w-full p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium">選擇階段</h3>
+          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded">
+            <X className="w-4 h-4 text-slate-500" />
+          </button>
+        </div>
+        <p className="text-xs text-slate-500 mb-3">
+          系統根據手板/模具/試模/料號狀態自動判斷階段，但你可以手動覆蓋。
+        </p>
+        <div className="space-y-2">
+          {PHASE_DEFINITIONS.map(p => {
+            const cfg = PHASE_COLORS[p.key];
+            const isAuto = p.key === autoPhase;
+            const isCurrent = p.key === currentPhase;
+            return (
+              <button
+                key={p.key}
+                onClick={() => onSelect(p.key)}
+                className={`w-full text-left p-3 rounded-lg border transition ${
+                  isCurrent
+                    ? `${cfg.bg} ${cfg.border} border-2`
+                    : 'bg-white border-slate-200 hover:border-slate-400'
+                }`}
+              >
+                <div className="flex items-baseline justify-between gap-2 mb-0.5">
+                  <div className="flex items-baseline gap-2">
+                    <span className={`text-sm font-medium ${isCurrent ? cfg.text : 'text-slate-700'}`}>
+                      {p.label}
+                    </span>
+                    <span className="text-xs text-slate-500">{p.subtitle}</span>
+                  </div>
+                  <div className="flex gap-1">
+                    {isAuto && (
+                      <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">自動</span>
+                    )}
+                    {isCurrent && (
+                      <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded">目前</span>
+                    )}
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed">{p.desc}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DesignSection({ designs, onChange }) {
+  const [editing, setEditing] = useState(null);
+
+  const types = ['ID', '3D', 'BOM'];
+  const totalVersions = types.reduce((sum, t) => sum + (designs[t]?.length || 0), 0);
+
+  const handleAdd = (type) => setEditing({ type, idx: -1, data: { version: '', date: new Date().toISOString().split('T')[0], notes: '', images: [] } });
+  const handleEdit = (type, idx) => setEditing({ type, idx, data: { ...designs[type][idx] } });
+  const handleSave = () => {
+    const { type, idx, data } = editing;
+    const list = [...(designs[type] || [])];
+    if (idx === -1) list.unshift(data);
+    else list[idx] = data;
+    onChange({ ...designs, [type]: list });
+    setEditing(null);
+  };
+  const handleDelete = (type, idx) => {
+    const list = (designs[type] || []).filter((_, i) => i !== idx);
+    onChange({ ...designs, [type]: list });
+  };
+
+  return (
+    <CollapsibleSection title="設計圖紙版本" badge={totalVersions > 0 ? `${totalVersions} 個版本` : '無'} defaultOpen={false} accent="slate">
+      <div className="space-y-3 mt-2">
+        {types.map(type => {
+          const list = designs[type] || [];
+          const latest = list[0];
+          return (
+            <div key={type} className="bg-slate-50 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-sm font-medium text-slate-800">{type === '3D' ? '3D 圖' : type === 'ID' ? 'ID 圖' : 'BOM'}</span>
+                  {latest && (
+                    <span className="text-xs px-1.5 py-0.5 bg-blue-600 text-white rounded font-medium">最新 {latest.version}</span>
+                  )}
+                </div>
+                <button onClick={() => handleAdd(type)} className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+                  <Plus className="w-3 h-3" />新版本
+                </button>
+              </div>
+              {list.length === 0 ? (
+                <p className="text-xs text-slate-400 py-1">尚無版本</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {list.map((d, i) => (
+                    <div key={i} className={`p-2 rounded border text-xs group ${i === 0 ? 'bg-white border-blue-200' : 'bg-white border-slate-200'}`}>
+                      <div className="flex items-baseline justify-between gap-2 mb-1">
+                        <div className="flex items-baseline gap-2">
+                          <span className={`font-medium ${i === 0 ? 'text-blue-700' : 'text-slate-600'}`}>{d.version}</span>
+                          <span className="text-slate-400 tabular-nums">{d.date}</span>
+                        </div>
+                        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                          <button onClick={() => handleEdit(type, i)} className="p-0.5 text-slate-400 hover:text-slate-700">
+                            <Edit2 className="w-3 h-3" />
+                          </button>
+                          <button onClick={() => handleDelete(type, i)} className="p-0.5 text-slate-400 hover:text-rose-600">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                      {d.notes && <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{d.notes}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {editing && (
+        <DesignVersionForm
+          type={editing.type}
+          data={editing.data}
+          onChange={(d) => setEditing({ ...editing, data: d })}
+          onCancel={() => setEditing(null)}
+          onSave={handleSave}
+        />
+      )}
+    </CollapsibleSection>
+  );
+}
+
+function DesignVersionForm({ type, data, onChange, onCancel, onSave }) {
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl max-w-md w-full p-5">
+        <h3 className="text-sm font-medium mb-4">新增 / 編輯 {type} 版本</h3>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">版本</label>
+              <input
+                type="text"
+                value={data.version}
+                onChange={(e) => onChange({ ...data, version: e.target.value })}
+                placeholder="例：V1, V2.1"
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">日期</label>
+              <input
+                type="date"
+                value={data.date}
+                onChange={(e) => onChange({ ...data, date: e.target.value })}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">變更說明</label>
+            <textarea
+              value={data.notes}
+              onChange={(e) => onChange({ ...data, notes: e.target.value })}
+              rows={3}
+              placeholder="這版有什麼改動？"
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onCancel} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+          <button onClick={onSave} disabled={!data.version} className="text-sm px-3 py-1.5 bg-slate-900 text-white rounded disabled:opacity-50">儲存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DFMSection({ hasDFM, dfmNotes, onToggle, onNotesChange }) {
+  const [editing, setEditing] = useState(false);
+  const [tempNotes, setTempNotes] = useState(dfmNotes);
+
+  return (
+    <CollapsibleSection
+      title="DFM"
+      badge={hasDFM ? '有' : '無'}
+      defaultOpen={false}
+      accent={hasDFM ? 'blue' : 'slate'}
+    >
+      <div className="mt-2 space-y-2">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={hasDFM}
+            onChange={(e) => onToggle(e.target.checked)}
+            className="rounded"
+          />
+          <span className="text-sm text-slate-700">此產品有做 DFM</span>
+        </label>
+        {hasDFM && (
+          <div>
+            {editing ? (
+              <div>
+                <textarea
+                  value={tempNotes}
+                  onChange={(e) => setTempNotes(e.target.value)}
+                  rows={3}
+                  autoFocus
+                  placeholder="DFM 說明、回饋、修改點..."
+                  className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none"
+                />
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => { onNotesChange(tempNotes); setEditing(false); }}
+                    className="text-xs px-3 py-1 bg-slate-900 text-white rounded"
+                  >儲存</button>
+                  <button onClick={() => { setTempNotes(dfmNotes); setEditing(false); }} className="text-xs px-3 py-1 hover:bg-slate-100 rounded">取消</button>
+                </div>
+              </div>
+            ) : (
+              <div
+                onClick={() => { setTempNotes(dfmNotes); setEditing(true); }}
+                className="text-sm text-slate-700 leading-relaxed cursor-text hover:bg-slate-50 p-2 -m-2 rounded whitespace-pre-wrap min-h-[2rem]"
+              >
+                {dfmNotes || <span className="text-slate-400 text-xs">點擊新增 DFM 說明...</span>}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </CollapsibleSection>
+  );
+}
+
+function PrototypeSection({ orders, onChange, defaultSupplier, readOnly }) {
+  const [editing, setEditing] = useState(null);
+
+  const totalCost = orders.reduce((sum, o) => sum + (Number(o.quantity || 0) * Number(o.unitPrice || 0)), 0);
+
+  const handleAdd = () => setEditing({
+    idx: -1,
+    data: {
+      id: `p${Date.now()}`, orderNo: '', partNo: '', supplier: defaultSupplier || '',
+      quantity: 1, unitPrice: 0, currency: 'TWD',
+      orderDate: new Date().toISOString().split('T')[0], status: '已下單',
+      storageLocation: '', review: '',
+    }
+  });
+  const handleEdit = (idx) => setEditing({ idx, data: { ...orders[idx] } });
+  const handleSave = () => {
+    const { idx, data } = editing;
+    const list = [...orders];
+    if (idx === -1) list.push(data);
+    else list[idx] = data;
+    onChange(list);
+    setEditing(null);
+  };
+  const handleDelete = (idx) => onChange(orders.filter((_, i) => i !== idx));
+
+  return (
+    <CollapsibleSection
+      title="手板訂單"
+      badge={orders.length > 0 ? `${orders.length} 筆 · ${formatMoney(totalCost)} TWD` : '無'}
+      defaultOpen={false}
+      accent="amber"
+    >
+      <div className="mt-2 space-y-2">
+        {orders.length === 0 ? (
+          <p className="text-xs text-slate-400 py-2">尚未下手板訂單</p>
+        ) : (
+          orders.map((o, i) => (
+            <div key={o.id || i} className="bg-amber-50/50 border border-amber-200 rounded-lg p-3 group">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
+                    <span className="text-sm font-medium text-slate-900">{o.orderNo || '(無單號)'}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded border ${ORDER_STATUS_COLORS[o.status] || ORDER_STATUS_COLORS['已下單']}`}>{o.status}</span>
+                  </div>
+                  <div className="text-xs text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
+                    {o.partNo && <span>料號: {o.partNo}</span>}
+                    <span>{o.supplier}</span>
+                    <span>{o.quantity} 個 × {formatMoney(o.unitPrice)} = {formatMoney(o.quantity * o.unitPrice)} {o.currency}</span>
+                    <span className="tabular-nums">{o.orderDate}</span>
+                  </div>
+                </div>
+                <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+                  <button onClick={() => handleEdit(i)} className="p-1 text-slate-400 hover:text-slate-700"><Edit2 className="w-3 h-3" /></button>
+                  <button onClick={() => handleDelete(i)} className="p-1 text-slate-400 hover:text-rose-600"><Trash2 className="w-3 h-3" /></button>
+                </div>
+              </div>
+              {o.storageLocation && (
+                <p className="text-xs text-slate-600 mb-1"><span className="text-slate-400">存放：</span>{o.storageLocation}</p>
+              )}
+              {o.review && (
+                <p className="text-xs text-slate-700 leading-relaxed bg-white p-2 rounded border border-amber-100 whitespace-pre-wrap"><span className="text-slate-400">評價：</span>{o.review}</p>
+              )}
+            </div>
+          ))
+        )}
+        {!readOnly && (
+          <button
+            onClick={handleAdd}
+            className="w-full py-2 text-xs text-blue-600 hover:bg-blue-50 border border-dashed border-blue-200 rounded-lg flex items-center justify-center gap-1"
+          >
+            <Plus className="w-3 h-3" />新增手板訂單
+          </button>
+        )}
+      </div>
+
+      {editing && (
+        <OrderForm
+          kind="手板"
+          data={editing.data}
+          onChange={(d) => setEditing({ ...editing, data: d })}
+          onCancel={() => setEditing(null)}
+          onSave={handleSave}
+          showStorage
+          showReview
+        />
+      )}
+    </CollapsibleSection>
+  );
+}
+
+function MouldSection({ orders, onChange, defaultSupplier, readOnly }) {
+  const [editing, setEditing] = useState(null);
+
+  const totalCost = orders.reduce((sum, o) => sum + (Number(o.quantity || 0) * Number(o.unitPrice || 0)), 0);
+
+  const handleAdd = () => setEditing({
+    idx: -1,
+    data: {
+      id: `m${Date.now()}`, orderNo: '', partNo: '', supplier: defaultSupplier || '',
+      quantity: 1, unitPrice: 0, currency: 'TWD',
+      orderDate: new Date().toISOString().split('T')[0], status: '已下單',
+      notes: '',
+    }
+  });
+  const handleEdit = (idx) => setEditing({ idx, data: { ...orders[idx] } });
+  const handleSave = () => {
+    const { idx, data } = editing;
+    const list = [...orders];
+    if (idx === -1) list.push(data);
+    else list[idx] = data;
+    onChange(list);
+    setEditing(null);
+  };
+  const handleDelete = (idx) => onChange(orders.filter((_, i) => i !== idx));
+
+  return (
+    <CollapsibleSection
+      title="模具訂單"
+      badge={orders.length > 0 ? `${orders.length} 筆 · ${formatMoney(totalCost)} TWD` : '無'}
+      defaultOpen={false}
+      accent="violet"
+    >
+      <div className="mt-2 space-y-2">
+        {orders.length === 0 ? (
+          <p className="text-xs text-slate-400 py-2">尚未下模具訂單</p>
+        ) : (
+          orders.map((o, i) => (
+            <div key={o.id || i} className="bg-violet-50/50 border border-violet-200 rounded-lg p-3 group">
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
+                    <span className="text-sm font-medium text-slate-900">{o.orderNo || '(無單號)'}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded border ${ORDER_STATUS_COLORS[o.status] || ORDER_STATUS_COLORS['已下單']}`}>{o.status}</span>
+                  </div>
+                  <div className="text-xs text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
+                    {o.partNo && <span>料號: {o.partNo}</span>}
+                    <span>{o.supplier}</span>
+                    <span>{o.quantity} 套 × {formatMoney(o.unitPrice)} = {formatMoney(o.quantity * o.unitPrice)} {o.currency}</span>
+                    <span className="tabular-nums">{o.orderDate}</span>
+                  </div>
+                </div>
+                <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+                  <button onClick={() => handleEdit(i)} className="p-1 text-slate-400 hover:text-slate-700"><Edit2 className="w-3 h-3" /></button>
+                  <button onClick={() => handleDelete(i)} className="p-1 text-slate-400 hover:text-rose-600"><Trash2 className="w-3 h-3" /></button>
+                </div>
+              </div>
+              {o.notes && (
+                <p className="text-xs text-slate-700 leading-relaxed mt-1 whitespace-pre-wrap">{o.notes}</p>
+              )}
+            </div>
+          ))
+        )}
+        {!readOnly && (
+          <button
+            onClick={handleAdd}
+            className="w-full py-2 text-xs text-blue-600 hover:bg-blue-50 border border-dashed border-blue-200 rounded-lg flex items-center justify-center gap-1"
+          >
+            <Plus className="w-3 h-3" />新增模具訂單
+          </button>
+        )}
+      </div>
+
+      {editing && (
+        <OrderForm
+          kind="模具"
+          data={editing.data}
+          onChange={(d) => setEditing({ ...editing, data: d })}
+          onCancel={() => setEditing(null)}
+          onSave={handleSave}
+          showNotes
+        />
+      )}
+    </CollapsibleSection>
+  );
+}
+
+function OrderForm({ kind, data, onChange, onCancel, onSave, showStorage, showReview, showNotes }) {
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl max-w-lg w-full p-5 my-auto">
+        <h3 className="text-sm font-medium mb-4">新增 / 編輯 {kind}訂單</h3>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">訂單號</label>
+              <input
+                type="text"
+                value={data.orderNo}
+                onChange={(e) => onChange({ ...data, orderNo: e.target.value })}
+                placeholder="例：PT-001"
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">料號</label>
+              <input
+                type="text"
+                value={data.partNo}
+                onChange={(e) => onChange({ ...data, partNo: e.target.value })}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">供應商</label>
+              <input
+                type="text"
+                value={data.supplier}
+                onChange={(e) => onChange({ ...data, supplier: e.target.value })}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">下單日</label>
+              <input
+                type="date"
+                value={data.orderDate}
+                onChange={(e) => onChange({ ...data, orderDate: e.target.value })}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">數量</label>
+              <input
+                type="number"
+                min="0"
+                value={data.quantity}
+                onChange={(e) => onChange({ ...data, quantity: Number(e.target.value) })}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">單價</label>
+              <input
+                type="number"
+                min="0"
+                value={data.unitPrice}
+                onChange={(e) => onChange({ ...data, unitPrice: Number(e.target.value) })}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">幣別</label>
+              <select
+                value={data.currency}
+                onChange={(e) => onChange({ ...data, currency: e.target.value })}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
+              >
+                <option value="TWD">TWD</option>
+                <option value="USD">USD</option>
+                <option value="CNY">CNY</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">狀態</label>
+            <select
+              value={data.status}
+              onChange={(e) => onChange({ ...data, status: e.target.value })}
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
+            >
+              {ORDER_STATUS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          {showStorage && (
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">收到後存放位置</label>
+              <input
+                type="text"
+                value={data.storageLocation || ''}
+                onChange={(e) => onChange({ ...data, storageLocation: e.target.value })}
+                placeholder="例：辦公室樣品櫃 A-3 / 已寄客戶"
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+          )}
+          {showReview && (
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">評價 / 測試結果</label>
+              <textarea
+                value={data.review || ''}
+                onChange={(e) => onChange({ ...data, review: e.target.value })}
+                rows={3}
+                placeholder="這批手板的評價、測試發現、需要修正的地方..."
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none"
+              />
+            </div>
+          )}
+          {showNotes && (
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">備註</label>
+              <textarea
+                value={data.notes || ''}
+                onChange={(e) => onChange({ ...data, notes: e.target.value })}
+                rows={2}
+                placeholder="模具用途、注意事項..."
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none"
+              />
+            </div>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onCancel} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+          <button onClick={onSave} className="text-sm px-3 py-1.5 bg-slate-900 text-white rounded">儲存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes }) {
+  const [editing, setEditing] = useState(null);
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [tempNotes, setTempNotes] = useState(trialNotes);
+
+  const usedRounds = trialRuns.map(r => r.round);
+  const availableRounds = TRIAL_ROUNDS.filter(r => !usedRounds.includes(r));
+  const latestRound = trialRuns.length > 0 ? trialRuns[trialRuns.length - 1].round : null;
+
+  const handleAdd = () => {
+    const nextRound = availableRounds[0] || 'T1';
+    setEditing({
+      idx: -1,
+      data: { round: nextRound, date: new Date().toISOString().split('T')[0], issues: '' },
+    });
+  };
+  const handleEdit = (idx) => setEditing({ idx, data: { ...trialRuns[idx] } });
+  const handleSave = () => {
+    const { idx, data } = editing;
+    const list = [...trialRuns];
+    if (idx === -1) list.push(data);
+    else list[idx] = data;
+    list.sort((a, b) => TRIAL_ROUNDS.indexOf(a.round) - TRIAL_ROUNDS.indexOf(b.round));
+    onChangeRuns(list);
+    setEditing(null);
+  };
+  const handleDelete = (idx) => onChangeRuns(trialRuns.filter((_, i) => i !== idx));
+
+  return (
+    <CollapsibleSection
+      title="試模 T1~T4"
+      badge={latestRound ? `已到 ${latestRound}` : '未開始'}
+      defaultOpen={false}
+      accent="emerald"
+    >
+      <div className="mt-2 space-y-2">
+        <div className="flex gap-1.5 flex-wrap mb-2">
+          {TRIAL_ROUNDS.map(r => {
+            const done = usedRounds.includes(r);
+            return (
+              <span
+                key={r}
+                className={`text-xs px-2 py-1 rounded border ${
+                  done
+                    ? 'bg-emerald-100 text-emerald-700 border-emerald-300 font-medium'
+                    : 'bg-white text-slate-400 border-slate-200'
+                }`}
+              >
+                {done ? '✓ ' : ''}{r}
+              </span>
+            );
+          })}
+        </div>
+
+        {trialRuns.length === 0 ? (
+          <p className="text-xs text-slate-400 py-1">尚未開始試模</p>
+        ) : (
+          <div className="space-y-1.5">
+            {trialRuns.map((r, i) => (
+              <div key={i} className="bg-emerald-50/50 border border-emerald-200 rounded-lg p-2.5 group">
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-sm font-medium text-emerald-700">{r.round}</span>
+                    <span className="text-xs text-slate-500 tabular-nums">{r.date}</span>
+                  </div>
+                  <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                    <button onClick={() => handleEdit(i)} className="p-1 text-slate-400 hover:text-slate-700"><Edit2 className="w-3 h-3" /></button>
+                    <button onClick={() => handleDelete(i)} className="p-1 text-slate-400 hover:text-rose-600"><Trash2 className="w-3 h-3" /></button>
+                  </div>
+                </div>
+                {r.issues && (
+                  <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{r.issues}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {availableRounds.length > 0 && (
+          <button
+            onClick={handleAdd}
+            className="w-full py-2 text-xs text-blue-600 hover:bg-blue-50 border border-dashed border-blue-200 rounded-lg flex items-center justify-center gap-1"
+          >
+            <Plus className="w-3 h-3" />新增 {availableRounds[0]} 紀錄
+          </button>
+        )}
+
+        <div className="pt-2 border-t border-slate-100">
+          <p className="text-xs text-slate-500 mb-1">試模整體備註</p>
+          {editingNotes ? (
+            <div>
+              <textarea
+                value={tempNotes}
+                onChange={(e) => setTempNotes(e.target.value)}
+                rows={2}
+                autoFocus
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none"
+              />
+              <div className="flex gap-2 mt-1.5">
+                <button
+                  onClick={() => { onChangeNotes(tempNotes); setEditingNotes(false); }}
+                  className="text-xs px-3 py-1 bg-slate-900 text-white rounded"
+                >儲存</button>
+                <button onClick={() => { setTempNotes(trialNotes); setEditingNotes(false); }} className="text-xs px-3 py-1 hover:bg-slate-100 rounded">取消</button>
+              </div>
+            </div>
+          ) : (
+            <div
+              onClick={() => { setTempNotes(trialNotes); setEditingNotes(true); }}
+              className="text-sm text-slate-700 leading-relaxed cursor-text hover:bg-slate-50 p-1.5 rounded whitespace-pre-wrap min-h-[1.75rem]"
+            >
+              {trialNotes || <span className="text-slate-400 text-xs">點擊新增備註（如認證進度）...</span>}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {editing && (
+        <TrialRunForm
+          data={editing.data}
+          availableRounds={editing.idx === -1 ? availableRounds : [...availableRounds, editing.data.round].sort((a, b) => TRIAL_ROUNDS.indexOf(a) - TRIAL_ROUNDS.indexOf(b))}
+          onChange={(d) => setEditing({ ...editing, data: d })}
+          onCancel={() => setEditing(null)}
+          onSave={handleSave}
+        />
+      )}
+    </CollapsibleSection>
+  );
+}
+
+function TrialRunForm({ data, availableRounds, onChange, onCancel, onSave }) {
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl max-w-md w-full p-5">
+        <h3 className="text-sm font-medium mb-4">試模紀錄</h3>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">輪次</label>
+              <select
+                value={data.round}
+                onChange={(e) => onChange({ ...data, round: e.target.value })}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
+              >
+                {availableRounds.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">試模日期</label>
+              <input
+                type="date"
+                value={data.date}
+                onChange={(e) => onChange({ ...data, date: e.target.value })}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">遇到的問題 / 需要修正的地方</label>
+            <textarea
+              value={data.issues}
+              onChange={(e) => onChange({ ...data, issues: e.target.value })}
+              rows={4}
+              placeholder="例：T1 EMC 沒過，需要修改外殼設計..."
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onCancel} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+          <button onClick={onSave} className="text-sm px-3 py-1.5 bg-slate-900 text-white rounded">儲存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MaterialCodeSection({ status, onChange }) {
+  const options = ['未申請', '申請中', '已申請'];
+  const colorMap = {
+    '未申請': 'bg-slate-100 text-slate-600 border-slate-200',
+    '申請中': 'bg-amber-100 text-amber-700 border-amber-200',
+    '已申請': 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  };
+
+  return (
+    <CollapsibleSection
+      title="料號申請"
+      badge={status}
+      defaultOpen={false}
+      accent={status === '已申請' ? 'emerald' : status === '申請中' ? 'amber' : 'slate'}
+    >
+      <div className="mt-2 space-y-2">
+        <p className="text-xs text-slate-500">通常在 T4 結束後申請正式料號</p>
+        <div className="flex gap-2">
+          {options.map(opt => (
+            <button
+              key={opt}
+              onClick={() => onChange(opt)}
+              className={`text-xs px-3 py-1.5 rounded border transition ${
+                status === opt
+                  ? colorMap[opt] + ' font-medium'
+                  : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'
+              }`}
+            >
+              {status === opt ? '✓ ' : ''}{opt}
+            </button>
+          ))}
+        </div>
+      </div>
+    </CollapsibleSection>
+  );
+}
+
+function formatMoney(n) {
+  const num = Number(n) || 0;
+  return num.toLocaleString('zh-TW');
+}
+
+
+function UpdateForm({ initial, onCancel, onSave }) {
+  const [date, setDate] = useState(initial?.date || new Date().toISOString().split('T')[0]);
+  const [text, setText] = useState(initial?.text || '');
+  const [images, setImages] = useState(initial?.images || []);
+  const fileRef = useRef(null);
+
+  const handleFileChange = (e) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setImages(prev => [...prev, { name: file.name, dataUrl: ev.target.result }]);
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
+
+  const submit = () => {
+    if (!text.trim() && images.length === 0) return;
+    onSave({ date, text: text.trim(), images });
+  };
+
+  return (
+    <div className="border border-blue-200 bg-blue-50/40 rounded-lg p-3 mb-2">
+      <div className="flex items-center gap-2 mb-2">
+        <Calendar className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className="text-xs px-2 py-1 border border-slate-200 rounded bg-white"
+        />
+      </div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={3}
+        autoFocus
+        placeholder="本週工程更新..."
+        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none bg-white"
+      />
+      {images.length > 0 && (
+        <div className="flex gap-2 flex-wrap mt-2">
+          {images.map((img, i) => (
+            <div key={i} className="relative group">
+              <img src={img.dataUrl} alt={img.name} className="w-16 h-16 object-cover rounded border border-slate-200" />
+              <button
+                onClick={() => setImages(prev => prev.filter((_, idx) => idx !== i))}
+                className="absolute -top-1 -right-1 bg-rose-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center justify-between mt-2">
+        <button
+          onClick={() => fileRef.current?.click()}
+          className="flex items-center gap-1 text-xs text-slate-600 hover:text-slate-900 px-2 py-1 hover:bg-white rounded"
+        >
+          <ImageIcon className="w-3.5 h-3.5" />
+          附加圖片
+        </button>
+        <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleFileChange} className="hidden" />
+        <div className="flex gap-2">
+          <button onClick={onCancel} className="text-xs px-3 py-1 hover:bg-white rounded">取消</button>
+          <button onClick={submit} className="text-xs px-3 py-1 bg-slate-900 text-white rounded">儲存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete }) {
+  const [previewImg, setPreviewImg] = useState(null);
+
+  if (isEditing) {
+    return <UpdateForm initial={update} onCancel={onCancelEdit} onSave={onSave} />;
+  }
+
+  const containerClass = isLatest
+    ? 'bg-blue-50/40 border-l-2 border-l-blue-500 border-y border-r border-blue-100'
+    : 'bg-white border border-slate-200';
+
+  return (
+    <>
+      <div className={`rounded-lg p-3 ${containerClass} group`}>
+        <div className="flex items-baseline justify-between gap-2 mb-1.5">
+          <div className="flex items-baseline gap-2 min-w-0">
+            <span className={`text-xs font-medium tabular-nums flex-shrink-0 ${isLatest ? 'text-blue-700' : 'text-slate-500'}`}>
+              {update.date}
+            </span>
+            {isLatest && <span className="text-xs text-blue-600 flex-shrink-0">最新</span>}
+          </div>
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+            <button onClick={onStartEdit} className="p-1 text-slate-400 hover:text-slate-700 hover:bg-white rounded">
+              <Edit2 className="w-3 h-3" />
+            </button>
+            <button onClick={onDelete} className="p-1 text-slate-400 hover:text-rose-600 hover:bg-white rounded">
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
+        <p className={`text-sm leading-relaxed whitespace-pre-wrap ${isLatest ? 'text-slate-900' : 'text-slate-700'}`}>
+          {update.text}
+        </p>
+        {update.images && update.images.length > 0 && (
+          <div className="flex gap-2 flex-wrap mt-2">
+            {update.images.map((img, i) => (
+              <button
+                key={i}
+                onClick={() => setPreviewImg(img)}
+                className="block"
+              >
+                <img
+                  src={img.dataUrl}
+                  alt={img.name}
+                  className="w-16 h-16 object-cover rounded border border-slate-200 hover:opacity-90"
+                />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {previewImg && (
+        <div
+          className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
+          onClick={() => setPreviewImg(null)}
+        >
+          <img src={previewImg.dataUrl} alt={previewImg.name} className="max-w-full max-h-full rounded" />
+        </div>
+      )}
+    </>
+  );
+}
+
+function NewProjectModal({ onSave, onClose }) {
+  const [form, setForm] = useState({
+    name: '',
+    code: '',
+    status: '進行中',
+    supplier: '',
+    idDesigner: '',
+    threeDDesigner: '',
+    openDate: new Date().toISOString().split('T')[0],
+    category: '',
+    designs: { ID: [], '3D': [], BOM: [] },
+    hasDFM: false,
+    dfmNotes: '',
+    prototypeOrders: [],
+    mouldOrders: [],
+    trialRuns: [],
+    materialCodeStatus: '未申請',
+    trialNotes: '',
+    phaseOverride: null,
+    tags: [],
+    updates: [],
+    productImages: [],
+    notes: '',
+  });
+
+  const update = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
+
+  const submit = () => {
+    if (!form.name.trim()) {
+      alert('請輸入品名');
+      return;
+    }
+    onSave(form);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
+      <div className="bg-white w-full sm:max-w-xl sm:rounded-xl min-h-screen sm:min-h-0 sm:max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+          <h2 className="text-base font-medium">新增專案</h2>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">品名 *</label>
+            <input
+              type="text"
+              value={form.name}
+              onChange={(e) => update('name', e.target.value)}
+              autoFocus
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">料號</label>
+              <input
+                type="text"
+                value={form.code}
+                onChange={(e) => update('code', e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">狀態</label>
+              <select
+                value={form.status}
+                onChange={(e) => update('status', e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+              >
+                {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">供應商</label>
+              <input
+                type="text"
+                value={form.supplier}
+                onChange={(e) => update('supplier', e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">類別</label>
+              <input
+                type="text"
+                value={form.category}
+                onChange={(e) => update('category', e.target.value)}
+                placeholder="例：MagSafe 系列"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">ID 設計</label>
+              <input
+                type="text"
+                value={form.idDesigner}
+                onChange={(e) => update('idDesigner', e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">3D 設計</label>
+              <input
+                type="text"
+                value={form.threeDDesigner}
+                onChange={(e) => update('threeDDesigner', e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">開案日</label>
+            <input
+              type="date"
+              value={form.openDate}
+              onChange={(e) => update('openDate', e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+            />
+          </div>
+          <p className="text-xs text-slate-400 leading-relaxed pt-1">
+            建立後可在詳細頁面上傳產品圖片、新增進度更新、設定設計階段、加入標籤與備註。
+          </p>
+        </div>
+        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">取消</button>
+          <button onClick={submit} className="px-4 py-2 text-sm bg-slate-900 text-white rounded-lg hover:bg-slate-800">建立</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SaveStatusIndicator({ status }) {
+  if (status === 'idle') {
+    return (
+      <span
+        title="資料自動保存到本機瀏覽器"
+        className="hidden md:flex items-center gap-1 text-[10px] text-emerald-600 px-2 py-1 rounded bg-emerald-50 border border-emerald-100"
+      >
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+        已保存
+      </span>
+    );
+  }
+  if (status === 'saving') {
+    return (
+      <span className="hidden md:flex items-center gap-1 text-[10px] text-amber-600 px-2 py-1 rounded bg-amber-50 border border-amber-100">
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+        保存中...
+      </span>
+    );
+  }
+  return (
+    <span className="hidden md:flex items-center gap-1 text-[10px] text-emerald-700 px-2 py-1 rounded bg-emerald-100 border border-emerald-200 font-medium">
+      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+      ✓ 已保存
+    </span>
+  );
+}
+
+function VersionHistoryModal({ onClose }) {
+  const handleResetData = () => {
+    if (confirm('確定要清除所有資料嗎？\n\n這會刪除你輸入的所有專案，恢復成範例資料。\n建議先匯出 JSON 備份。\n\n此操作無法復原！')) {
+      try {
+        localStorage.removeItem('comart_roadmap_data');
+        alert('已清除資料，頁面將重新載入。');
+        window.location.reload();
+      } catch (e) {
+        alert('清除失敗，請手動清除瀏覽器資料。');
+      }
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl max-w-lg w-full p-5 my-auto max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-base font-medium">版本歷史</h3>
+            <p className="text-xs text-slate-500 mt-0.5">每次迭代的功能變更紀錄</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+          {VERSION_HISTORY.map((v, i) => (
+            <div key={v.version} className={`relative pl-5 ${i !== VERSION_HISTORY.length - 1 ? 'pb-4 border-l-2 border-slate-100 ml-1.5' : 'ml-1.5'}`}>
+              <div className={`absolute -left-[7px] top-0 w-3 h-3 rounded-full ${i === 0 ? 'bg-blue-500 ring-4 ring-blue-100' : 'bg-slate-300'}`}></div>
+              <div className="flex items-baseline gap-2 mb-1.5">
+                <span className={`font-mono text-sm font-medium ${i === 0 ? 'text-blue-700' : 'text-slate-700'}`}>{v.version}</span>
+                <span className="text-xs text-slate-400 tabular-nums">{v.date}</span>
+                {i === 0 && <span className="text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded font-medium">當前版本</span>}
+              </div>
+              <ul className="space-y-1 ml-2">
+                {v.changes.map((c, j) => (
+                  <li key={j} className="text-xs text-slate-600 leading-relaxed flex gap-1.5">
+                    <span className="text-slate-400 flex-shrink-0">•</span>
+                    <span>{c}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+        <div className="pt-4 mt-2 border-t border-slate-100 space-y-2">
+          <p className="text-xs text-slate-400 text-center">每次系統更新都會在此記錄變更內容</p>
+          <button
+            onClick={handleResetData}
+            className="w-full text-[11px] text-rose-600 hover:bg-rose-50 py-1.5 rounded transition border border-rose-100"
+          >
+            清除所有資料並重置（建議先匯出備份）
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  const handleSubmit = () => {
+    const user = USERS[username.toLowerCase().trim()];
+    if (!user || user.password !== password) {
+      setError('帳號或密碼錯誤');
+      return;
+    }
+    onLogin({
+      username: username.toLowerCase().trim(),
+      role: user.role,
+      name: user.name,
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-lg max-w-sm w-full p-8">
+        <div className="text-center mb-6">
+          <img src={COMART_LOGO_BASE64} alt="COMART" className="h-8 mx-auto mb-3" />
+          <h1 className="text-base font-medium text-slate-900">產品進度管理系統</h1>
+          <p className="text-xs text-slate-500 mt-1">請登入以繼續</p>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">帳號</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => { setUsername(e.target.value); setError(''); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
+              autoFocus
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">密碼</label>
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => { setPassword(e.target.value); setError(''); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
+                className="w-full px-3 py-2 pr-9 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+              />
+              <button
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700"
+                type="button"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <p className="text-xs text-rose-600 bg-rose-50 p-2 rounded border border-rose-100">{error}</p>
+          )}
+
+          <button
+            onClick={handleSubmit}
+            className="w-full bg-slate-900 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-800 transition"
+          >
+            登入
+          </button>
+        </div>
+
+        <div className="mt-6 pt-4 border-t border-slate-100">
+          <p className="text-[10px] text-slate-400 text-center leading-relaxed">
+            管理員：<code className="bg-slate-50 px-1 rounded">nina</code> / <code className="bg-slate-50 px-1 rounded">nina2026</code><br />
+            檢視者：<code className="bg-slate-50 px-1 rounded">viewer</code> / <code className="bg-slate-50 px-1 rounded">comart</code>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmDialog({ message, onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl max-w-sm w-full p-5">
+        <div className="flex items-start gap-3 mb-4">
+          <div className="w-9 h-9 rounded-full bg-rose-100 flex items-center justify-center flex-shrink-0">
+            <AlertCircle className="w-5 h-5 text-rose-600" />
+          </div>
+          <div>
+            <h3 className="text-sm font-medium mb-1">確認刪除</h3>
+            <p className="text-sm text-slate-500">{message}</p>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button onClick={onCancel} className="px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">取消</button>
+          <button onClick={onConfirm} className="px-3 py-1.5 text-sm bg-rose-600 text-white rounded-lg hover:bg-rose-700">確認刪除</button>
+        </div>
+      </div>
+    </div>
+  );
+}

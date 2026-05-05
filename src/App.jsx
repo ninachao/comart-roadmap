@@ -23,9 +23,21 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.10.0';
+const APP_VERSION = 'v0.11.0';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.11.0',
+    date: '2026-05-05',
+    changes: [
+      '進度紀錄移到「產品階段」下方（最常看的優先顯示）',
+      'ID 圖 / 3D 圖 / BOM 各版本可附加檔案連結（PDF / STP / Excel）',
+      'DFM 區塊可附加檔案連結',
+      'T1 ~ T4 試模可附加試模報告連結',
+      '料號申請新增「料號編號」欄位（申請後填入正式料號）',
+      '檔案連結支援 Google Drive / SharePoint / OneDrive 等任何雲端硬碟',
+    ],
+  },
   {
     version: 'v0.10.0',
     date: '2026-05-04',
@@ -1310,43 +1322,6 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             onOverride={(phase) => onUpdateField('phaseOverride', phase)}
           />
 
-          <DesignSection
-            designs={project.designs || { ID: [], '3D': [], BOM: [] }}
-            onChange={(d) => onUpdateField('designs', d)}
-          />
-
-          <DFMSection
-            hasDFM={project.hasDFM || false}
-            dfmNotes={project.dfmNotes || ''}
-            onToggle={(v) => onUpdateField('hasDFM', v)}
-            onNotesChange={(v) => onUpdateField('dfmNotes', v)}
-          />
-
-          <PrototypeSection
-            orders={project.prototypeOrders || []}
-            onChange={(o) => onUpdateField('prototypeOrders', o)}
-            defaultSupplier={project.supplier}
-            readOnly={isViewer}
-          />
-
-          <MouldSection
-            orders={project.mouldOrders || []}
-            onChange={(o) => onUpdateField('mouldOrders', o)}
-            defaultSupplier={project.supplier}
-            readOnly={isViewer}
-          />
-
-          <TrialSection
-            trialRuns={project.trialRuns || []}
-            trialNotes={project.trialNotes || ''}
-            onChangeRuns={(r) => onUpdateField('trialRuns', r)}
-            onChangeNotes={(v) => onUpdateField('trialNotes', v)}
-          />
-
-          <MaterialCodeSection
-            status={project.materialCodeStatus || '未申請'}
-            onChange={(v) => onUpdateField('materialCodeStatus', v)}
-          />
 
           <section>
             <div className="flex items-center justify-between mb-2">
@@ -1408,6 +1383,48 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
               </div>
             )}
           </section>
+          <DesignSection
+            designs={project.designs || { ID: [], '3D': [], BOM: [] }}
+            onChange={(d) => onUpdateField('designs', d)}
+          />
+
+          <DFMSection
+            hasDFM={project.hasDFM || false}
+            dfmNotes={project.dfmNotes || ''}
+            dfmAttachments={project.dfmAttachments || []}
+            onToggle={(v) => onUpdateField('hasDFM', v)}
+            onNotesChange={(v) => onUpdateField('dfmNotes', v)}
+            onAttachmentsChange={(v) => onUpdateField('dfmAttachments', v)}
+          />
+
+          <PrototypeSection
+            orders={project.prototypeOrders || []}
+            onChange={(o) => onUpdateField('prototypeOrders', o)}
+            defaultSupplier={project.supplier}
+            readOnly={isViewer}
+          />
+
+          <MouldSection
+            orders={project.mouldOrders || []}
+            onChange={(o) => onUpdateField('mouldOrders', o)}
+            defaultSupplier={project.supplier}
+            readOnly={isViewer}
+          />
+
+          <TrialSection
+            trialRuns={project.trialRuns || []}
+            trialNotes={project.trialNotes || ''}
+            onChangeRuns={(r) => onUpdateField('trialRuns', r)}
+            onChangeNotes={(v) => onUpdateField('trialNotes', v)}
+          />
+
+          <MaterialCodeSection
+            status={project.materialCodeStatus || '未申請'}
+            materialCode={project.materialCodeNumber || ''}
+            onChange={(v) => onUpdateField('materialCodeStatus', v)}
+            onCodeChange={(v) => onUpdateField('materialCodeNumber', v)}
+          />
+
 
           <section>
             <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide mb-2">備註 / 特色</h3>
@@ -1762,6 +1779,100 @@ function PhasePickerModal({ currentPhase, autoPhase, onSelect, onClose }) {
   );
 }
 
+function AttachmentList({ attachments, onChange, readOnly }) {
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newUrl, setNewUrl] = useState('');
+
+  const handleAdd = () => {
+    if (!newUrl.trim()) return;
+    let url = newUrl.trim();
+    if (!/^https?:\/\//.test(url)) url = 'https://' + url;
+    const name = newName.trim() || url.split('/').pop() || '附件';
+    onChange([...(attachments || []), { name, url }]);
+    setNewName(''); setNewUrl(''); setAdding(false);
+  };
+
+  const handleDelete = (idx) => {
+    onChange((attachments || []).filter((_, i) => i !== idx));
+  };
+
+  const list = attachments || [];
+
+  return (
+    <div className="mt-2">
+      {list.length > 0 && (
+        <div className="space-y-1 mb-1.5">
+          {list.map((a, i) => (
+            <div key={i} className="flex items-center gap-2 bg-slate-50 rounded px-2 py-1 group">
+              <span className="text-xs flex-shrink-0">📄</span>
+              <a
+                href={a.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 hover:underline flex-1 min-w-0 truncate"
+                title={a.url}
+              >
+                {a.name}
+              </a>
+              <span className="text-[10px] text-slate-400 flex-shrink-0">↗</span>
+              {!readOnly && (
+                <button
+                  onClick={() => handleDelete(i)}
+                  className="opacity-0 group-hover:opacity-100 transition p-0.5 text-slate-400 hover:text-rose-600 flex-shrink-0"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!readOnly && (
+        adding ? (
+          <div className="bg-blue-50/40 border border-blue-200 rounded p-2 space-y-1.5">
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="顯示名稱（例：CMMS0005_ID_V2.stp）"
+              className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
+            />
+            <input
+              type="text"
+              value={newUrl}
+              onChange={(e) => setNewUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
+              placeholder="連結網址（Google Drive、SharePoint 等）"
+              autoFocus
+              className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
+            />
+            <div className="flex justify-end gap-1.5">
+              <button
+                onClick={() => { setAdding(false); setNewName(''); setNewUrl(''); }}
+                className="text-[11px] px-2 py-0.5 hover:bg-white rounded"
+              >取消</button>
+              <button
+                onClick={handleAdd}
+                disabled={!newUrl.trim()}
+                className="text-[11px] px-2 py-0.5 bg-slate-900 text-white rounded disabled:opacity-40"
+              >加入</button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            className="text-[11px] text-blue-600 hover:bg-blue-50 px-2 py-1 rounded inline-flex items-center gap-1"
+          >
+            <Plus className="w-3 h-3" />附加檔案連結
+          </button>
+        )
+      )}
+    </div>
+  );
+}
+
 function DesignSection({ designs, onChange }) {
   const [editing, setEditing] = useState(null);
 
@@ -1823,6 +1934,14 @@ function DesignSection({ designs, onChange }) {
                         </div>
                       </div>
                       {d.notes && <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{d.notes}</p>}
+                      <AttachmentList
+                        attachments={d.attachments || []}
+                        onChange={(newAtt) => {
+                          const newList = [...list];
+                          newList[i] = { ...d, attachments: newAtt };
+                          onChange({ ...designs, [type]: newList });
+                        }}
+                      />
                     </div>
                   ))}
                 </div>
@@ -1892,14 +2011,14 @@ function DesignVersionForm({ type, data, onChange, onCancel, onSave }) {
   );
 }
 
-function DFMSection({ hasDFM, dfmNotes, onToggle, onNotesChange }) {
+function DFMSection({ hasDFM, dfmNotes, dfmAttachments, onToggle, onNotesChange, onAttachmentsChange }) {
   const [editing, setEditing] = useState(false);
   const [tempNotes, setTempNotes] = useState(dfmNotes);
 
   return (
     <CollapsibleSection
       title="DFM"
-      badge={hasDFM ? '有' : '無'}
+      badge={hasDFM ? (dfmAttachments?.length ? `有 · ${dfmAttachments.length} 檔` : '有') : '無'}
       defaultOpen={false}
       accent={hasDFM ? 'blue' : 'slate'}
     >
@@ -1941,6 +2060,10 @@ function DFMSection({ hasDFM, dfmNotes, onToggle, onNotesChange }) {
                 {dfmNotes || <span className="text-slate-400 text-xs">點擊新增 DFM 說明...</span>}
               </div>
             )}
+            <AttachmentList
+              attachments={dfmAttachments || []}
+              onChange={onAttachmentsChange}
+            />
           </div>
         )}
       </div>
@@ -2334,6 +2457,14 @@ function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes }) {
                 {r.issues && (
                   <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{r.issues}</p>
                 )}
+                <AttachmentList
+                  attachments={r.attachments || []}
+                  onChange={(newAtt) => {
+                    const updated = [...trialRuns];
+                    updated[i] = { ...r, attachments: newAtt };
+                    onChangeRuns(updated);
+                  }}
+                />
               </div>
             ))}
           </div>
@@ -2438,37 +2569,82 @@ function TrialRunForm({ data, availableRounds, onChange, onCancel, onSave }) {
   );
 }
 
-function MaterialCodeSection({ status, onChange }) {
+function MaterialCodeSection({ status, materialCode, onChange, onCodeChange }) {
   const options = ['未申請', '申請中', '已申請'];
   const colorMap = {
     '未申請': 'bg-slate-100 text-slate-600 border-slate-200',
     '申請中': 'bg-amber-100 text-amber-700 border-amber-200',
     '已申請': 'bg-emerald-100 text-emerald-700 border-emerald-200',
   };
+  const [editing, setEditing] = useState(false);
+  const [tempCode, setTempCode] = useState(materialCode || '');
 
   return (
     <CollapsibleSection
       title="料號申請"
-      badge={status}
+      badge={materialCode ? `${status} · ${materialCode}` : status}
       defaultOpen={false}
       accent={status === '已申請' ? 'emerald' : status === '申請中' ? 'amber' : 'slate'}
     >
-      <div className="mt-2 space-y-2">
+      <div className="mt-2 space-y-3">
         <p className="text-xs text-slate-500">通常在 T4 結束後申請正式料號</p>
-        <div className="flex gap-2">
-          {options.map(opt => (
-            <button
-              key={opt}
-              onClick={() => onChange(opt)}
-              className={`text-xs px-3 py-1.5 rounded border transition ${
-                status === opt
-                  ? colorMap[opt] + ' font-medium'
-                  : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'
-              }`}
+
+        <div>
+          <p className="text-xs text-slate-600 mb-1.5">狀態</p>
+          <div className="flex gap-2 flex-wrap">
+            {options.map(opt => (
+              <button
+                key={opt}
+                onClick={() => onChange(opt)}
+                className={`text-xs px-3 py-1.5 rounded border transition ${
+                  status === opt
+                    ? colorMap[opt] + ' font-medium'
+                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'
+                }`}
+              >
+                {status === opt ? '✓ ' : ''}{opt}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs text-slate-600 mb-1.5">料號編號</p>
+          {editing ? (
+            <div className="flex gap-1.5">
+              <input
+                type="text"
+                value={tempCode}
+                onChange={(e) => setTempCode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { onCodeChange(tempCode); setEditing(false); }
+                  if (e.key === 'Escape') { setTempCode(materialCode || ''); setEditing(false); }
+                }}
+                autoFocus
+                placeholder="例：CMMS0005"
+                className="flex-1 px-2 py-1.5 text-sm border border-slate-300 rounded"
+              />
+              <button
+                onClick={() => { onCodeChange(tempCode); setEditing(false); }}
+                className="text-xs px-3 py-1 bg-slate-900 text-white rounded"
+              >儲存</button>
+              <button
+                onClick={() => { setTempCode(materialCode || ''); setEditing(false); }}
+                className="text-xs px-3 py-1 hover:bg-slate-100 rounded"
+              >取消</button>
+            </div>
+          ) : (
+            <div
+              onClick={() => { setTempCode(materialCode || ''); setEditing(true); }}
+              className="text-sm cursor-text hover:bg-slate-50 px-2 py-1.5 rounded border border-slate-200 min-h-[2rem]"
             >
-              {status === opt ? '✓ ' : ''}{opt}
-            </button>
-          ))}
+              {materialCode ? (
+                <span className="font-mono text-emerald-700 font-medium">{materialCode}</span>
+              ) : (
+                <span className="text-slate-400 text-xs">點擊輸入料號（申請後填入）...</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </CollapsibleSection>

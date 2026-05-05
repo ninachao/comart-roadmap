@@ -23,9 +23,19 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.9.0';
+const APP_VERSION = 'v0.10.0';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.10.0',
+    date: '2026-05-04',
+    changes: [
+      '修復登入後出現空白頁的 bug（登入時自動重新整理）',
+      '新增「管理標籤」功能（標籤下拉旁的圖示按鈕）',
+      '可批次刪除標籤，會自動從所有相關專案中移除',
+      '顯示每個標籤被多少個專案使用',
+    ],
+  },
   {
     version: 'v0.9.0',
     date: '2026-05-04',
@@ -599,10 +609,11 @@ export default function ProductRoadmap() {
   };
 
   const handleLogin = (user) => {
-    setCurrentUser(user);
     try {
       sessionStorage.setItem('comart_roadmap_user', JSON.stringify(user));
     } catch (e) {}
+    // 重新整理頁面確保資料正確載入（修復登入後空白 bug）
+    window.location.reload();
   };
 
   const handleLogout = () => {
@@ -619,6 +630,7 @@ export default function ProductRoadmap() {
   const [showNewModal, setShowNewModal] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [showTagManager, setShowTagManager] = useState(false);
 
   // 登入前畫面（移到所有 hook 之後才能 return）
   if (!currentUser) {
@@ -710,6 +722,17 @@ export default function ProductRoadmap() {
     const updated = { ...target, stages: { ...target.stages, [stage]: !target.stages?.[stage] } };
     saveProjectToCloud(updated);
     setSelectedProject(prev => prev && prev.id === projectId ? updated : prev);
+  };
+
+  // 從所有專案中移除某個標籤
+  const handleDeleteTag = (tagToRemove) => {
+    if (!isAdmin) return;
+    const affectedProjects = projects.filter(p => (p.tags || []).includes(tagToRemove));
+    affectedProjects.forEach(p => {
+      const updated = { ...p, tags: (p.tags || []).filter(t => t !== tagToRemove) };
+      saveProjectToCloud(updated);
+    });
+    if (tagFilter === tagToRemove) setTagFilter('全部');
   };
 
   const handleDelete = (id) => {
@@ -880,14 +903,25 @@ export default function ProductRoadmap() {
               />
             </div>
             {allTags.length > 0 && (
-              <select
-                value={tagFilter}
-                onChange={(e) => setTagFilter(e.target.value)}
-                className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
-              >
-                <option value="全部">全部標籤</option>
-                {allTags.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
+              <div className="flex gap-1">
+                <select
+                  value={tagFilter}
+                  onChange={(e) => setTagFilter(e.target.value)}
+                  className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+                >
+                  <option value="全部">全部標籤</option>
+                  {allTags.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                {isAdmin && (
+                  <button
+                    onClick={() => setShowTagManager(true)}
+                    title="管理標籤"
+                    className="px-2 py-2 text-slate-500 hover:bg-slate-100 rounded-lg border border-slate-200"
+                  >
+                    <Tag className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
@@ -964,6 +998,15 @@ export default function ProductRoadmap() {
 
       {showVersionHistory && (
         <VersionHistoryModal onClose={() => setShowVersionHistory(false)} />
+      )}
+
+      {showTagManager && (
+        <TagManagerModal
+          allTags={allTags}
+          projects={projects}
+          onDelete={handleDeleteTag}
+          onClose={() => setShowTagManager(false)}
+        />
       )}
     </div>
   );
@@ -2878,6 +2921,85 @@ function LoginScreen({ onLogin }) {
           <p className="text-[10px] text-slate-400 text-center leading-relaxed">
             管理員：<code className="bg-slate-50 px-1 rounded">nina</code> / <code className="bg-slate-50 px-1 rounded">nina2026</code><br />
             檢視者：<code className="bg-slate-50 px-1 rounded">viewer</code> / <code className="bg-slate-50 px-1 rounded">comart</code>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TagManagerModal({ allTags, projects, onDelete, onClose }) {
+  const [confirming, setConfirming] = useState(null);
+
+  // 計算每個標籤被多少個專案使用
+  const tagUsage = {};
+  allTags.forEach(t => {
+    tagUsage[t] = projects.filter(p => (p.tags || []).includes(t)).length;
+  });
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl max-w-md w-full p-5 my-auto max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-base font-medium">管理標籤</h3>
+            <p className="text-xs text-slate-500 mt-0.5">刪除不再使用的標籤（會從所有相關專案中移除）</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {allTags.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-8">目前沒有任何標籤</p>
+          ) : (
+            <ul className="space-y-2">
+              {allTags.map(t => (
+                <li key={t} className="flex items-center justify-between gap-2 p-2 bg-slate-50 rounded-lg">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="text-sm text-violet-700 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded">{t}</span>
+                    <span className="text-xs text-slate-500">{tagUsage[t]} 個專案使用</span>
+                  </div>
+                  <button
+                    onClick={() => setConfirming(t)}
+                    className="text-xs text-rose-600 hover:bg-rose-50 px-2 py-1 rounded border border-rose-100"
+                  >
+                    刪除
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {confirming && (
+          <div className="mt-4 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+            <p className="text-sm text-slate-700 mb-2">
+              確定刪除標籤 <span className="font-medium text-rose-700">{confirming}</span>？
+            </p>
+            <p className="text-xs text-slate-500 mb-3">
+              這會從 {tagUsage[confirming]} 個專案中移除此標籤，無法復原。
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setConfirming(null)}
+                className="text-xs px-3 py-1 hover:bg-white rounded"
+              >取消</button>
+              <button
+                onClick={() => {
+                  onDelete(confirming);
+                  setConfirming(null);
+                }}
+                className="text-xs px-3 py-1 bg-rose-600 text-white rounded hover:bg-rose-700"
+              >確認刪除</button>
+            </div>
+          </div>
+        )}
+
+        <div className="pt-3 mt-3 border-t border-slate-100">
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            提示：這裡只能刪除「全域標籤」。要修改單一專案的標籤，請進入該專案編輯。
           </p>
         </div>
       </div>

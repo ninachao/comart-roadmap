@@ -39,9 +39,20 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.13.0';
+const APP_VERSION = 'v0.14.0';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.14.0',
+    date: '2026-05-05',
+    changes: [
+      '類別欄位改為從料號自動推算（依編碼 SOP）',
+      '新增專案：類別欄會即時顯示推算結果（例：MGM · 磁吸 / 吸盤）',
+      '可手動覆蓋類別（特殊狀況用）',
+      '若已手動覆蓋，可點「還原自動」回到推算值',
+      '舊料號（不符合 SOP 格式）會保留原本手動輸入的類別',
+    ],
+  },
   {
     version: 'v0.13.0',
     date: '2026-05-05',
@@ -1318,7 +1329,12 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
               <InfoField label="供應商" value={project.supplier} onSave={(v) => onUpdateField('supplier', v)} />
               <InfoField label="ID 設計" value={project.idDesigner} onSave={(v) => onUpdateField('idDesigner', v)} />
               <InfoField label="3D 設計" value={project.threeDDesigner} onSave={(v) => onUpdateField('threeDDesigner', v)} />
-              <InfoField label="類別" value={project.category} onSave={(v) => onUpdateField('category', v)} />
+              <InfoField
+                label="類別"
+                value={project.category || deriveCategoryFromCode(project.code)}
+                placeholder={deriveCategoryFromCode(project.code) ? '依料號自動帶入' : ''}
+                onSave={(v) => onUpdateField('category', v)}
+              />
               <InfoField label="開案日" value={project.openDate} type="date" onSave={(v) => onUpdateField('openDate', v)} />
             </div>
           </section>
@@ -1501,7 +1517,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
   );
 }
 
-function InfoField({ label, value, type = 'text', onSave }) {
+function InfoField({ label, value, type = 'text', onSave, placeholder = '' }) {
   const [editing, setEditing] = useState(false);
   const [temp, setTemp] = useState(value || '');
 
@@ -1510,7 +1526,10 @@ function InfoField({ label, value, type = 'text', onSave }) {
 
   return (
     <div>
-      <p className="text-xs text-slate-500 mb-0.5">{label}</p>
+      <div className="flex items-baseline justify-between">
+        <p className="text-xs text-slate-500 mb-0.5">{label}</p>
+        {placeholder && !editing && <span className="text-[9px] text-slate-400">{placeholder}</span>}
+      </div>
       {editing ? (
         <input
           type={type}
@@ -3308,6 +3327,18 @@ function ProductCodeWizard({ existingCodes, onApply, onClose }) {
   );
 }
 
+// 從料號推算類別（顯示用：「MGM · 磁吸固定」）
+function deriveCategoryFromCode(code) {
+  if (!code) return '';
+  const parsed = parseProductCode(code);
+  if (!parsed) return ''; // 舊格式或不合規 → 不推算
+  const cat = CATEGORY_CODES.find(c => c.code === parsed.category);
+  const feat = FEATURE_CODES.find(f => f.code === parsed.feature);
+  if (!cat) return '';
+  // 優先顯示分類碼說明，加上特徵碼簡短描述
+  return `${cat.code} · ${cat.label}${feat ? ` / ${feat.label}` : ''}`;
+}
+
 function NewProjectModal({ onSave, onClose, existingCodes = [] }) {
   const [showWizard, setShowWizard] = useState(false);
   const [form, setForm] = useState({
@@ -3341,7 +3372,13 @@ function NewProjectModal({ onSave, onClose, existingCodes = [] }) {
       alert('請輸入品名');
       return;
     }
-    onSave(form);
+    // 如果類別空白但料號合規，自動帶入推算的類別
+    const finalForm = { ...form };
+    if (!finalForm.category && finalForm.code) {
+      const derived = deriveCategoryFromCode(finalForm.code);
+      if (derived) finalForm.category = derived;
+    }
+    onSave(finalForm);
   };
 
   return (
@@ -3413,14 +3450,37 @@ function NewProjectModal({ onSave, onClose, existingCodes = [] }) {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">類別</label>
-              <input
-                type="text"
-                value={form.category}
-                onChange={(e) => update('category', e.target.value)}
-                placeholder="例：MagSafe 系列"
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
-              />
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-slate-700">類別</label>
+                {form.code && deriveCategoryFromCode(form.code) && (
+                  <span className="text-[10px] text-slate-400">依料號自動帶入</span>
+                )}
+              </div>
+              {(() => {
+                const derived = deriveCategoryFromCode(form.code);
+                const displayValue = form.category || derived;
+                return (
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={displayValue}
+                      onChange={(e) => update('category', e.target.value)}
+                      placeholder={derived ? '（依料號自動帶入）' : '請先填料號或手動輸入'}
+                      className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:border-slate-400 ${
+                        !form.category && derived ? 'bg-blue-50/50 border-blue-200 text-blue-900' : 'border-slate-200'
+                      }`}
+                    />
+                    {form.category && derived && form.category !== derived && (
+                      <button
+                        type="button"
+                        onClick={() => update('category', '')}
+                        title="還原為自動推算"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-blue-600 hover:underline"
+                      >還原自動</button>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">

@@ -39,9 +39,24 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.15.0';
+const APP_VERSION = 'v0.16.0';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.16.0',
+    date: '2026-05-05',
+    changes: [
+      '🎉 全部檔案上傳區塊支援拖放上傳（從電腦、SharePoint 拖檔案進來即可）',
+      '產品圖片區塊也支援拖放上傳',
+      '「狀態」改為「設計狀態」',
+      '狀態選項改為：設計中 / DFM 中 / 設計完成 / 暫停 / 取消',
+      '篩選器預設為「設計中」',
+      '舊資料「進行中」「完成」「待開案」仍可正常顯示',
+      '郵件主旨升級為多條清單，每條可標記「內部 / 客戶 / 其他」',
+      '每條郵件主旨都可獨立點擊到 Outlook 搜尋',
+      '列表卡片若多條郵件主旨會顯示 📧×N 數量',
+    ],
+  },
   {
     version: 'v0.15.0',
     date: '2026-05-05',
@@ -226,19 +241,27 @@ const PHASE_COLORS = {
 };
 
 
-const STATUS_OPTIONS = ['進行中', '暫停', '完成', '取消', '待開案'];
+const STATUS_OPTIONS = ['設計中', 'DFM 中', '設計完成', '暫停', '取消'];
 const STATUS_COLORS = {
-  '進行中': 'bg-blue-100 text-blue-800 border-blue-300',
+  '設計中': 'bg-blue-100 text-blue-800 border-blue-300',
+  'DFM 中': 'bg-violet-100 text-violet-800 border-violet-300',
+  '設計完成': 'bg-emerald-100 text-emerald-800 border-emerald-300',
   '暫停': 'bg-amber-100 text-amber-800 border-amber-300',
-  '完成': 'bg-emerald-100 text-emerald-800 border-emerald-300',
   '取消': 'bg-rose-100 text-rose-800 border-rose-300',
+  // 兼容舊資料：
+  '進行中': 'bg-blue-100 text-blue-800 border-blue-300',
+  '完成': 'bg-emerald-100 text-emerald-800 border-emerald-300',
   '待開案': 'bg-slate-100 text-slate-700 border-slate-300',
 };
 const STATUS_DOTS = {
-  '進行中': 'bg-blue-500',
+  '設計中': 'bg-blue-500',
+  'DFM 中': 'bg-violet-500',
+  '設計完成': 'bg-emerald-500',
   '暫停': 'bg-amber-500',
-  '完成': 'bg-emerald-500',
   '取消': 'bg-rose-500',
+  // 兼容：
+  '進行中': 'bg-blue-500',
+  '完成': 'bg-emerald-500',
   '待開案': 'bg-slate-400',
 };
 
@@ -701,7 +724,7 @@ export default function ProductRoadmap() {
   };
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('進行中');
+  const [statusFilter, setStatusFilter] = useState('設計中');
   const [tagFilter, setTagFilter] = useState('全部');
   const [selectedProject, setSelectedProject] = useState(null);
   const [showNewModal, setShowNewModal] = useState(false);
@@ -1193,18 +1216,28 @@ function ProjectRow({ project, onClick }) {
                 <span className={`text-xs px-2 py-0.5 rounded border ${cfg}`}>{project.status}</span>
                 {project.supplier && <span className="text-xs text-slate-500">{project.supplier}</span>}
                 {project.category && <span className="text-xs text-slate-400">· {project.category}</span>}
-                {project.emailSubject && (
-                  <a
-                    href={`https://outlook.office.com/mail/inbox/?search=${encodeURIComponent(project.emailSubject)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    title={`在 Outlook 搜尋: ${project.emailSubject}`}
-                    className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 inline-flex items-center"
-                  >
-                    📧
-                  </a>
-                )}
+                {(() => {
+                  const subjects = normalizeEmailSubjects(project);
+                  if (subjects.length === 0) return null;
+                  // 如果只有 1 條：點圖示直接搜尋
+                  // 如果多條：第一條當預設，title 列出全部
+                  const first = subjects[0];
+                  const title = subjects.length === 1
+                    ? `在 Outlook 搜尋: ${first.subject}`
+                    : `${subjects.length} 條郵件主旨，點選打開第一條: ${first.kind} - ${first.subject}`;
+                  return (
+                    <a
+                      href={`https://outlook.office.com/mail/inbox/?search=${encodeURIComponent(first.subject)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      title={title}
+                      className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 inline-flex items-center gap-0.5"
+                    >
+                      📧{subjects.length > 1 ? <span className="text-[10px]">×{subjects.length}</span> : null}
+                    </a>
+                  );
+                })()}
                 {(project.tags || []).map(t => (
                   <span key={t} className="text-xs px-2 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200">
                     {t}
@@ -1362,8 +1395,8 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           </section>
 
           <EmailSubjectSection
-            subject={project.emailSubject || ''}
-            onChange={(v) => onUpdateField('emailSubject', v)}
+            project={project}
+            onChange={(v) => onUpdateField('emailSubjects', v)}
           />
 
           <section>
@@ -1544,62 +1577,136 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
   );
 }
 
-function EmailSubjectSection({ subject, onChange }) {
-  const [editing, setEditing] = useState(false);
-  const [temp, setTemp] = useState(subject);
+// 兼容舊版單字串 emailSubject 與新的 emailSubjects 陣列
+function normalizeEmailSubjects(project) {
+  if (Array.isArray(project.emailSubjects)) return project.emailSubjects;
+  if (project.emailSubject) {
+    return [{ kind: '其他', subject: project.emailSubject }];
+  }
+  return [];
+}
 
-  const start = () => { setTemp(subject); setEditing(true); };
-  const commit = () => { onChange(temp.trim()); setEditing(false); };
+function EmailSubjectSection({ project, onChange }) {
+  const subjects = normalizeEmailSubjects(project);
+  const [adding, setAdding] = useState(false);
+  const [editIdx, setEditIdx] = useState(null);
+  const [tempKind, setTempKind] = useState('內部');
+  const [tempSubject, setTempSubject] = useState('');
 
-  // Outlook Web 搜尋連結（會打開 Outlook Web 並搜尋這個主旨）
-  // 同時 outlook:// 協定可在桌面 Outlook 開搜尋（部分 Windows）
-  const buildSearchUrl = (s) => {
-    const encoded = encodeURIComponent(s);
-    return `https://outlook.office.com/mail/inbox/?search=${encoded}`;
+  const buildSearchUrl = (s) => `https://outlook.office.com/mail/inbox/?search=${encodeURIComponent(s)}`;
+
+  const KIND_STYLES = {
+    '內部': 'bg-blue-50 text-blue-700 border-blue-200',
+    '客戶': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    '其他': 'bg-slate-50 text-slate-600 border-slate-200',
   };
+  const KIND_OPTIONS = ['內部', '客戶', '其他'];
+
+  const startAdd = () => {
+    setTempKind('內部'); setTempSubject(''); setAdding(true); setEditIdx(null);
+  };
+  const startEdit = (idx) => {
+    setTempKind(subjects[idx].kind); setTempSubject(subjects[idx].subject); setEditIdx(idx); setAdding(false);
+  };
+  const cancel = () => {
+    setAdding(false); setEditIdx(null); setTempSubject(''); setTempKind('內部');
+  };
+  const commitNew = () => {
+    if (!tempSubject.trim()) return;
+    onChange([...subjects, { kind: tempKind, subject: tempSubject.trim() }]);
+    cancel();
+  };
+  const commitEdit = () => {
+    if (!tempSubject.trim()) return;
+    const updated = [...subjects];
+    updated[editIdx] = { kind: tempKind, subject: tempSubject.trim() };
+    onChange(updated);
+    cancel();
+  };
+  const remove = (idx) => {
+    onChange(subjects.filter((_, i) => i !== idx));
+  };
+
+  const renderForm = (onCommit) => (
+    <div className="bg-blue-50/40 border border-blue-200 rounded p-2 space-y-1.5">
+      <div className="flex gap-1">
+        {KIND_OPTIONS.map(k => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setTempKind(k)}
+            className={`text-[11px] px-2 py-0.5 rounded border ${
+              tempKind === k ? KIND_STYLES[k] + ' font-medium' : 'bg-white border-slate-200 text-slate-500'
+            }`}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <input
+        type="text"
+        value={tempSubject}
+        onChange={(e) => setTempSubject(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') onCommit(); if (e.key === 'Escape') cancel(); }}
+        autoFocus
+        placeholder="例：COMART_CMMS0007_球頭規格確認"
+        className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
+      />
+      <div className="flex justify-end gap-1.5">
+        <button onClick={cancel} className="text-[11px] px-2 py-0.5 hover:bg-white rounded">取消</button>
+        <button onClick={onCommit} disabled={!tempSubject.trim()} className="text-[11px] px-2 py-0.5 bg-slate-900 text-white rounded disabled:opacity-40">儲存</button>
+      </div>
+    </div>
+  );
 
   return (
     <section>
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide">📧 郵件主旨</h3>
-        {subject && !editing && (
-          <a
-            href={buildSearchUrl(subject)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[11px] text-blue-600 hover:bg-blue-50 px-2 py-1 rounded inline-flex items-center gap-1 border border-blue-200 bg-blue-50/40"
-            title="在 Outlook Web 搜尋此主旨"
-          >
-            🔍 在 Outlook 搜尋此信
-          </a>
+        {!adding && editIdx === null && (
+          <button onClick={startAdd} className="text-[11px] text-blue-600 hover:bg-blue-50 px-2 py-0.5 rounded inline-flex items-center gap-1">
+            <Plus className="w-3 h-3" />新增主旨
+          </button>
         )}
       </div>
-      {editing ? (
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={temp}
-            onChange={(e) => setTemp(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
-            autoFocus
-            placeholder="例：COMART_CMMS0007_球頭規格確認"
-            className="flex-1 px-3 py-1.5 text-sm border border-slate-300 rounded"
-          />
+
+      {subjects.length === 0 && !adding ? (
+        <div className="text-xs text-slate-400 py-2 px-3 bg-slate-50 rounded border border-slate-200">
+          還沒新增任何郵件主旨。點「新增主旨」可區分內部 / 客戶郵件。
         </div>
       ) : (
-        <div
-          onClick={start}
-          className="text-sm text-slate-700 cursor-text hover:bg-slate-50 px-3 py-2 rounded border border-slate-200 min-h-[2rem]"
-        >
-          {subject || <span className="text-slate-400 text-xs">點擊新增郵件主旨...（用於 Outlook 快速搜尋）</span>}
-        </div>
+        <ul className="space-y-1.5">
+          {subjects.map((s, i) => (
+            <li key={i}>
+              {editIdx === i ? renderForm(commitEdit) : (
+                <div className="flex items-center gap-2 bg-slate-50 rounded px-2 py-1.5 group">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium flex-shrink-0 ${KIND_STYLES[s.kind] || KIND_STYLES['其他']}`}>
+                    {s.kind}
+                  </span>
+                  <span className="text-xs text-slate-700 flex-1 min-w-0 truncate" title={s.subject}>{s.subject}</span>
+                  <a
+                    href={buildSearchUrl(s.subject)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="在 Outlook 搜尋"
+                    className="text-[11px] text-blue-600 hover:bg-blue-100 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5 flex-shrink-0"
+                  >
+                    🔍 搜尋
+                  </a>
+                  <button onClick={() => startEdit(i)} className="opacity-0 group-hover:opacity-100 transition p-0.5 text-slate-400 hover:text-slate-700 flex-shrink-0">
+                    <Edit2 className="w-3 h-3" />
+                  </button>
+                  <button onClick={() => remove(i)} className="opacity-0 group-hover:opacity-100 transition p-0.5 text-slate-400 hover:text-rose-600 flex-shrink-0">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
-      {subject && (
-        <p className="text-[10px] text-slate-400 mt-1">
-          點「在 Outlook 搜尋」會打開網頁版 Outlook 並搜尋此主旨，方便找到對應信件
-        </p>
-      )}
+
+      {adding && <div className="mt-1.5">{renderForm(commitNew)}</div>}
     </section>
   );
 }
@@ -1643,14 +1750,13 @@ function ProductImagesSection({ images, onChange }) {
   const [previewIdx, setPreviewIdx] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef(null);
 
-  // 取得圖片 URL（兼容舊資料：dataUrl 或新的 url）
   const getImgUrl = (img) => img.url || img.dataUrl;
 
-  const handleUpload = async (e) => {
-    const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'));
-    e.target.value = '';
+  const uploadFiles = async (rawFiles) => {
+    const files = rawFiles.filter(f => f.type.startsWith('image/'));
     if (files.length === 0) return;
     setUploading(true);
     setProgress(0);
@@ -1663,21 +1769,29 @@ function ProductImagesSection({ images, onChange }) {
         }
         const result = await uploadFileToStorage(file, setProgress);
         newImgs.push({
-          name: result.name,
-          url: result.url,
-          path: result.path,
-          size: result.size,
-          type: result.type,
+          name: result.name, url: result.url, path: result.path,
+          size: result.size, type: result.type,
         });
       }
-      if (newImgs.length > 0) {
-        onChange([...images, ...newImgs]);
-      }
+      if (newImgs.length > 0) onChange([...images, ...newImgs]);
     } catch (err) {
       alert('上傳失敗：' + err.message);
     }
     setUploading(false);
     setProgress(0);
+  };
+
+  const handleUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    await uploadFiles(files);
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (uploading) return;
+    await uploadFiles(Array.from(e.dataTransfer.files || []));
   };
 
   const handleSetAsMain = (idx) => {
@@ -1698,9 +1812,16 @@ function ProductImagesSection({ images, onChange }) {
   };
 
   return (
-    <section>
+    <section
+      onDragOver={(e) => { e.preventDefault(); if (!uploading) setDragOver(true); }}
+      onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
+      onDrop={handleDrop}
+      className={dragOver ? 'ring-2 ring-blue-400 ring-offset-2 rounded-lg' : ''}
+    >
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide">產品圖片</h3>
+        <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide">
+          產品圖片 {dragOver && <span className="text-blue-600 ml-2 text-[11px]">↓ 放開以上傳</span>}
+        </h3>
         <button
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
@@ -2073,6 +2194,7 @@ function AttachmentList({ attachments, onChange, readOnly }) {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [previewing, setPreviewing] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
   const handleAddLink = () => {
@@ -2084,10 +2206,8 @@ function AttachmentList({ attachments, onChange, readOnly }) {
     setNewName(''); setNewUrl(''); setAdding(false);
   };
 
-  const handleFilePick = async (e) => {
-    const files = Array.from(e.target.files || []);
+  const handleFiles = async (files) => {
     if (files.length === 0) return;
-    e.target.value = '';
     setUploading(true);
     setProgress(0);
     const newItems = [];
@@ -2099,12 +2219,8 @@ function AttachmentList({ attachments, onChange, readOnly }) {
         }
         const result = await uploadFileToStorage(file, setProgress);
         newItems.push({
-          name: result.name,
-          url: result.url,
-          path: result.path,
-          size: result.size,
-          type: result.type,
-          kind: 'upload',
+          name: result.name, url: result.url, path: result.path,
+          size: result.size, type: result.type, kind: 'upload',
         });
       }
       if (newItems.length > 0) {
@@ -2115,6 +2231,33 @@ function AttachmentList({ attachments, onChange, readOnly }) {
     }
     setUploading(false);
     setProgress(0);
+  };
+
+  const handleFilePick = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    await handleFiles(files);
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    if (readOnly || uploading) return;
+    const files = Array.from(e.dataTransfer.files || []);
+    await handleFiles(files);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!readOnly && !uploading) setDragOver(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
   };
 
   const handleDelete = async (idx) => {
@@ -2128,7 +2271,17 @@ function AttachmentList({ attachments, onChange, readOnly }) {
   const list = attachments || [];
 
   return (
-    <div className="mt-2">
+    <div
+      className={`mt-2 transition rounded ${dragOver ? 'bg-blue-50 ring-2 ring-blue-400 ring-offset-1 p-1' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {dragOver && (
+        <div className="text-center py-1.5 text-xs text-blue-700 font-medium">
+          ↓ 放開以上傳檔案
+        </div>
+      )}
       {list.length > 0 && (
         <div className="space-y-1 mb-1.5">
           {list.map((a, i) => {
@@ -2202,13 +2355,14 @@ function AttachmentList({ attachments, onChange, readOnly }) {
             </div>
           </div>
         ) : (
-          <div className="flex gap-1.5">
+          <div className="flex gap-1.5 items-center flex-wrap">
             <button onClick={() => fileInputRef.current?.click()} className="text-[11px] text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded inline-flex items-center gap-1 border border-emerald-200">
               <Upload className="w-3 h-3" />上傳檔案
             </button>
             <button onClick={() => setAdding(true)} className="text-[11px] text-blue-600 hover:bg-blue-50 px-2 py-1 rounded inline-flex items-center gap-1">
               <Plus className="w-3 h-3" />貼連結
             </button>
+            <span className="text-[10px] text-slate-400">或拖檔案到這裡</span>
             <input ref={fileInputRef} type="file" multiple onChange={handleFilePick} className="hidden" />
           </div>
         )
@@ -3431,7 +3585,7 @@ function NewProjectModal({ onSave, onClose, existingCodes = [] }) {
   const [form, setForm] = useState({
     name: '',
     code: '',
-    status: '進行中',
+    status: '設計中',
     supplier: '',
     idDesigner: '',
     threeDDesigner: '',
@@ -3518,7 +3672,7 @@ function NewProjectModal({ onSave, onClose, existingCodes = [] }) {
               )}
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">狀態</label>
+              <label className="block text-xs font-medium text-slate-700 mb-1">設計狀態</label>
               <select
                 value={form.status}
                 onChange={(e) => update('status', e.target.value)}
@@ -3601,21 +3755,8 @@ function NewProjectModal({ onSave, onClose, existingCodes = [] }) {
               className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
             />
           </div>
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-medium text-slate-700">郵件主旨</label>
-              <span className="text-[10px] text-slate-400">未來在 Outlook 搜尋此主旨用</span>
-            </div>
-            <input
-              type="text"
-              value={form.emailSubject}
-              onChange={(e) => update('emailSubject', e.target.value)}
-              placeholder="例：COMART_CMMS0007_球頭規格確認"
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
-            />
-          </div>
           <p className="text-xs text-slate-400 leading-relaxed pt-1">
-            建立後可在詳細頁面上傳產品圖片、新增進度更新、設定設計階段、加入標籤與備註。
+            建立後可在詳細頁面上傳產品圖片、新增進度更新、加入郵件主旨（內部/客戶）、設定設計階段、加入標籤與備註。
           </p>
         </div>
         <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-200">

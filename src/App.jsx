@@ -39,9 +39,20 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.14.0';
+const APP_VERSION = 'v0.15.0';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.15.0',
+    date: '2026-05-05',
+    changes: [
+      '產品階段文字調整（DVT = DFA/DFM 設計驗證、PVT = 試產）',
+      '階段自動推算邏輯配合新定義（DFM 完成 → DVT、有試模 → PVT）',
+      '新增「郵件主旨」欄位（新增表單 + 詳細頁）',
+      '產品列表顯示 📧 圖示，點擊直接打開 Outlook Web 搜尋對應信件',
+      '詳細頁有獨立的郵件主旨區塊，可即時編輯與快速搜尋',
+    ],
+  },
   {
     version: 'v0.14.0',
     date: '2026-05-05',
@@ -201,8 +212,8 @@ const COMART_LOGO_BASE64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAfYAAA
 const PHASE_DEFINITIONS = [
   { key: '規劃', label: '規劃', subtitle: '設計階段', desc: '尚未開始手板，仍在 ID/3D/BOM 設計' },
   { key: 'EVT', label: 'EVT', subtitle: '工程驗證 / 手板', desc: '透過手板驗證設計可行性' },
-  { key: 'DVT', label: 'DVT', subtitle: '設計驗證 / T1-T2', desc: '模具開出來試模，確認設計' },
-  { key: 'PVT', label: 'PVT', subtitle: '量產驗證 / T3-T4', desc: '量產前最終驗證' },
+  { key: 'DVT', label: 'DVT', subtitle: '設計驗證 (DFA, DFM)', desc: '完成 DFA/DFM 設計驗證' },
+  { key: 'PVT', label: 'PVT', subtitle: '試產', desc: 'T1~T4 試模、量產前最終驗證' },
   { key: 'MP', label: 'MP', subtitle: '量產', desc: '料號已申請，正式量產' },
 ];
 
@@ -1081,16 +1092,21 @@ export default function ProductRoadmap() {
 
 // 根據資料自動判斷目前階段
 function computeAutoPhase(project) {
+  // MP：料號已申請
   if (project.materialCodeStatus === '已申請') return 'MP';
-  if (project.materialCodeStatus === '申請中') return 'PVT';
 
+  // PVT：試模或料號申請中（T1~T4 都算試產）
   const trialRounds = (project.trialRuns || []).map(r => r.round);
-  if (trialRounds.includes('T3') || trialRounds.includes('T4')) return 'PVT';
-  if (trialRounds.includes('T1') || trialRounds.includes('T2')) return 'DVT';
+  if (project.materialCodeStatus === '申請中') return 'PVT';
+  if (trialRounds.length > 0) return 'PVT';
 
-  if ((project.mouldOrders || []).length > 0) return 'DVT';
+  // DVT：DFM 完成（DFA/DFM 設計驗證）
+  if (project.hasDFM && (project.dfmNotes || (project.dfmAttachments || []).length > 0)) return 'DVT';
+
+  // EVT：有手板（工程驗證）
   if ((project.prototypeOrders || []).length > 0) return 'EVT';
 
+  // 規劃：尚未開始手板
   return '規劃';
 }
 
@@ -1122,25 +1138,19 @@ function getPhaseDetail(project) {
   }
 
   if (phase === 'DVT') {
-    const trials = project.trialRuns || [];
-    const dvt = trials.filter(t => t.round === 'T1' || t.round === 'T2');
-    if (dvt.length > 0) {
-      const last = dvt[dvt.length - 1];
-      return `${last.round} 完成`;
-    }
-    if ((project.mouldOrders || []).length > 0) return '模具下訂';
+    if (project.hasDFM) return 'DFM 進行中';
     return '進行中';
   }
 
   if (phase === 'PVT') {
     const trials = project.trialRuns || [];
-    const pvt = trials.filter(t => t.round === 'T3' || t.round === 'T4');
-    if (pvt.length > 0) {
-      const last = pvt[pvt.length - 1];
+    if (trials.length > 0) {
+      const last = trials[trials.length - 1];
       return `${last.round} 完成`;
     }
+    if ((project.mouldOrders || []).length > 0) return '模具下訂';
     if (project.materialCodeStatus === '申請中') return '料號申請中';
-    return '進行中';
+    return '試產中';
   }
 
   if (phase === 'MP') return '已量產';
@@ -1183,6 +1193,18 @@ function ProjectRow({ project, onClick }) {
                 <span className={`text-xs px-2 py-0.5 rounded border ${cfg}`}>{project.status}</span>
                 {project.supplier && <span className="text-xs text-slate-500">{project.supplier}</span>}
                 {project.category && <span className="text-xs text-slate-400">· {project.category}</span>}
+                {project.emailSubject && (
+                  <a
+                    href={`https://outlook.office.com/mail/inbox/?search=${encodeURIComponent(project.emailSubject)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    title={`在 Outlook 搜尋: ${project.emailSubject}`}
+                    className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 inline-flex items-center"
+                  >
+                    📧
+                  </a>
+                )}
                 {(project.tags || []).map(t => (
                   <span key={t} className="text-xs px-2 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200">
                     {t}
@@ -1338,6 +1360,11 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
               <InfoField label="開案日" value={project.openDate} type="date" onSave={(v) => onUpdateField('openDate', v)} />
             </div>
           </section>
+
+          <EmailSubjectSection
+            subject={project.emailSubject || ''}
+            onChange={(v) => onUpdateField('emailSubject', v)}
+          />
 
           <section>
             <div className="flex items-center justify-between mb-2">
@@ -1514,6 +1541,66 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
         </div>
       </div>
     </div>
+  );
+}
+
+function EmailSubjectSection({ subject, onChange }) {
+  const [editing, setEditing] = useState(false);
+  const [temp, setTemp] = useState(subject);
+
+  const start = () => { setTemp(subject); setEditing(true); };
+  const commit = () => { onChange(temp.trim()); setEditing(false); };
+
+  // Outlook Web 搜尋連結（會打開 Outlook Web 並搜尋這個主旨）
+  // 同時 outlook:// 協定可在桌面 Outlook 開搜尋（部分 Windows）
+  const buildSearchUrl = (s) => {
+    const encoded = encodeURIComponent(s);
+    return `https://outlook.office.com/mail/inbox/?search=${encoded}`;
+  };
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide">📧 郵件主旨</h3>
+        {subject && !editing && (
+          <a
+            href={buildSearchUrl(subject)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] text-blue-600 hover:bg-blue-50 px-2 py-1 rounded inline-flex items-center gap-1 border border-blue-200 bg-blue-50/40"
+            title="在 Outlook Web 搜尋此主旨"
+          >
+            🔍 在 Outlook 搜尋此信
+          </a>
+        )}
+      </div>
+      {editing ? (
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={temp}
+            onChange={(e) => setTemp(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+            autoFocus
+            placeholder="例：COMART_CMMS0007_球頭規格確認"
+            className="flex-1 px-3 py-1.5 text-sm border border-slate-300 rounded"
+          />
+        </div>
+      ) : (
+        <div
+          onClick={start}
+          className="text-sm text-slate-700 cursor-text hover:bg-slate-50 px-3 py-2 rounded border border-slate-200 min-h-[2rem]"
+        >
+          {subject || <span className="text-slate-400 text-xs">點擊新增郵件主旨...（用於 Outlook 快速搜尋）</span>}
+        </div>
+      )}
+      {subject && (
+        <p className="text-[10px] text-slate-400 mt-1">
+          點「在 Outlook 搜尋」會打開網頁版 Outlook 並搜尋此主旨，方便找到對應信件
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -3357,8 +3444,10 @@ function NewProjectModal({ onSave, onClose, existingCodes = [] }) {
     mouldOrders: [],
     trialRuns: [],
     materialCodeStatus: '未申請',
+    materialCodeNumber: '',
     trialNotes: '',
     phaseOverride: null,
+    emailSubject: '',
     tags: [],
     updates: [],
     productImages: [],
@@ -3510,6 +3599,19 @@ function NewProjectModal({ onSave, onClose, existingCodes = [] }) {
               value={form.openDate}
               onChange={(e) => update('openDate', e.target.value)}
               className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+            />
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-medium text-slate-700">郵件主旨</label>
+              <span className="text-[10px] text-slate-400">未來在 Outlook 搜尋此主旨用</span>
+            </div>
+            <input
+              type="text"
+              value={form.emailSubject}
+              onChange={(e) => update('emailSubject', e.target.value)}
+              placeholder="例：COMART_CMMS0007_球頭規格確認"
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
             />
           </div>
           <p className="text-xs text-slate-400 leading-relaxed pt-1">

@@ -39,9 +39,22 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.12.0';
+const APP_VERSION = 'v0.13.0';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.13.0',
+    date: '2026-05-05',
+    changes: [
+      '🎉 新增「料號編碼精靈」（依 COMART 編碼 SOP）',
+      '在新增專案時，料號欄位旁有「✨ 自動產生」按鈕',
+      '3 步驟引導：分類碼（QIC/MGM/HDR/BKT/OTH/MOD）→ 特徵碼（S/C/G/T/H/M/N）→ 流水號',
+      '系統自動偵測下一個可用流水號，杜絕重複編碼',
+      '支援後綴（-A / -B 變體、-S 配套）',
+      '料號欄位有即時重複偵測（紅框警告）',
+      '料號自動轉大寫',
+    ],
+  },
   {
     version: 'v0.12.0',
     date: '2026-05-05',
@@ -1027,6 +1040,7 @@ export default function ProductRoadmap() {
         <NewProjectModal
           onSave={handleSaveProject}
           onClose={() => setShowNewModal(false)}
+          existingCodes={projects.map(p => p.code).filter(Boolean)}
         />
       )}
 
@@ -3037,7 +3051,265 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
   );
 }
 
-function NewProjectModal({ onSave, onClose }) {
+// === 產品料號編碼規則（依 SOP 設計）===
+const CATEGORY_CODES = [
+  { code: 'QIC', label: '無線充電', desc: 'Qi Charger · 透過無線充電頭固定' },
+  { code: 'MGM', label: '磁吸', desc: 'Magnetic Mount · 透過磁吸固定' },
+  { code: 'HDR', label: '夾持', desc: 'Holder · 透過夾持固定' },
+  { code: 'BKT', label: '支架', desc: 'Bracket · 透過支架固定' },
+  { code: 'OTH', label: '其他', desc: 'Others · 其他' },
+  { code: 'MOD', label: '模組', desc: 'Module / Adapter · 不直接接觸手機' },
+];
+
+const FEATURE_CODES = [
+  { code: 'S', full: 'SCP', label: '吸盤', desc: 'Suction Cup · 貼在表面（玻璃、桌面、車上）' },
+  { code: 'C', full: 'CLP', label: '夾子', desc: 'Clip · 夾持方式固定（桌夾之類）' },
+  { code: 'G', full: 'MAG', label: '磁力', desc: 'Magnetic · 磁力固定（健身磁吸支架）' },
+  { code: 'T', full: 'TND', label: '平放', desc: 'Stand · 放著支撐（不吸/不夾/不磁）' },
+  { code: 'H', full: 'HDM', label: 'Heavy Duty', desc: '強固型支架（與 Heavy Duty 相關優先選）' },
+  { code: 'M', full: 'MNT', label: '組合', desc: 'Mounting System · 需與其他東西組合使用' },
+  { code: 'N', full: 'NON', label: '其他', desc: 'None · 其他' },
+];
+
+// 從料號解析出 prefix（前 4 碼，如 MGMS）和流水號
+function parseProductCode(code) {
+  if (!code) return null;
+  // 去掉後綴 -A / -B / -S 等
+  const main = code.split('-')[0];
+  const m = main.match(/^([A-Z]{3})([A-Z])(\d+)$/);
+  if (!m) return null;
+  return { category: m[1], feature: m[2], sequence: parseInt(m[3], 10) };
+}
+
+// 給定 category + feature，從現有料號清單算下一個流水號
+function suggestNextSequence(category, feature, existingCodes) {
+  const prefix = category + feature;
+  let maxSeq = 0;
+  existingCodes.forEach(code => {
+    const parsed = parseProductCode(code);
+    if (parsed && parsed.category === category && parsed.feature === feature) {
+      if (parsed.sequence > maxSeq) maxSeq = parsed.sequence;
+    }
+  });
+  return maxSeq + 1;
+}
+
+// 檢查料號是否與既有清單重複
+function isCodeDuplicate(code, existingCodes) {
+  if (!code) return false;
+  return existingCodes.some(c => c.toUpperCase() === code.toUpperCase());
+}
+
+function ProductCodeWizard({ existingCodes, onApply, onClose }) {
+  const [step, setStep] = useState(1);
+  const [category, setCategory] = useState(null);
+  const [feature, setFeature] = useState(null);
+  const [seqOverride, setSeqOverride] = useState(null);
+  const [suffix, setSuffix] = useState('');
+
+  const autoSeq = (category && feature)
+    ? suggestNextSequence(category.code, feature.code, existingCodes)
+    : 1;
+  const seq = seqOverride !== null ? seqOverride : autoSeq;
+  const seqStr = String(seq).padStart(4, '0');
+
+  const baseCode = (category && feature) ? `${category.code}${feature.code}${seqStr}` : '';
+  const finalCode = suffix.trim() ? `${baseCode}-${suffix.trim().toUpperCase()}` : baseCode;
+  const isDup = baseCode && isCodeDuplicate(finalCode, existingCodes);
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 z-[60] flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl max-w-xl w-full p-5 my-auto max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-base font-medium flex items-center gap-2">
+              <span>✨</span>料號編碼精靈
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">依 COMART 編碼 SOP 自動產生唯一料號</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        {/* 進度步驟 */}
+        <div className="flex items-center gap-2 mb-4 px-1">
+          {[1, 2, 3].map(s => (
+            <React.Fragment key={s}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium ${
+                s === step ? 'bg-blue-600 text-white' :
+                s < step ? 'bg-blue-100 text-blue-700' :
+                'bg-slate-100 text-slate-400'
+              }`}>
+                {s < step ? '✓' : s}
+              </div>
+              {s < 3 && <div className={`flex-1 h-0.5 ${s < step ? 'bg-blue-200' : 'bg-slate-100'}`}></div>}
+            </React.Fragment>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto pr-1">
+          {/* Step 1 */}
+          {step === 1 && (
+            <div>
+              <h4 className="text-sm font-medium text-slate-800 mb-1">手機怎麼被固定？</h4>
+              <p className="text-xs text-slate-500 mb-3">選擇分類碼（3 碼）</p>
+              <div className="space-y-1.5">
+                {CATEGORY_CODES.map(c => (
+                  <button
+                    key={c.code}
+                    onClick={() => { setCategory(c); setStep(2); }}
+                    className={`w-full text-left p-3 rounded-lg border transition ${
+                      category?.code === c.code
+                        ? 'bg-blue-50 border-blue-400 border-2'
+                        : 'bg-white border-slate-200 hover:border-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-baseline gap-2">
+                      <span className="font-mono text-sm font-medium text-blue-700">{c.code}</span>
+                      <span className="text-sm text-slate-700">{c.label}</span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">{c.desc}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Step 2 */}
+          {step === 2 && (
+            <div>
+              <h4 className="text-sm font-medium text-slate-800 mb-1">產品怎麼固定在外部？</h4>
+              <p className="text-xs text-slate-500 mb-3">選擇特徵碼（1 字簡碼，桌子/車子/牆面…）</p>
+              <div className="space-y-1.5">
+                {FEATURE_CODES.map(f => (
+                  <button
+                    key={f.code}
+                    onClick={() => { setFeature(f); setStep(3); }}
+                    className={`w-full text-left p-3 rounded-lg border transition ${
+                      feature?.code === f.code
+                        ? 'bg-emerald-50 border-emerald-400 border-2'
+                        : 'bg-white border-slate-200 hover:border-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-baseline gap-2">
+                      <span className="font-mono text-sm font-medium text-emerald-700 w-5">{f.code}</span>
+                      <span className="text-xs font-mono text-slate-400">({f.full})</span>
+                      <span className="text-sm text-slate-700">{f.label}</span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5 ml-7">{f.desc}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Step 3 */}
+          {step === 3 && category && feature && (
+            <div>
+              <h4 className="text-sm font-medium text-slate-800 mb-1">確認流水號與後綴</h4>
+              <p className="text-xs text-slate-500 mb-3">系統已自動偵測下一個可用流水號</p>
+
+              <div className="bg-slate-50 rounded-lg p-3 mb-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500">分類碼</span>
+                  <span className="font-mono text-sm font-medium text-blue-700">{category.code}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500">特徵碼</span>
+                  <span className="font-mono text-sm font-medium text-emerald-700">{feature.code}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500">流水號</span>
+                  <div className="flex items-center gap-2">
+                    {seqOverride !== null && (
+                      <button
+                        onClick={() => setSeqOverride(null)}
+                        className="text-[10px] text-blue-600 hover:underline"
+                      >還原自動</button>
+                    )}
+                    <input
+                      type="number"
+                      value={seq}
+                      onChange={(e) => setSeqOverride(parseInt(e.target.value, 10) || 1)}
+                      min="1"
+                      max="9999"
+                      className="font-mono text-sm font-medium text-slate-700 w-16 px-2 py-0.5 text-right border border-slate-200 rounded"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mb-3">
+                <p className="text-xs text-slate-600 mb-1">後綴（選用）</p>
+                <div className="flex gap-1.5 mb-2">
+                  {['', 'A', 'B', 'C', 'S'].map(s => (
+                    <button
+                      key={s || 'none'}
+                      onClick={() => setSuffix(s)}
+                      className={`text-xs px-2.5 py-1 rounded border ${
+                        suffix === s
+                          ? 'bg-violet-50 border-violet-400 text-violet-700 font-medium'
+                          : 'bg-white border-slate-200 text-slate-500 hover:border-slate-400'
+                      }`}
+                    >
+                      {s ? `-${s}` : '無'}
+                    </button>
+                  ))}
+                  <input
+                    type="text"
+                    value={suffix && !['A', 'B', 'C', 'S'].includes(suffix) ? suffix : ''}
+                    onChange={(e) => setSuffix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                    placeholder="自訂"
+                    maxLength="3"
+                    className="flex-1 text-xs px-2 py-1 border border-slate-200 rounded font-mono"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  -A / -B / -C：同產品的不同規格變體 · -S：配套的 Strap / Accessory
+                </p>
+              </div>
+
+              <div className={`rounded-lg p-4 text-center mb-3 ${
+                isDup ? 'bg-rose-50 border-2 border-rose-300' : 'bg-emerald-50 border-2 border-emerald-300'
+              }`}>
+                <p className="text-xs text-slate-500 mb-1">產生的料號</p>
+                <p className="font-mono text-2xl font-bold text-slate-800 tracking-wider">{finalCode}</p>
+                {isDup ? (
+                  <p className="text-xs text-rose-600 mt-2 font-medium">⚠ 此料號已存在，請改流水號或加後綴</p>
+                ) : (
+                  <p className="text-xs text-emerald-700 mt-2">✓ 此料號可用</p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 按鈕區 */}
+        <div className="flex items-center justify-between gap-2 pt-3 mt-3 border-t border-slate-100">
+          <button
+            onClick={() => step > 1 ? setStep(step - 1) : onClose()}
+            className="text-xs px-3 py-1.5 hover:bg-slate-100 rounded text-slate-600"
+          >
+            {step > 1 ? '← 上一步' : '取消'}
+          </button>
+          {step === 3 && (
+            <button
+              onClick={() => onApply(finalCode)}
+              disabled={isDup || !finalCode}
+              className="text-sm font-medium px-4 py-1.5 bg-slate-900 text-white rounded hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              套用此料號
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NewProjectModal({ onSave, onClose, existingCodes = [] }) {
+  const [showWizard, setShowWizard] = useState(false);
   const [form, setForm] = useState({
     name: '',
     code: '',
@@ -3094,13 +3366,30 @@ function NewProjectModal({ onSave, onClose }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">料號</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-slate-700">料號</label>
+                <button
+                  type="button"
+                  onClick={() => setShowWizard(true)}
+                  className="text-[11px] text-blue-600 hover:bg-blue-50 px-1.5 py-0.5 rounded inline-flex items-center gap-1"
+                >
+                  <span>✨</span>自動產生
+                </button>
+              </div>
               <input
                 type="text"
                 value={form.code}
-                onChange={(e) => update('code', e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+                onChange={(e) => update('code', e.target.value.toUpperCase())}
+                placeholder="例：MGMS0007"
+                className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none font-mono ${
+                  form.code && isCodeDuplicate(form.code, existingCodes || [])
+                    ? 'border-rose-400 bg-rose-50 focus:border-rose-500'
+                    : 'border-slate-200 focus:border-slate-400'
+                }`}
               />
+              {form.code && isCodeDuplicate(form.code, existingCodes || []) && (
+                <p className="text-[10px] text-rose-600 mt-0.5">⚠ 料號已存在</p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">狀態</label>
@@ -3172,6 +3461,14 @@ function NewProjectModal({ onSave, onClose }) {
           <button onClick={submit} className="px-4 py-2 text-sm bg-slate-900 text-white rounded-lg hover:bg-slate-800">建立</button>
         </div>
       </div>
+
+      {showWizard && (
+        <ProductCodeWizard
+          existingCodes={existingCodes}
+          onApply={(code) => { update('code', code); setShowWizard(false); }}
+          onClose={() => setShowWizard(false)}
+        />
+      )}
     </div>
   );
 }

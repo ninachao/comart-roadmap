@@ -1,9 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Search, Plus, X, Edit2, Trash2, Download, Upload, ChevronDown, ChevronRight, Image as ImageIcon, Calendar, Tag, AlertCircle, Filter, MessageSquare, Info, LogOut, Lock, Eye, EyeOff } from 'lucide-react';
+import { Search, Plus, X, Edit2, Trash2, Download, Upload, ChevronDown, ChevronRight, Image as ImageIcon, Calendar, Tag, AlertCircle, Filter, MessageSquare, Info, LogOut, Lock, Eye, EyeOff, FileText, Loader } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 
 // === Firebase 設定 ===
+// 主 project：負責資料庫（Firestore）
 const firebaseConfig = {
   apiKey: "AIzaSyBC9Iq-HL3w7yklHQHhuS8u1eFh861eKJg",
   authDomain: "comart-roadmap.firebaseapp.com",
@@ -12,9 +14,23 @@ const firebaseConfig = {
   messagingSenderId: "104108613534",
   appId: "1:104108613534:web:314f16d77bed32906e808f"
 };
+
+// 副 project：負責檔案儲存（Storage，老闆已升級 Blaze）
+const storageFirebaseConfig = {
+  apiKey: "AIzaSyDA62jzXGCLpini3cP4KTN0f0Rv94uGIII",
+  authDomain: "comart-product.firebaseapp.com",
+  projectId: "comart-product",
+  storageBucket: "comart-product.firebasestorage.app",
+  messagingSenderId: "33682188853",
+  appId: "1:33682188853:web:f2e72868ebd769d5121f7c"
+};
+
 const firebaseApp = initializeApp(firebaseConfig);
+const storageApp = initializeApp(storageFirebaseConfig, 'storage');
 const db = getFirestore(firebaseApp);
+const storage = getStorage(storageApp);
 const PROJECTS_COL = 'roadmap_projects';
+const STORAGE_FOLDER = 'roadmap';
 
 // === 簡易密碼設定 ===
 // 之後可改成從 Firestore users collection 讀取
@@ -23,9 +39,23 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.11.0';
+const APP_VERSION = 'v0.12.0';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.12.0',
+    date: '2026-05-05',
+    changes: [
+      '🎉 重大升級：所有檔案可直接上傳（不必跳到 Google Drive）',
+      '產品圖片改用 Firebase Storage（comart-product project）',
+      '進度紀錄圖片改用 Firebase Storage',
+      '所有附件區塊（ID/3D/BOM/DFM/T1-T4/手板/模具）支援檔案上傳',
+      '支援檔案類型：PNG、JPG、PDF、Excel、Word、STP/STEP、ZIP 等',
+      '圖片直接顯示縮圖、PDF 在系統內彈窗預覽，不開新分頁',
+      '上傳大小上限 20MB（產品圖片 10MB），超過請改貼 Google Drive 連結',
+      '保留「貼連結」功能（用於超大檔案如 STP）',
+    ],
+  },
   {
     version: 'v0.11.0',
     date: '2026-05-05',
@@ -1111,7 +1141,7 @@ function ProjectRow({ project, onClick }) {
       <div className="flex items-start gap-3">
         <div className="flex-shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center">
           {mainImage ? (
-            <img src={mainImage.dataUrl} alt={project.name} className="w-full h-full object-cover" />
+            <img src={mainImage.url || mainImage.dataUrl} alt={project.name} className="w-full h-full object-cover" />
           ) : (
             <ImageIcon className="w-5 h-5 text-slate-300" />
           )}
@@ -1491,19 +1521,43 @@ function InfoField({ label, value, type = 'text', onSave }) {
 
 function ProductImagesSection({ images, onChange }) {
   const [previewIdx, setPreviewIdx] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const fileRef = useRef(null);
 
-  const handleUpload = (e) => {
-    const files = Array.from(e.target.files || []);
-    const promises = files.map(file => new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (ev) => resolve({ name: file.name, dataUrl: ev.target.result });
-      reader.readAsDataURL(file);
-    }));
-    Promise.all(promises).then(newImgs => {
-      onChange([...images, ...newImgs]);
-    });
+  // 取得圖片 URL（兼容舊資料：dataUrl 或新的 url）
+  const getImgUrl = (img) => img.url || img.dataUrl;
+
+  const handleUpload = async (e) => {
+    const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'));
     e.target.value = '';
+    if (files.length === 0) return;
+    setUploading(true);
+    setProgress(0);
+    const newImgs = [];
+    try {
+      for (const file of files) {
+        if (file.size > 10 * 1024 * 1024) {
+          alert(`「${file.name}」超過 10MB，跳過`);
+          continue;
+        }
+        const result = await uploadFileToStorage(file, setProgress);
+        newImgs.push({
+          name: result.name,
+          url: result.url,
+          path: result.path,
+          size: result.size,
+          type: result.type,
+        });
+      }
+      if (newImgs.length > 0) {
+        onChange([...images, ...newImgs]);
+      }
+    } catch (err) {
+      alert('上傳失敗：' + err.message);
+    }
+    setUploading(false);
+    setProgress(0);
   };
 
   const handleSetAsMain = (idx) => {
@@ -1514,7 +1568,11 @@ function ProductImagesSection({ images, onChange }) {
     onChange(newImgs);
   };
 
-  const handleRemove = (idx) => {
+  const handleRemove = async (idx) => {
+    const img = images[idx];
+    if (img.path) {
+      await deleteFileFromStorage(img.path);
+    }
     onChange(images.filter((_, i) => i !== idx));
     setPreviewIdx(null);
   };
@@ -1525,10 +1583,11 @@ function ProductImagesSection({ images, onChange }) {
         <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide">產品圖片</h3>
         <button
           onClick={() => fileRef.current?.click()}
-          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
+          disabled={uploading}
+          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium disabled:opacity-40"
         >
-          <Plus className="w-3 h-3" />
-          上傳圖片
+          {uploading ? <Loader className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+          {uploading ? `上傳中 ${progress.toFixed(0)}%` : '上傳圖片'}
         </button>
         <input
           ref={fileRef}
@@ -1540,9 +1599,16 @@ function ProductImagesSection({ images, onChange }) {
         />
       </div>
 
+      {uploading && (
+        <div className="h-1 bg-blue-100 rounded-full overflow-hidden mb-2">
+          <div className="h-full bg-blue-500 transition-all" style={{ width: `${progress}%` }}></div>
+        </div>
+      )}
+
       {images.length === 0 ? (
         <button
           onClick={() => fileRef.current?.click()}
+          disabled={uploading}
           className="w-full py-6 bg-slate-50 hover:bg-slate-100 border border-dashed border-slate-300 rounded-lg flex flex-col items-center justify-center gap-2 text-slate-400 hover:text-slate-600 transition"
         >
           <ImageIcon className="w-6 h-6" />
@@ -1557,7 +1623,7 @@ function ProductImagesSection({ images, onChange }) {
                   onClick={() => setPreviewIdx(i)}
                   className="block w-full aspect-square rounded-lg border border-slate-200 overflow-hidden bg-slate-50 hover:border-slate-400"
                 >
-                  <img src={img.dataUrl} alt={img.name} className="w-full h-full object-cover" />
+                  <img src={getImgUrl(img)} alt={img.name} className="w-full h-full object-cover" />
                 </button>
                 {i === 0 && (
                   <span className="absolute top-1 left-1 text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded">主圖</span>
@@ -1592,7 +1658,7 @@ function ProductImagesSection({ images, onChange }) {
           className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
           onClick={() => setPreviewIdx(null)}
         >
-          <img src={images[previewIdx].dataUrl} alt={images[previewIdx].name} className="max-w-full max-h-full rounded" />
+          <img src={getImgUrl(images[previewIdx])} alt={images[previewIdx].name} className="max-w-full max-h-full rounded" />
         </div>
       )}
     </section>
@@ -1779,21 +1845,163 @@ function PhasePickerModal({ currentPhase, autoPhase, onSelect, onClose }) {
   );
 }
 
+// 上傳檔案到 Firebase Storage
+async function uploadFileToStorage(file, onProgress) {
+  const safeName = file.name.replace(/[^\w.-]/g, '_');
+  const path = `${STORAGE_FOLDER}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeName}`;
+  const fileRef = storageRef(storage, path);
+  const uploadTask = uploadBytesResumable(fileRef, file);
+  return new Promise((resolve, reject) => {
+    uploadTask.on('state_changed',
+      (snap) => {
+        if (onProgress) onProgress((snap.bytesTransferred / snap.totalBytes) * 100);
+      },
+      reject,
+      async () => {
+        const url = await getDownloadURL(uploadTask.snapshot.ref);
+        resolve({ url, path, name: file.name, size: file.size, type: file.type });
+      }
+    );
+  });
+}
+
+async function deleteFileFromStorage(path) {
+  if (!path) return;
+  try {
+    await deleteObject(storageRef(storage, path));
+  } catch (e) {
+    console.warn('刪除 Storage 檔案失敗:', e.message);
+  }
+}
+
+function getFileIcon(name = '', type = '') {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  if (type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return '🖼️';
+  if (ext === 'pdf' || type === 'application/pdf') return '📕';
+  if (['xlsx', 'xls', 'csv'].includes(ext)) return '📊';
+  if (['doc', 'docx'].includes(ext)) return '📝';
+  if (['stp', 'step', 'iges', 'igs', 'stl', 'obj'].includes(ext)) return '🧊';
+  if (['ppt', 'pptx'].includes(ext)) return '📊';
+  if (['zip', 'rar', '7z'].includes(ext)) return '🗜️';
+  return '📄';
+}
+
+function isImageFile(name = '', type = '') {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  return type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext);
+}
+
+function isPdfFile(name = '', type = '') {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  return type === 'application/pdf' || ext === 'pdf';
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function FilePreviewModal({ file, onClose }) {
+  if (!file) return null;
+  const isImage = isImageFile(file.name, file.type);
+  const isPdf = isPdfFile(file.name, file.type);
+  return (
+    <div className="fixed inset-0 bg-slate-900/80 z-[60] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl max-w-5xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-3 border-b border-slate-100">
+          <div className="flex items-center gap-2 min-w-0">
+            <span>{getFileIcon(file.name, file.type)}</span>
+            <span className="text-sm font-medium truncate">{file.name}</span>
+            {file.size && <span className="text-xs text-slate-400 flex-shrink-0">({formatFileSize(file.size)})</span>}
+          </div>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <a href={file.url} download={file.name} target="_blank" rel="noopener noreferrer" className="text-xs text-slate-600 hover:bg-slate-100 px-2 py-1 rounded inline-flex items-center gap-1">
+              <Download className="w-3.5 h-3.5" />下載
+            </a>
+            <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+              <X className="w-5 h-5 text-slate-500" />
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto bg-slate-50 flex items-center justify-center min-h-0">
+          {isImage ? (
+            <img src={file.url} alt={file.name} className="max-w-full max-h-[80vh] object-contain" />
+          ) : isPdf ? (
+            <iframe src={file.url} title={file.name} className="w-full h-[80vh] border-0" />
+          ) : (
+            <div className="text-center p-12">
+              <div className="text-6xl mb-4">{getFileIcon(file.name, file.type)}</div>
+              <p className="text-slate-600 mb-1">{file.name}</p>
+              <p className="text-xs text-slate-400 mb-4">此檔案類型無法在系統內預覽</p>
+              <a href={file.url} download={file.name} className="inline-flex items-center gap-1.5 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm">
+                <Download className="w-4 h-4" />下載檔案
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AttachmentList({ attachments, onChange, readOnly }) {
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [previewing, setPreviewing] = useState(null);
+  const fileInputRef = useRef(null);
 
-  const handleAdd = () => {
+  const handleAddLink = () => {
     if (!newUrl.trim()) return;
     let url = newUrl.trim();
     if (!/^https?:\/\//.test(url)) url = 'https://' + url;
     const name = newName.trim() || url.split('/').pop() || '附件';
-    onChange([...(attachments || []), { name, url }]);
+    onChange([...(attachments || []), { name, url, kind: 'link' }]);
     setNewName(''); setNewUrl(''); setAdding(false);
   };
 
-  const handleDelete = (idx) => {
+  const handleFilePick = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    e.target.value = '';
+    setUploading(true);
+    setProgress(0);
+    const newItems = [];
+    try {
+      for (const file of files) {
+        if (file.size > 20 * 1024 * 1024) {
+          alert(`「${file.name}」超過 20MB，請改用「貼連結」上傳到 Google Drive`);
+          continue;
+        }
+        const result = await uploadFileToStorage(file, setProgress);
+        newItems.push({
+          name: result.name,
+          url: result.url,
+          path: result.path,
+          size: result.size,
+          type: result.type,
+          kind: 'upload',
+        });
+      }
+      if (newItems.length > 0) {
+        onChange([...(attachments || []), ...newItems]);
+      }
+    } catch (err) {
+      alert('上傳失敗：' + err.message);
+    }
+    setUploading(false);
+    setProgress(0);
+  };
+
+  const handleDelete = async (idx) => {
+    const item = (attachments || [])[idx];
+    if (item?.kind === 'upload' && item.path) {
+      await deleteFileFromStorage(item.path);
+    }
     onChange((attachments || []).filter((_, i) => i !== idx));
   };
 
@@ -1803,75 +2011,92 @@ function AttachmentList({ attachments, onChange, readOnly }) {
     <div className="mt-2">
       {list.length > 0 && (
         <div className="space-y-1 mb-1.5">
-          {list.map((a, i) => (
-            <div key={i} className="flex items-center gap-2 bg-slate-50 rounded px-2 py-1 group">
-              <span className="text-xs flex-shrink-0">📄</span>
-              <a
-                href={a.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-blue-600 hover:underline flex-1 min-w-0 truncate"
-                title={a.url}
-              >
-                {a.name}
-              </a>
-              <span className="text-[10px] text-slate-400 flex-shrink-0">↗</span>
-              {!readOnly && (
+          {list.map((a, i) => {
+            const isImage = isImageFile(a.name, a.type);
+            return (
+              <div key={i} className="flex items-center gap-2 bg-slate-50 rounded px-2 py-1 group">
+                {isImage && a.kind === 'upload' ? (
+                  <img src={a.url} alt={a.name} className="w-8 h-8 object-cover rounded flex-shrink-0 cursor-pointer" onClick={() => setPreviewing(a)} />
+                ) : (
+                  <span className="text-sm flex-shrink-0">{getFileIcon(a.name, a.type)}</span>
+                )}
                 <button
-                  onClick={() => handleDelete(i)}
-                  className="opacity-0 group-hover:opacity-100 transition p-0.5 text-slate-400 hover:text-rose-600 flex-shrink-0"
+                  onClick={() => a.kind === 'upload' ? setPreviewing(a) : window.open(a.url, '_blank')}
+                  className="text-xs text-blue-600 hover:underline flex-1 min-w-0 truncate text-left"
+                  title={a.url}
                 >
-                  <X className="w-3 h-3" />
+                  {a.name}
                 </button>
-              )}
-            </div>
-          ))}
+                {a.size && <span className="text-[10px] text-slate-400 flex-shrink-0">{formatFileSize(a.size)}</span>}
+                <span className="text-[10px] text-slate-400 flex-shrink-0">{a.kind === 'upload' ? '☁' : '↗'}</span>
+                {!readOnly && (
+                  <button
+                    onClick={() => handleDelete(i)}
+                    className="opacity-0 group-hover:opacity-100 transition p-0.5 text-slate-400 hover:text-rose-600 flex-shrink-0"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {!readOnly && (
+      {previewing && <FilePreviewModal file={previewing} onClose={() => setPreviewing(null)} />}
+
+      {uploading && (
+        <div className="bg-blue-50 border border-blue-200 rounded p-2 mb-1.5 flex items-center gap-2">
+          <Loader className="w-3 h-3 text-blue-600 animate-spin flex-shrink-0" />
+          <div className="flex-1">
+            <div className="text-[11px] text-blue-700 mb-1">上傳中... {progress.toFixed(0)}%</div>
+            <div className="h-1 bg-blue-100 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-500 transition-all" style={{ width: `${progress}%` }}></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!readOnly && !uploading && (
         adding ? (
           <div className="bg-blue-50/40 border border-blue-200 rounded p-2 space-y-1.5">
             <input
               type="text"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="顯示名稱（例：CMMS0005_ID_V2.stp）"
+              placeholder="顯示名稱（選填）"
               className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
             />
             <input
               type="text"
               value={newUrl}
               onChange={(e) => setNewUrl(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddLink(); }}
               placeholder="連結網址（Google Drive、SharePoint 等）"
               autoFocus
               className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
             />
             <div className="flex justify-end gap-1.5">
-              <button
-                onClick={() => { setAdding(false); setNewName(''); setNewUrl(''); }}
-                className="text-[11px] px-2 py-0.5 hover:bg-white rounded"
-              >取消</button>
-              <button
-                onClick={handleAdd}
-                disabled={!newUrl.trim()}
-                className="text-[11px] px-2 py-0.5 bg-slate-900 text-white rounded disabled:opacity-40"
-              >加入</button>
+              <button onClick={() => { setAdding(false); setNewName(''); setNewUrl(''); }} className="text-[11px] px-2 py-0.5 hover:bg-white rounded">取消</button>
+              <button onClick={handleAddLink} disabled={!newUrl.trim()} className="text-[11px] px-2 py-0.5 bg-slate-900 text-white rounded disabled:opacity-40">加入</button>
             </div>
           </div>
         ) : (
-          <button
-            onClick={() => setAdding(true)}
-            className="text-[11px] text-blue-600 hover:bg-blue-50 px-2 py-1 rounded inline-flex items-center gap-1"
-          >
-            <Plus className="w-3 h-3" />附加檔案連結
-          </button>
+          <div className="flex gap-1.5">
+            <button onClick={() => fileInputRef.current?.click()} className="text-[11px] text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded inline-flex items-center gap-1 border border-emerald-200">
+              <Upload className="w-3 h-3" />上傳檔案
+            </button>
+            <button onClick={() => setAdding(true)} className="text-[11px] text-blue-600 hover:bg-blue-50 px-2 py-1 rounded inline-flex items-center gap-1">
+              <Plus className="w-3 h-3" />貼連結
+            </button>
+            <input ref={fileInputRef} type="file" multiple onChange={handleFilePick} className="hidden" />
+          </div>
         )
       )}
     </div>
   );
 }
+
 
 function DesignSection({ designs, onChange }) {
   const [editing, setEditing] = useState(null);
@@ -2661,18 +2886,35 @@ function UpdateForm({ initial, onCancel, onSave }) {
   const [date, setDate] = useState(initial?.date || new Date().toISOString().split('T')[0]);
   const [text, setText] = useState(initial?.text || '');
   const [images, setImages] = useState(initial?.images || []);
+  const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
 
-  const handleFileChange = (e) => {
-    const files = Array.from(e.target.files || []);
-    files.forEach(file => {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        setImages(prev => [...prev, { name: file.name, dataUrl: ev.target.result }]);
-      };
-      reader.readAsDataURL(file);
-    });
+  const handleFileChange = async (e) => {
+    const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'));
     e.target.value = '';
+    if (files.length === 0) return;
+    setUploading(true);
+    try {
+      for (const file of files) {
+        if (file.size > 10 * 1024 * 1024) {
+          alert(`「${file.name}」超過 10MB，跳過`);
+          continue;
+        }
+        const result = await uploadFileToStorage(file);
+        setImages(prev => [...prev, { name: result.name, url: result.url, path: result.path }]);
+      }
+    } catch (err) {
+      alert('上傳失敗：' + err.message);
+    }
+    setUploading(false);
+  };
+
+  const handleRemoveImg = async (idx) => {
+    const img = images[idx];
+    if (img.path) {
+      await deleteFileFromStorage(img.path);
+    }
+    setImages(prev => prev.filter((_, i) => i !== idx));
   };
 
   const submit = () => {
@@ -2703,9 +2945,9 @@ function UpdateForm({ initial, onCancel, onSave }) {
         <div className="flex gap-2 flex-wrap mt-2">
           {images.map((img, i) => (
             <div key={i} className="relative group">
-              <img src={img.dataUrl} alt={img.name} className="w-16 h-16 object-cover rounded border border-slate-200" />
+              <img src={img.url || img.dataUrl} alt={img.name} className="w-16 h-16 object-cover rounded border border-slate-200" />
               <button
-                onClick={() => setImages(prev => prev.filter((_, idx) => idx !== i))}
+                onClick={() => handleRemoveImg(i)}
                 className="absolute -top-1 -right-1 bg-rose-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100"
               >
                 ×
@@ -2774,7 +3016,7 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
                 className="block"
               >
                 <img
-                  src={img.dataUrl}
+                  src={img.url || img.dataUrl}
                   alt={img.name}
                   className="w-16 h-16 object-cover rounded border border-slate-200 hover:opacity-90"
                 />
@@ -2788,7 +3030,7 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
           className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
           onClick={() => setPreviewImg(null)}
         >
-          <img src={previewImg.dataUrl} alt={previewImg.name} className="max-w-full max-h-full rounded" />
+          <img src={previewImg.url || previewImg.dataUrl} alt={previewImg.name} className="max-w-full max-h-full rounded" />
         </div>
       )}
     </>

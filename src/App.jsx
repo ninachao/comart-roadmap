@@ -39,12 +39,23 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.16.1';
-const BUILD_ID = '20260505-1430';
+const APP_VERSION = 'v0.17.0';
+const BUILD_ID = '20260505-2200';
 
 const VERSION_HISTORY = [
   {
-    version: 'v0.16.0',
+    version: 'v0.17.0',
+    date: '2026-05-05',
+    changes: [
+      '刪除「DFM 中」狀態（保留：設計中 / 設計完成 / 暫停 / 取消）',
+      '🎉 產品圖片上傳前可選取裁剪區域（拖曳框、可移動可縮放）',
+      '🎉 新增「複製產品」按鈕（詳細頁右上角 📋）',
+      '複製時保留設定但清空料號、進度、訂單、試模等資料',
+      '修復：拖曳檔案到頁面外時瀏覽器跳走的 bug',
+    ],
+  },
+  {
+    version: 'v0.16.1',
     date: '2026-05-05',
     changes: [
       '🎉 全部檔案上傳區塊支援拖放上傳（從電腦、SharePoint 拖檔案進來即可）',
@@ -242,25 +253,25 @@ const PHASE_COLORS = {
 };
 
 
-const STATUS_OPTIONS = ['設計中', 'DFM 中', '設計完成', '暫停', '取消'];
+const STATUS_OPTIONS = ['設計中', '設計完成', '暫停', '取消'];
 const STATUS_COLORS = {
   '設計中': 'bg-blue-100 text-blue-800 border-blue-300',
-  'DFM 中': 'bg-violet-100 text-violet-800 border-violet-300',
   '設計完成': 'bg-emerald-100 text-emerald-800 border-emerald-300',
   '暫停': 'bg-amber-100 text-amber-800 border-amber-300',
   '取消': 'bg-rose-100 text-rose-800 border-rose-300',
   // 兼容舊資料：
+  'DFM 中': 'bg-violet-100 text-violet-800 border-violet-300',
   '進行中': 'bg-blue-100 text-blue-800 border-blue-300',
   '完成': 'bg-emerald-100 text-emerald-800 border-emerald-300',
   '待開案': 'bg-slate-100 text-slate-700 border-slate-300',
 };
 const STATUS_DOTS = {
   '設計中': 'bg-blue-500',
-  'DFM 中': 'bg-violet-500',
   '設計完成': 'bg-emerald-500',
   '暫停': 'bg-amber-500',
   '取消': 'bg-rose-500',
   // 兼容：
+  'DFM 中': 'bg-violet-500',
   '進行中': 'bg-blue-500',
   '完成': 'bg-emerald-500',
   '待開案': 'bg-slate-400',
@@ -650,6 +661,20 @@ export default function ProductRoadmap() {
   const [saveStatus, setSaveStatus] = useState('idle');
   const [isLoading, setIsLoading] = useState(true);
 
+  // === 攔截全頁拖放，避免使用者把檔案放在拖放區外時瀏覽器跳走 ===
+  useEffect(() => {
+    const preventDefault = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener('dragover', preventDefault);
+    window.addEventListener('drop', preventDefault);
+    return () => {
+      window.removeEventListener('dragover', preventDefault);
+      window.removeEventListener('drop', preventDefault);
+    };
+  }, []);
+
   // === Firestore 即時同步 ===
   useEffect(() => {
     if (!currentUser) return;
@@ -842,6 +867,41 @@ export default function ProductRoadmap() {
     deleteProjectFromCloud(id, target?._docId);
     setConfirmDelete(null);
     if (selectedProject?.id === id) setSelectedProject(null);
+  };
+
+  // 複製產品：保留所有設定，但清空專屬資料
+  const handleDuplicate = (project) => {
+    if (!isAdmin) return;
+    const newId = Date.now();
+    const dup = {
+      ...project,
+      id: newId,
+      _docId: undefined,
+      // 清空專屬資料：
+      code: '',                    // 料號清空（必須重新編碼）
+      name: project.name + ' (副本)', // 品名加副本
+      openDate: new Date().toISOString().split('T')[0],  // 開案日改今天
+      // 清空進度相關（複製來的是新案，從零開始）
+      updates: [],
+      productImages: [],
+      prototypeOrders: [],
+      mouldOrders: [],
+      trialRuns: [],
+      materialCodeStatus: '未申請',
+      materialCodeNumber: '',
+      phaseOverride: null,
+      status: '設計中',
+      emailSubjects: [],
+      emailSubject: '',
+      // 設計版本可以選擇是否複製。預設清空（新產品通常從新設計開始）
+      designs: { ID: [], '3D': [], BOM: [] },
+      hasDFM: false,
+      dfmNotes: '',
+      dfmAttachments: [],
+    };
+    saveProjectToCloud(dup);
+    // 切換到新副本的詳細頁
+    setTimeout(() => setSelectedProject({ ...dup }), 300);
   };
 
   const exportJSON = () => {
@@ -1079,6 +1139,7 @@ export default function ProductRoadmap() {
           onUpdateField={(field, value) => handleUpdateProjectField(selectedProject.id, field, value)}
           onToggleStage={(stage) => handleToggleStage(selectedProject.id, stage)}
           onDelete={() => setConfirmDelete(selectedProject.id)}
+          onDuplicate={() => handleDuplicate(selectedProject)}
         />
       )}
 
@@ -1280,7 +1341,7 @@ function ProjectRow({ project, onClick }) {
   );
 }
 
-function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete }) {
+function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate }) {
   const [showAddUpdate, setShowAddUpdate] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [editingUpdateIdx, setEditingUpdateIdx] = useState(null);
@@ -1370,6 +1431,20 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
+            {!isViewer && onDuplicate && (
+              <button
+                onClick={() => {
+                  if (confirm(`確定要複製「${project.name}」嗎？\n會建立一個新專案，料號和進度會清空，其他設定保留。`)) {
+                    onDuplicate();
+                  }
+                }}
+                title="複製此專案（建立新副本）"
+                className="p-1.5 hover:bg-blue-50 rounded text-slate-400 hover:text-blue-600 inline-flex items-center gap-1 text-xs px-2"
+              >
+                <span>📋</span>
+                <span className="hidden sm:inline">複製</span>
+              </button>
+            )}
             <button onClick={onDelete} title="刪除專案" className="p-1.5 hover:bg-rose-50 rounded text-slate-400 hover:text-rose-600">
               <Trash2 className="w-4 h-4" />
             </button>
@@ -1747,52 +1822,308 @@ function InfoField({ label, value, type = 'text', onSave, placeholder = '' }) {
   );
 }
 
+// 圖片上傳前的簡單裁剪/區域選取 Modal
+function ImageCropModal({ file, onConfirm, onCancel }) {
+  const [imgSrc, setImgSrc] = useState(null);
+  const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
+  const [crop, setCrop] = useState(null); // { x, y, w, h } 顯示座標
+  const [dragging, setDragging] = useState(null); // 'new', 'move', 'tl', 'tr', 'bl', 'br'
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0, crop: null });
+  const containerRef = useRef(null);
+  const imgRef = useRef(null);
+
+  useEffect(() => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => setImgSrc(e.target.result);
+    reader.readAsDataURL(file);
+  }, [file]);
+
+  const handleImgLoad = (e) => {
+    const img = e.target;
+    setImgSize({ w: img.naturalWidth, h: img.naturalHeight });
+    // 預設裁切框 = 整張圖
+    const rect = img.getBoundingClientRect();
+    setCrop({ x: 0, y: 0, w: rect.width, h: rect.height });
+  };
+
+  const getRelativePos = (e) => {
+    const rect = imgRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  };
+
+  const handleMouseDown = (e, mode) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const pos = getRelativePos(e);
+    setDragging(mode);
+    setDragStart({ ...pos, crop: { ...crop } });
+  };
+
+  const handleNewBoxStart = (e) => {
+    if (!imgRef.current) return;
+    const pos = getRelativePos(e);
+    setDragging('new');
+    setDragStart({ ...pos, crop: { x: pos.x, y: pos.y, w: 0, h: 0 } });
+    setCrop({ x: pos.x, y: pos.y, w: 0, h: 0 });
+  };
+
+  const handleMouseMove = (e) => {
+    if (!dragging) return;
+    e.preventDefault();
+    const pos = getRelativePos(e);
+    const rect = imgRef.current.getBoundingClientRect();
+    const maxW = rect.width;
+    const maxH = rect.height;
+
+    if (dragging === 'new') {
+      const x = Math.min(dragStart.x, pos.x);
+      const y = Math.min(dragStart.y, pos.y);
+      const w = Math.abs(pos.x - dragStart.x);
+      const h = Math.abs(pos.y - dragStart.y);
+      setCrop({ x, y, w, h });
+    } else if (dragging === 'move') {
+      const dx = pos.x - dragStart.x;
+      const dy = pos.y - dragStart.y;
+      const newX = Math.max(0, Math.min(maxW - dragStart.crop.w, dragStart.crop.x + dx));
+      const newY = Math.max(0, Math.min(maxH - dragStart.crop.h, dragStart.crop.y + dy));
+      setCrop({ ...crop, x: newX, y: newY });
+    } else {
+      // resize
+      const c = { ...dragStart.crop };
+      let nx = c.x, ny = c.y, nw = c.w, nh = c.h;
+      if (dragging.includes('l')) {
+        const dx = pos.x - c.x;
+        nx = Math.max(0, Math.min(c.x + c.w - 20, c.x + dx));
+        nw = c.w - (nx - c.x);
+      }
+      if (dragging.includes('r')) {
+        nw = Math.max(20, Math.min(maxW - c.x, pos.x - c.x));
+      }
+      if (dragging.includes('t')) {
+        const dy = pos.y - c.y;
+        ny = Math.max(0, Math.min(c.y + c.h - 20, c.y + dy));
+        nh = c.h - (ny - c.y);
+      }
+      if (dragging.includes('b')) {
+        nh = Math.max(20, Math.min(maxH - c.y, pos.y - c.y));
+      }
+      setCrop({ x: nx, y: ny, w: nw, h: nh });
+    }
+  };
+
+  const handleMouseUp = () => setDragging(null);
+
+  // 確認時：依 crop 比例對 naturalSize 取出 canvas 區域
+  const handleConfirm = async () => {
+    if (!imgRef.current || !crop || crop.w < 5 || crop.h < 5) {
+      // 區域太小或沒選 → 直接傳原圖
+      onConfirm(file);
+      return;
+    }
+    const img = imgRef.current;
+    const displayW = img.getBoundingClientRect().width;
+    const displayH = img.getBoundingClientRect().height;
+    const ratioX = imgSize.w / displayW;
+    const ratioY = imgSize.h / displayH;
+
+    const sx = crop.x * ratioX;
+    const sy = crop.y * ratioY;
+    const sw = crop.w * ratioX;
+    const sh = crop.h * ratioY;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = sw;
+    canvas.height = sh;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+    canvas.toBlob((blob) => {
+      const cropped = new File([blob], file.name, { type: file.type || 'image/jpeg' });
+      onConfirm(cropped);
+    }, file.type || 'image/jpeg', 0.95);
+  };
+
+  const handleSelectAll = () => {
+    if (!imgRef.current) return;
+    const rect = imgRef.current.getBoundingClientRect();
+    setCrop({ x: 0, y: 0, w: rect.width, h: rect.height });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 bg-slate-900/80 z-[70] flex items-center justify-center p-2 sm:p-4"
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onTouchMove={handleMouseMove}
+      onTouchEnd={handleMouseUp}
+    >
+      <div className="bg-white rounded-xl max-w-3xl w-full p-4 max-h-[95vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <h3 className="text-sm font-medium">選取要上傳的區域</h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">在圖上拖曳框選；拖動框內可移動；拖角落可縮放。不裁切就點「上傳整張」。</p>
+          </div>
+          <button onClick={onCancel} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        <div ref={containerRef} className="flex-1 overflow-auto bg-slate-100 rounded relative flex items-center justify-center min-h-[300px]">
+          {imgSrc && (
+            <div className="relative inline-block" style={{ touchAction: 'none' }}>
+              <img
+                ref={imgRef}
+                src={imgSrc}
+                alt="預覽"
+                onLoad={handleImgLoad}
+                onMouseDown={handleNewBoxStart}
+                onTouchStart={handleNewBoxStart}
+                draggable={false}
+                className="max-w-full max-h-[60vh] block select-none cursor-crosshair"
+              />
+              {crop && crop.w > 0 && crop.h > 0 && (
+                <>
+                  {/* 暗化外圍 */}
+                  <div className="absolute inset-0 pointer-events-none" style={{
+                    boxShadow: `0 0 0 9999px rgba(0,0,0,0.5)`,
+                    clipPath: `polygon(
+                      0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%,
+                      ${crop.x}px ${crop.y}px,
+                      ${crop.x}px ${crop.y + crop.h}px,
+                      ${crop.x + crop.w}px ${crop.y + crop.h}px,
+                      ${crop.x + crop.w}px ${crop.y}px,
+                      ${crop.x}px ${crop.y}px
+                    )`,
+                  }} />
+                  {/* 裁切框 */}
+                  <div
+                    onMouseDown={(e) => handleMouseDown(e, 'move')}
+                    onTouchStart={(e) => handleMouseDown(e, 'move')}
+                    className="absolute border-2 border-blue-400 cursor-move"
+                    style={{ left: crop.x, top: crop.y, width: crop.w, height: crop.h }}
+                  >
+                    {/* 4 個角落把手 */}
+                    {['tl','tr','bl','br'].map(p => (
+                      <div
+                        key={p}
+                        onMouseDown={(e) => handleMouseDown(e, p)}
+                        onTouchStart={(e) => handleMouseDown(e, p)}
+                        className="absolute w-3 h-3 bg-blue-500 border-2 border-white rounded-sm"
+                        style={{
+                          left: p.includes('l') ? -7 : 'auto',
+                          right: p.includes('r') ? -7 : 'auto',
+                          top: p.includes('t') ? -7 : 'auto',
+                          bottom: p.includes('b') ? -7 : 'auto',
+                          cursor: (p === 'tl' || p === 'br') ? 'nwse-resize' : 'nesw-resize',
+                        }}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 mt-3">
+          <button
+            onClick={handleSelectAll}
+            className="text-xs text-slate-600 hover:bg-slate-100 px-3 py-1.5 rounded"
+          >全選</button>
+          <div className="flex gap-2">
+            <button onClick={onCancel} className="text-xs px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+            <button
+              onClick={() => onConfirm(file)}
+              className="text-xs px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded"
+            >上傳整張</button>
+            <button
+              onClick={handleConfirm}
+              className="text-sm px-4 py-1.5 bg-slate-900 text-white rounded hover:bg-slate-800 font-medium"
+            >裁切並上傳</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProductImagesSection({ images, onChange }) {
   const [previewIdx, setPreviewIdx] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [dragOver, setDragOver] = useState(false);
+  const [cropQueue, setCropQueue] = useState([]); // 等待裁剪的檔案
+  const [cropCurrent, setCropCurrent] = useState(null); // 目前正在裁剪的檔案
   const fileRef = useRef(null);
 
   const getImgUrl = (img) => img.url || img.dataUrl;
 
-  const uploadFiles = async (rawFiles) => {
-    const files = rawFiles.filter(f => f.type.startsWith('image/'));
-    if (files.length === 0) return;
+  const uploadOne = async (file) => {
+    if (file.size > 10 * 1024 * 1024) {
+      alert(`「${file.name}」超過 10MB，跳過`);
+      return null;
+    }
+    const result = await uploadFileToStorage(file, setProgress);
+    return {
+      name: result.name, url: result.url, path: result.path,
+      size: result.size, type: result.type,
+    };
+  };
+
+  // 開始處理檔案：先放進待裁剪佇列
+  const startCropFlow = (rawFiles) => {
+    const imageFiles = rawFiles.filter(f => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) return;
+    setCropQueue(imageFiles);
+    setCropCurrent(imageFiles[0]);
+  };
+
+  // 使用者完成一張的裁剪/上傳整張，繼續下一張
+  const handleCropConfirm = async (resultFile) => {
+    setCropCurrent(null);
     setUploading(true);
     setProgress(0);
-    const newImgs = [];
     try {
-      for (const file of files) {
-        if (file.size > 10 * 1024 * 1024) {
-          alert(`「${file.name}」超過 10MB，跳過`);
-          continue;
-        }
-        const result = await uploadFileToStorage(file, setProgress);
-        newImgs.push({
-          name: result.name, url: result.url, path: result.path,
-          size: result.size, type: result.type,
-        });
-      }
-      if (newImgs.length > 0) onChange([...images, ...newImgs]);
+      const uploaded = await uploadOne(resultFile);
+      if (uploaded) onChange([...images, uploaded]);
     } catch (err) {
       alert('上傳失敗：' + err.message);
     }
     setUploading(false);
     setProgress(0);
+    // 處理佇列中下一張
+    const remaining = cropQueue.slice(1);
+    setCropQueue(remaining);
+    if (remaining.length > 0) {
+      setTimeout(() => setCropCurrent(remaining[0]), 100);
+    }
   };
 
-  const handleUpload = async (e) => {
+  const handleCropCancel = () => {
+    setCropCurrent(null);
+    // 跳過這張，處理下一張
+    const remaining = cropQueue.slice(1);
+    setCropQueue(remaining);
+    if (remaining.length > 0) {
+      setTimeout(() => setCropCurrent(remaining[0]), 100);
+    }
+  };
+
+  const handleUpload = (e) => {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
-    await uploadFiles(files);
+    startCropFlow(files);
   };
 
-  const handleDrop = async (e) => {
+  const handleDrop = (e) => {
     e.preventDefault();
     setDragOver(false);
     if (uploading) return;
-    await uploadFiles(Array.from(e.dataTransfer.files || []));
+    startCropFlow(Array.from(e.dataTransfer.files || []));
   };
 
   const handleSetAsMain = (idx) => {
@@ -1902,6 +2233,14 @@ function ProductImagesSection({ images, onChange }) {
         >
           <img src={getImgUrl(images[previewIdx])} alt={images[previewIdx].name} className="max-w-full max-h-full rounded" />
         </div>
+      )}
+
+      {cropCurrent && (
+        <ImageCropModal
+          file={cropCurrent}
+          onConfirm={handleCropConfirm}
+          onCancel={handleCropCancel}
+        />
       )}
     </section>
   );

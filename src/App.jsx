@@ -39,10 +39,19 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.17.0';
-const BUILD_ID = '20260505-2200';
+const APP_VERSION = 'v0.18.0';
+const BUILD_ID = '20260505-2300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.18.0',
+    date: '2026-05-05',
+    changes: [
+      '🔧 修正：複製產品時雲端儲存失敗（_docId undefined 問題）',
+      '🔧 修正：拖曳檔案時上傳框閃爍、無法對位的問題（用 dragCounter 解決）',
+      '雲端儲存自動清除 undefined 欄位，避免類似錯誤',
+    ],
+  },
   {
     version: 'v0.17.0',
     date: '2026-05-05',
@@ -713,7 +722,12 @@ export default function ProductRoadmap() {
   const saveProjectToCloud = async (project) => {
     setSaveStatus('saving');
     try {
-      await setDoc(doc(db, PROJECTS_COL, String(project.id)), project);
+      // 清掉所有 undefined 欄位（Firestore 不接受），避免儲存失敗
+      const cleaned = {};
+      Object.keys(project).forEach(k => {
+        if (project[k] !== undefined) cleaned[k] = project[k];
+      });
+      await setDoc(doc(db, PROJECTS_COL, String(cleaned.id)), cleaned);
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 1500);
     } catch (e) {
@@ -876,7 +890,6 @@ export default function ProductRoadmap() {
     const dup = {
       ...project,
       id: newId,
-      _docId: undefined,
       // 清空專屬資料：
       code: '',                    // 料號清空（必須重新編碼）
       name: project.name + ' (副本)', // 品名加副本
@@ -899,6 +912,8 @@ export default function ProductRoadmap() {
       dfmNotes: '',
       dfmAttachments: [],
     };
+    // 必須移除 _docId（Firestore 不接受 undefined，且新副本要存到新文件）
+    delete dup._docId;
     saveProjectToCloud(dup);
     // 切換到新副本的詳細頁
     setTimeout(() => setSelectedProject({ ...dup }), 300);
@@ -2058,6 +2073,7 @@ function ProductImagesSection({ images, onChange }) {
   const [dragOver, setDragOver] = useState(false);
   const [cropQueue, setCropQueue] = useState([]); // 等待裁剪的檔案
   const [cropCurrent, setCropCurrent] = useState(null); // 目前正在裁剪的檔案
+  const dragCounter = useRef(0);
   const fileRef = useRef(null);
 
   const getImgUrl = (img) => img.url || img.dataUrl;
@@ -2145,9 +2161,25 @@ function ProductImagesSection({ images, onChange }) {
 
   return (
     <section
-      onDragOver={(e) => { e.preventDefault(); if (!uploading) setDragOver(true); }}
-      onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
-      onDrop={handleDrop}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        if (uploading) return;
+        dragCounter.current += 1;
+        if (e.dataTransfer.items && e.dataTransfer.items.length > 0) setDragOver(true);
+      }}
+      onDragOver={(e) => { e.preventDefault(); }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        dragCounter.current -= 1;
+        if (dragCounter.current <= 0) {
+          dragCounter.current = 0;
+          setDragOver(false);
+        }
+      }}
+      onDrop={(e) => {
+        dragCounter.current = 0;
+        handleDrop(e);
+      }}
       className={dragOver ? 'ring-2 ring-blue-400 ring-offset-2 rounded-lg' : ''}
     >
       <div className="flex items-center justify-between mb-2">
@@ -2535,6 +2567,7 @@ function AttachmentList({ attachments, onChange, readOnly }) {
   const [progress, setProgress] = useState(0);
   const [previewing, setPreviewing] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const dragCounter = useRef(0); // 用 counter 解決子元素進出誤判
   const fileInputRef = useRef(null);
 
   const handleAddLink = () => {
@@ -2579,25 +2612,40 @@ function AttachmentList({ attachments, onChange, readOnly }) {
     await handleFiles(files);
   };
 
-  const handleDrop = async (e) => {
+  const handleDragEnter = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    setDragOver(false);
     if (readOnly || uploading) return;
-    const files = Array.from(e.dataTransfer.files || []);
-    await handleFiles(files);
+    dragCounter.current += 1;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setDragOver(true);
+    }
   };
 
   const handleDragOver = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!readOnly && !uploading) setDragOver(true);
+    // 不在這裡 setState，避免閃爍
   };
 
   const handleDragLeave = (e) => {
     e.preventDefault();
     e.stopPropagation();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragOver(false);
+    }
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
     setDragOver(false);
+    if (readOnly || uploading) return;
+    const files = Array.from(e.dataTransfer.files || []);
+    await handleFiles(files);
   };
 
   const handleDelete = async (idx) => {
@@ -2613,6 +2661,7 @@ function AttachmentList({ attachments, onChange, readOnly }) {
   return (
     <div
       className={`mt-2 transition rounded ${dragOver ? 'bg-blue-50 ring-2 ring-blue-400 ring-offset-1 p-1' : ''}`}
+      onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}

@@ -39,10 +39,21 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.18.0';
-const BUILD_ID = '20260505-2300';
+const APP_VERSION = 'v0.19.0';
+const BUILD_ID = '20260506-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.19.0',
+    date: '2026-05-06',
+    changes: [
+      '🎉 複製產品後自動跳出料號編碼精靈，不會料號重複',
+      '🎉 新增「全部階段」下拉篩選器（規劃 / EVT / DVT / PVT / MP）',
+      '🎉 從 Chrome 開的 SharePoint / 網頁拖檔案，會自動轉成「連結附件」',
+      '拖網頁連結進來會抽出網頁標題作為顯示名稱',
+      '保留標籤篩選器（用不到時可從「管理標籤」清空）',
+    ],
+  },
   {
     version: 'v0.18.0',
     date: '2026-05-05',
@@ -766,7 +777,9 @@ export default function ProductRoadmap() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('設計中');
   const [tagFilter, setTagFilter] = useState('全部');
+  const [phaseFilter, setPhaseFilter] = useState('全部');
   const [selectedProject, setSelectedProject] = useState(null);
+  const [autoOpenCodeWizard, setAutoOpenCodeWizard] = useState(false);
   const [showNewModal, setShowNewModal] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
@@ -795,9 +808,10 @@ export default function ProductRoadmap() {
         (p.supplier || '').toLowerCase().includes(searchTerm.toLowerCase());
       const matchStatus = statusFilter === '全部' || p.status === statusFilter;
       const matchTag = tagFilter === '全部' || (p.tags || []).includes(tagFilter);
-      return matchSearch && matchStatus && matchTag;
+      const matchPhase = phaseFilter === '全部' || getCurrentPhase(p) === phaseFilter;
+      return matchSearch && matchStatus && matchTag && matchPhase;
     });
-  }, [projects, searchTerm, statusFilter, tagFilter]);
+  }, [projects, searchTerm, statusFilter, tagFilter, phaseFilter]);
 
   const counts = useMemo(() => {
     const c = { 全部: projects.length };
@@ -915,8 +929,11 @@ export default function ProductRoadmap() {
     // 必須移除 _docId（Firestore 不接受 undefined，且新副本要存到新文件）
     delete dup._docId;
     saveProjectToCloud(dup);
-    // 切換到新副本的詳細頁
-    setTimeout(() => setSelectedProject({ ...dup }), 300);
+    // 切換到新副本的詳細頁，並自動打開編碼精靈
+    setTimeout(() => {
+      setSelectedProject({ ...dup });
+      setAutoOpenCodeWizard(true);
+    }, 300);
   };
 
   const exportJSON = () => {
@@ -1078,6 +1095,19 @@ export default function ProductRoadmap() {
                 className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
               />
             </div>
+            {/* 產品階段篩選（依當前階段篩選） */}
+            <select
+              value={phaseFilter}
+              onChange={(e) => setPhaseFilter(e.target.value)}
+              className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+              title="依產品階段篩選"
+            >
+              <option value="全部">全部階段</option>
+              {PHASE_DEFINITIONS.map(p => (
+                <option key={p.key} value={p.key}>{p.label} · {p.subtitle}</option>
+              ))}
+            </select>
+
             {allTags.length > 0 && (
               <div className="flex gap-1">
                 <select
@@ -1155,6 +1185,9 @@ export default function ProductRoadmap() {
           onToggleStage={(stage) => handleToggleStage(selectedProject.id, stage)}
           onDelete={() => setConfirmDelete(selectedProject.id)}
           onDuplicate={() => handleDuplicate(selectedProject)}
+          autoOpenWizard={autoOpenCodeWizard}
+          onWizardClose={() => setAutoOpenCodeWizard(false)}
+          existingCodes={projects.filter(p => p.id !== selectedProject.id).map(p => p.code).filter(Boolean)}
         />
       )}
 
@@ -1356,7 +1389,20 @@ function ProjectRow({ project, onClick }) {
   );
 }
 
-function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate }) {
+function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [] }) {
+  const [showWizard, setShowWizard] = useState(false);
+
+  // 收到自動打開請求時，跳出精靈
+  useEffect(() => {
+    if (autoOpenWizard) {
+      setShowWizard(true);
+    }
+  }, [autoOpenWizard]);
+
+  const closeWizard = () => {
+    setShowWizard(false);
+    if (onWizardClose) onWizardClose();
+  };
   const [showAddUpdate, setShowAddUpdate] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [editingUpdateIdx, setEditingUpdateIdx] = useState(null);
@@ -1664,6 +1710,17 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           </section>
         </div>
       </div>
+
+      {showWizard && (
+        <ProductCodeWizard
+          existingCodes={existingCodes}
+          onApply={(code) => {
+            onUpdateField('code', code);
+            closeWizard();
+          }}
+          onClose={closeWizard}
+        />
+      )}
     </div>
   );
 }
@@ -2644,8 +2701,45 @@ function AttachmentList({ attachments, onChange, readOnly }) {
     dragCounter.current = 0;
     setDragOver(false);
     if (readOnly || uploading) return;
+
+    // 先嘗試取得真實檔案
     const files = Array.from(e.dataTransfer.files || []);
-    await handleFiles(files);
+    if (files.length > 0) {
+      await handleFiles(files);
+      return;
+    }
+
+    // 沒有檔案 → 試著取網頁連結（從 SharePoint / Google Drive 等網頁拖過來）
+    const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+    if (url && /^https?:\/\//.test(url.trim())) {
+      // 嘗試從拖曳資料取得標題（部分網站會傳）
+      const title = e.dataTransfer.getData('text/html');
+      let displayName = '';
+      if (title) {
+        // 從 HTML 抽出文字
+        const tmp = document.createElement('div');
+        tmp.innerHTML = title;
+        displayName = tmp.innerText.trim().split('\n')[0] || '';
+      }
+      if (!displayName) {
+        // 從 URL 取最後段當檔名
+        try {
+          const u = new URL(url);
+          const parts = u.pathname.split('/').filter(Boolean);
+          displayName = decodeURIComponent(parts[parts.length - 1] || u.hostname);
+        } catch {
+          displayName = url;
+        }
+      }
+      onChange([...(attachments || []), {
+        name: displayName.slice(0, 80),
+        url: url.trim(),
+        kind: 'link',
+      }]);
+      return;
+    }
+
+    alert('無法處理拖入的內容。如果是從 SharePoint 網頁拖檔案，請改用 Chrome 的「下載」後再拖；或點「貼連結」貼上網址。');
   };
 
   const handleDelete = async (idx) => {

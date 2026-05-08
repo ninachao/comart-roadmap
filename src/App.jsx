@@ -39,7 +39,8 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.16.0';
+const APP_VERSION = 'v0.16.1';
+const BUILD_ID = '20260505-1430';
 
 const VERSION_HISTORY = [
   {

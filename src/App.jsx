@@ -39,10 +39,31 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.21.0';
-const BUILD_ID = '20260506-1500';
+const APP_VERSION = 'v0.23.0';
+const BUILD_ID = '20260507-1500';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.23.0',
+    date: '2026-05-07',
+    changes: [
+      '🔧 修正：圖片過一陣子變全白的問題',
+      '新增 StorageImage 智慧元件：偵測圖片載入失敗時，會用 Storage 路徑重新取得 URL',
+      '所有顯示 Storage 圖片的地方（列表縮圖、產品圖、進度紀錄圖、附件圖）都改用此元件',
+      '即使 Firebase Storage 的下載 token 過期，圖片仍能正常顯示',
+    ],
+  },
+  {
+    version: 'v0.22.0',
+    date: '2026-05-07',
+    changes: [
+      '🎉 詳細頁料號旁加「✨ 編碼精靈」按鈕（隨時可用）',
+      '🔧 改料號時，類別自動跟著更新（除非已手動覆蓋）',
+      '主頁列表卡片移除：類別文字、郵件圖示按鈕（保留詳細頁的郵件主旨功能）',
+      '主頁列表卡片移除：階段下方的「手板 0/0 已收到」子文字',
+      '主頁列表只保留：設計狀態、供應商、自訂標籤',
+    ],
+  },
   {
     version: 'v0.21.0',
     date: '2026-05-06',
@@ -886,6 +907,15 @@ export default function ProductRoadmap() {
     const target = projects.find(p => p.id === projectId);
     if (!target) return;
     const updated = { ...target, [field]: value };
+    // 若改了料號，自動更新類別（除非使用者明確設定過獨立的類別文字）
+    // 規則：若舊類別是空、或者舊類別正好等於舊料號推算的類別 → 同步更新
+    if (field === 'code') {
+      const oldDerived = deriveCategoryFromCode(target.code);
+      const newDerived = deriveCategoryFromCode(value);
+      if (!target.category || target.category === oldDerived) {
+        updated.category = newDerived;
+      }
+    }
     saveProjectToCloud(updated);
     setSelectedProject(prev => prev && prev.id === projectId ? updated : prev);
   };
@@ -1330,7 +1360,7 @@ function ProjectRow({ project, onClick }) {
       <div className="flex items-start gap-3">
         <div className="flex-shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center">
           {mainImage ? (
-            <img src={mainImage.url || mainImage.dataUrl} alt={project.name} className="w-full h-full object-cover" />
+            <StorageImage src={mainImage.url || mainImage.dataUrl} path={mainImage.path} alt={project.name} className="w-full h-full object-cover" />
           ) : (
             <ImageIcon className="w-5 h-5 text-slate-300" />
           )}
@@ -1346,29 +1376,6 @@ function ProjectRow({ project, onClick }) {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className={`text-xs px-2 py-0.5 rounded border ${cfg}`}>{project.status}</span>
                 {project.supplier && <span className="text-xs text-slate-500">{project.supplier}</span>}
-                {project.category && <span className="text-xs text-slate-400">· {project.category}</span>}
-                {(() => {
-                  const subjects = normalizeEmailSubjects(project);
-                  if (subjects.length === 0) return null;
-                  // 如果只有 1 條：點圖示直接搜尋
-                  // 如果多條：第一條當預設，title 列出全部
-                  const first = subjects[0];
-                  const title = subjects.length === 1
-                    ? `在 Outlook 搜尋: ${first.subject}`
-                    : `${subjects.length} 條郵件主旨，點選打開第一條: ${first.kind} - ${first.subject}`;
-                  return (
-                    <a
-                      href={`https://outlook.office.com/mail/inbox/?search=${encodeURIComponent(first.subject)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      title={title}
-                      className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 inline-flex items-center gap-0.5"
-                    >
-                      📧{subjects.length > 1 ? <span className="text-[10px]">×{subjects.length}</span> : null}
-                    </a>
-                  );
-                })()}
                 {(project.tags || []).map(t => (
                   <span key={t} className="text-xs px-2 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200">
                     {t}
@@ -1384,9 +1391,6 @@ function ProjectRow({ project, onClick }) {
               <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border font-medium ${phaseColor.bg} ${phaseColor.text} ${phaseColor.border}`}>
                 {currentPhase}
               </span>
-              {phaseDetail && (
-                <p className="text-[10px] text-slate-500 mt-0.5">{phaseDetail}</p>
-              )}
             </div>
           </div>
 
@@ -1527,6 +1531,15 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                 >
                   {project.code || '+ 料號'}
                 </span>
+              )}
+              {!isViewer && (
+                <button
+                  onClick={() => setShowWizard(true)}
+                  title="用編碼精靈產生料號"
+                  className="text-[11px] text-blue-600 hover:bg-blue-50 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5"
+                >
+                  <span>✨</span><span className="hidden sm:inline">編碼精靈</span>
+                </button>
               )}
             </div>
           </div>
@@ -1934,6 +1947,41 @@ function InfoField({ label, value, type = 'text', onSave, placeholder = '' }) {
 }
 
 // 圖片上傳前的簡單裁剪/區域選取 Modal
+// 智慧圖片元件：如果 URL 過期，自動用 path 重新取得 URL
+function StorageImage({ src, path, alt, className, onClick, style }) {
+  const [currentSrc, setCurrentSrc] = useState(src);
+  const [retrying, setRetrying] = useState(false);
+
+  // 當 src 變更時更新
+  useEffect(() => {
+    setCurrentSrc(src);
+  }, [src]);
+
+  const handleError = async () => {
+    if (retrying || !path) return; // 無 path 無法重試
+    setRetrying(true);
+    try {
+      const newUrl = await getDownloadURL(storageRef(storage, path));
+      setCurrentSrc(newUrl);
+    } catch (e) {
+      console.warn('Storage image refresh failed:', path, e.message);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <img
+      src={currentSrc}
+      alt={alt}
+      className={className}
+      onClick={onClick}
+      onError={handleError}
+      style={style}
+    />
+  );
+}
+
 function ImageCropModal({ file, onConfirm, onCancel }) {
   const [imgSrc, setImgSrc] = useState(null);
   const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
@@ -2324,7 +2372,7 @@ function ProductImagesSection({ images, onChange }) {
                   onClick={() => setPreviewIdx(i)}
                   className="block w-full aspect-square rounded-lg border border-slate-200 overflow-hidden bg-slate-50 hover:border-slate-400"
                 >
-                  <img src={getImgUrl(img)} alt={img.name} className="w-full h-full object-cover" />
+                  <StorageImage src={getImgUrl(img)} path={img.path} alt={img.name} className="w-full h-full object-cover" />
                 </button>
                 {i === 0 && (
                   <span className="absolute top-1 left-1 text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded">主圖</span>
@@ -2359,7 +2407,7 @@ function ProductImagesSection({ images, onChange }) {
           className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
           onClick={() => setPreviewIdx(null)}
         >
-          <img src={getImgUrl(images[previewIdx])} alt={images[previewIdx].name} className="max-w-full max-h-full rounded" />
+          <StorageImage src={getImgUrl(images[previewIdx])} path={images[previewIdx].path} alt={images[previewIdx].name} className="max-w-full max-h-full rounded" />
         </div>
       )}
 
@@ -2636,7 +2684,7 @@ function FilePreviewModal({ file, onClose }) {
         </div>
         <div className="flex-1 overflow-auto bg-slate-50 flex items-center justify-center min-h-0">
           {isImage ? (
-            <img src={file.url} alt={file.name} className="max-w-full max-h-[80vh] object-contain" />
+            <StorageImage src={file.url} path={file.path} alt={file.name} className="max-w-full max-h-[80vh] object-contain" />
           ) : isPdf ? (
             <iframe src={file.url} title={file.name} className="w-full h-[80vh] border-0" />
           ) : (
@@ -2811,7 +2859,7 @@ function AttachmentList({ attachments, onChange, readOnly }) {
             return (
               <div key={i} className="flex items-center gap-2 bg-slate-50 rounded px-2 py-1 group">
                 {isImage && a.kind === 'upload' ? (
-                  <img src={a.url} alt={a.name} className="w-8 h-8 object-cover rounded flex-shrink-0 cursor-pointer" onClick={() => setPreviewing(a)} />
+                  <StorageImage src={a.url} path={a.path} alt={a.name} className="w-8 h-8 object-cover rounded flex-shrink-0 cursor-pointer" onClick={() => setPreviewing(a)} />
                 ) : (
                   <span className="text-sm flex-shrink-0">{getFileIcon(a.name, a.type)}</span>
                 )}
@@ -3741,7 +3789,7 @@ function UpdateForm({ initial, onCancel, onSave }) {
         <div className="flex gap-2 flex-wrap mt-2">
           {images.map((img, i) => (
             <div key={i} className="relative group">
-              <img src={img.url || img.dataUrl} alt={img.name} className="w-16 h-16 object-cover rounded border border-slate-200" />
+              <StorageImage src={img.url || img.dataUrl} path={img.path} alt={img.name} className="w-16 h-16 object-cover rounded border border-slate-200" />
               <button
                 onClick={() => handleRemoveImg(i)}
                 className="absolute -top-1 -right-1 bg-rose-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100"
@@ -3811,8 +3859,9 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
                 onClick={() => setPreviewImg(img)}
                 className="block"
               >
-                <img
+                <StorageImage
                   src={img.url || img.dataUrl}
+                  path={img.path}
                   alt={img.name}
                   className="w-16 h-16 object-cover rounded border border-slate-200 hover:opacity-90"
                 />
@@ -3826,7 +3875,7 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
           className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
           onClick={() => setPreviewImg(null)}
         >
-          <img src={previewImg.url || previewImg.dataUrl} alt={previewImg.name} className="max-w-full max-h-full rounded" />
+          <StorageImage src={previewImg.url || previewImg.dataUrl} path={previewImg.path} alt={previewImg.name} className="max-w-full max-h-full rounded" />
         </div>
       )}
     </>

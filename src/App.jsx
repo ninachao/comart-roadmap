@@ -39,10 +39,22 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.23.0';
-const BUILD_ID = '20260507-1500';
+const APP_VERSION = 'v0.24.0';
+const BUILD_ID = '20260507-1900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.24.0',
+    date: '2026-05-07',
+    changes: [
+      '🎉 編碼精靈改為「單頁全展開」介面',
+      '分類碼 7 個 + 特徵碼 7 個全部一次顯示，可隨時更改不需「上一步」',
+      '頂部顯示 SOP 優先規則提示（QIC、MNT、HDM）',
+      '每個選項旁有適用情境說明',
+      '已選的分類/特徵會在標題旁顯示，一目了然',
+      '主頁列表：供應商加上框框（跟其他標籤統一）',
+    ],
+  },
   {
     version: 'v0.23.0',
     date: '2026-05-07',
@@ -1375,7 +1387,11 @@ function ProjectRow({ project, onClick }) {
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className={`text-xs px-2 py-0.5 rounded border ${cfg}`}>{project.status}</span>
-                {project.supplier && <span className="text-xs text-slate-500">{project.supplier}</span>}
+                {project.supplier && (
+                  <span className="text-xs px-2 py-0.5 rounded bg-slate-50 text-slate-600 border border-slate-200">
+                    {project.supplier}
+                  </span>
+                )}
                 {(project.tags || []).map(t => (
                   <span key={t} className="text-xs px-2 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200">
                     {t}
@@ -3942,66 +3958,12 @@ function deriveCategoryFromCode(code) {
 }
 
 // === 步驟式判斷流程的工具元件 ===
-function WizardChoice({ label, sublabel, onClick, accent = 'blue' }) {
-  const colorMap = {
-    blue: 'border-blue-200 hover:border-blue-400 hover:bg-blue-50',
-    emerald: 'border-emerald-200 hover:border-emerald-400 hover:bg-emerald-50',
-    rose: 'border-rose-200 hover:border-rose-400 hover:bg-rose-50',
-    amber: 'border-amber-200 hover:border-amber-400 hover:bg-amber-50',
-  };
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left p-3 rounded-lg border-2 transition bg-white ${colorMap[accent] || colorMap.blue}`}
-    >
-      <div className="text-sm text-slate-800 font-medium">{label}</div>
-      {sublabel && <div className="text-xs text-slate-500 mt-1">{sublabel}</div>}
-    </button>
-  );
-}
-
 function ProductCodeWizard({ existingCodes, onApply, onClose }) {
-  // 流程狀態：使用「歷史堆疊」記錄走過的步驟，可上一步
-  const [history, setHistory] = useState([{ step: 'cat-step0' }]);
   const [category, setCategory] = useState(null);
   const [feature, setFeature] = useState(null);
   const [seqOverride, setSeqOverride] = useState(null);
   const [suffix, setSuffix] = useState('');
-  const [path, setPath] = useState([]); // 推導路徑（記錄每一步的選擇，最後顯示）
 
-  const current = history[history.length - 1];
-
-  const goTo = (step, pathLabel) => {
-    setHistory([...history, { step }]);
-    if (pathLabel) setPath([...path, pathLabel]);
-  };
-
-  const back = () => {
-    if (history.length <= 1) {
-      onClose();
-      return;
-    }
-    setHistory(history.slice(0, -1));
-    setPath(path.slice(0, -1));
-  };
-
-  // 設定分類碼後，跳到特徵碼第一步
-  const setCat = (catCode, label) => {
-    const c = CATEGORY_CODES.find(x => x.code === catCode);
-    setCategory(c);
-    setHistory([...history, { step: 'feat-step1' }]);
-    setPath([...path, `分類：${label || (c?.label || catCode)}`]);
-  };
-
-  // 設定特徵碼，跳到最後確認頁
-  const setFeat = (featCode, label) => {
-    const f = FEATURE_CODES.find(x => x.code === featCode);
-    setFeature(f);
-    setHistory([...history, { step: 'final' }]);
-    setPath([...path, `特徵：${label || (f?.label || featCode)}`]);
-  };
-
-  // 計算最終料號
   const autoSeq = (category && feature)
     ? suggestNextSequence(category.code, feature.code, existingCodes)
     : 1;
@@ -4011,305 +3973,136 @@ function ProductCodeWizard({ existingCodes, onApply, onClose }) {
   const finalCode = suffix.trim() ? `${baseCode}-${suffix.trim().toUpperCase()}` : baseCode;
   const isDup = baseCode && isCodeDuplicate(finalCode, existingCodes);
 
+  // 切換分類/特徵時重置流水號（讓系統重算）
+  const setCat = (c) => { setCategory(c); setSeqOverride(null); };
+  const setFeat = (f) => { setFeature(f); setSeqOverride(null); };
+
   return (
     <div className="fixed inset-0 bg-slate-900/60 z-[60] flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl max-w-xl w-full p-5 my-auto max-h-[95vh] flex flex-col">
+      <div className="bg-white rounded-xl max-w-2xl w-full p-5 my-auto max-h-[95vh] flex flex-col">
+        {/* 標題 */}
         <div className="flex items-center justify-between mb-2">
           <div>
             <h3 className="text-base font-medium flex items-center gap-2">
               <span>✨</span>料號編碼精靈
             </h3>
-            <p className="text-xs text-slate-500 mt-0.5">依 COMART 編碼 SOP v1.0 步驟式判斷</p>
+            <p className="text-xs text-slate-500 mt-0.5">依 COMART SOP v1.0 · 全部選項一頁顯示，可隨時更改</p>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
             <X className="w-5 h-5 text-slate-500" />
           </button>
         </div>
 
-        {/* 推導路徑 */}
-        {path.length > 0 && (
-          <div className="bg-slate-50 rounded-lg px-3 py-2 mb-3 text-xs text-slate-600">
-            {path.map((p, i) => (
-              <span key={i}>
-                {i > 0 && <span className="text-slate-300 mx-1">›</span>}
-                {p}
-              </span>
-            ))}
-          </div>
-        )}
+        {/* 優先規則提示 */}
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 mb-3 text-[11px] text-amber-800 leading-relaxed">
+          <strong>⚠ 優先規則：</strong>分類：與 Qi 相關優先 <strong>QIC</strong> · 特徵：車用 A+B 優先 <strong>MNT(M)</strong>、Heavy Duty 優先 <strong>HDM(H)</strong>
+        </div>
 
-        <div className="flex-1 overflow-y-auto pr-1">
-          {/* === 分類碼 Step 0：Qi Charger 優先 === */}
-          {current.step === 'cat-step0' && (
-            <div>
-              <h4 className="text-sm font-medium text-slate-800 mb-1">分類碼 · Step 0</h4>
-              <p className="text-sm text-slate-700 mb-3 font-medium">產品是否與 Qi Charger（無線充電）相關？</p>
-              <p className="text-xs text-slate-400 mb-3">⚠ 即使同時符合其他條件，與 Qi 相關仍優先用 QIC</p>
-              <div className="space-y-2">
-                <WizardChoice
-                  label="是 → 使用 QIC"
-                  sublabel="例：無線充電桌架、Qi2.2 磁鐵頭等"
-                  accent="emerald"
-                  onClick={() => setCat('QIC', 'QIC（Qi Charger）')}
-                />
-                <WizardChoice
-                  label="否 → 進入下一步"
-                  sublabel="非無線充電相關產品"
-                  onClick={() => goTo('cat-step1', 'Step 0：非 Qi Charger')}
-                />
-              </div>
+        <div className="flex-1 overflow-y-auto pr-1 space-y-4">
+
+          {/* 分類碼選擇 */}
+          <section>
+            <div className="flex items-baseline justify-between mb-2">
+              <h4 className="text-sm font-medium text-slate-800">
+                <span className="inline-flex items-center justify-center w-5 h-5 bg-blue-600 text-white rounded-full text-[10px] font-medium mr-1.5">1</span>
+                分類碼（3 碼）
+              </h4>
+              {category && (
+                <span className="text-xs text-slate-500">
+                  已選：<span className="font-mono font-medium text-blue-700">{category.code}</span> · {category.label}
+                </span>
+              )}
             </div>
-          )}
-
-          {/* === 分類碼 Step 1：是否可拆卸 === */}
-          {current.step === 'cat-step1' && (
-            <div>
-              <h4 className="text-sm font-medium text-slate-800 mb-1">分類碼 · Step 1</h4>
-              <p className="text-sm text-slate-700 mb-3 font-medium">產品是否可拆卸（是否為車用 A+B 產品）？</p>
-              <div className="space-y-2">
-                <WizardChoice
-                  label="可拆卸 → 進入 Step 2"
-                  sublabel="夾具、支架、桌夾、VESA、豆莢等"
-                  onClick={() => goTo('cat-step2', 'Step 1：可拆卸')}
-                />
-                <WizardChoice
-                  label="不可拆卸（一體式）→ 進入 Step 3"
-                  sublabel="磁吸架、相機架、其他"
-                  onClick={() => goTo('cat-step3', 'Step 1：不可拆卸')}
-                />
-              </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {CATEGORY_CODES.map(c => {
+                const selected = category?.code === c.code;
+                return (
+                  <button
+                    key={c.code}
+                    onClick={() => setCat(c)}
+                    className={`text-left p-2 rounded-lg border-2 transition ${
+                      selected
+                        ? 'bg-blue-50 border-blue-400'
+                        : 'bg-white border-slate-200 hover:border-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-baseline gap-1.5">
+                      <span className={`font-mono text-xs font-medium ${selected ? 'text-blue-700' : 'text-slate-700'}`}>{c.code}</span>
+                      <span className="text-xs text-slate-800">{c.label}</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{c.desc}</p>
+                  </button>
+                );
+              })}
             </div>
-          )}
+          </section>
 
-          {/* === 分類碼 Step 2：可拆卸 → 哪一種？=== */}
-          {current.step === 'cat-step2' && (
-            <div>
-              <h4 className="text-sm font-medium text-slate-800 mb-1">分類碼 · Step 2</h4>
-              <p className="text-sm text-slate-700 mb-3 font-medium">這個可拆卸產品是哪一種？</p>
-              <div className="space-y-2">
-                <WizardChoice
-                  label="車用 A+B 結構的「夾具」 → HDR"
-                  sublabel="Holder · 抓住手機那端"
-                  accent="emerald"
-                  onClick={() => setCat('HDR', 'HDR（A+B 夾具）')}
-                />
-                <WizardChoice
-                  label="車用 A+B 結構的「支架」 → BKT"
-                  sublabel="Bracket · 接到車上那端"
-                  accent="emerald"
-                  onClick={() => setCat('BKT', 'BKT（A+B 支架）')}
-                />
-                <WizardChoice
-                  label="非一般車用 A+B 組合 → MOD"
-                  sublabel="桌夾、豆莢、VESA、AMPS 等模組"
-                  accent="amber"
-                  onClick={() => setCat('MOD', 'MOD（Module/Adapter）')}
-                />
-              </div>
+          {/* 特徵碼選擇 */}
+          <section>
+            <div className="flex items-baseline justify-between mb-2">
+              <h4 className="text-sm font-medium text-slate-800">
+                <span className="inline-flex items-center justify-center w-5 h-5 bg-emerald-600 text-white rounded-full text-[10px] font-medium mr-1.5">2</span>
+                特徵碼（1 字）
+              </h4>
+              {feature && (
+                <span className="text-xs text-slate-500">
+                  已選：<span className="font-mono font-medium text-emerald-700">{feature.code}</span> · {feature.full} · {feature.label}
+                </span>
+              )}
             </div>
-          )}
-
-          {/* === 分類碼 Step 3：一體式 → 依手機端固定方式 === */}
-          {current.step === 'cat-step3' && (
-            <div>
-              <h4 className="text-sm font-medium text-slate-800 mb-1">分類碼 · Step 3</h4>
-              <p className="text-sm text-slate-700 mb-3 font-medium">一體式產品依「手機端固定方式」選擇：</p>
-              <div className="space-y-2">
-                <WizardChoice
-                  label="磁吸固定 → MGM"
-                  sublabel="Magnetic Mount"
-                  accent="emerald"
-                  onClick={() => setCat('MGM', 'MGM（磁吸）')}
-                />
-                <WizardChoice
-                  label="相機相關 → CMR"
-                  sublabel="Camera Mount"
-                  accent="emerald"
-                  onClick={() => setCat('CMR', 'CMR（相機）')}
-                />
-                <WizardChoice
-                  label="其他 → OTH"
-                  sublabel="以上皆不適用"
-                  accent="amber"
-                  onClick={() => setCat('OTH', 'OTH（其他）')}
-                />
-              </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {FEATURE_CODES.map(f => {
+                const selected = feature?.code === f.code;
+                return (
+                  <button
+                    key={f.code}
+                    onClick={() => setFeat(f)}
+                    className={`text-left p-2 rounded-lg border-2 transition ${
+                      selected
+                        ? 'bg-emerald-50 border-emerald-400'
+                        : 'bg-white border-slate-200 hover:border-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-baseline gap-1.5">
+                      <span className={`font-mono text-xs font-medium ${selected ? 'text-emerald-700' : 'text-slate-700'}`}>{f.code}</span>
+                      <span className="text-[10px] text-slate-400 font-mono">({f.full})</span>
+                      <span className="text-xs text-slate-800">{f.label}</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{f.desc}</p>
+                  </button>
+                );
+              })}
             </div>
-          )}
+          </section>
 
-          {/* === 特徵碼 Step 1：車用 A+B 結構？=== */}
-          {current.step === 'feat-step1' && (
-            <div>
-              <h4 className="text-sm font-medium text-slate-800 mb-1">特徵碼 · Step 1</h4>
-              <p className="text-sm text-slate-700 mb-3 font-medium">是車用 A+B 結構嗎？</p>
-              <p className="text-xs text-slate-400 mb-3">⚠ 車用 A+B 的夾具/支架無條件用 MNT</p>
-              <div className="space-y-2">
-                <WizardChoice
-                  label="是 → 使用 MNT (M)"
-                  sublabel="Mounting System · 需與其他配件組合使用"
-                  accent="emerald"
-                  onClick={() => setFeat('M', 'MNT (M) 車用 A+B')}
-                />
-                <WizardChoice
-                  label="否 → 進入下一步"
-                  onClick={() => goTo('feat-step2', 'Step 1：非車用 A+B')}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* === 特徵碼 Step 2：Heavy Duty？=== */}
-          {current.step === 'feat-step2' && (
-            <div>
-              <h4 className="text-sm font-medium text-slate-800 mb-1">特徵碼 · Step 2</h4>
-              <p className="text-sm text-slate-700 mb-3 font-medium">是 Heavy Duty 強固型嗎？</p>
-              <p className="text-xs text-slate-400 mb-3">⚠ 與 Heavy Duty 相關仍優先用 HDM（即使符合其他條件）</p>
-              <div className="space-y-2">
-                <WizardChoice
-                  label="是 → 使用 HDM (H)"
-                  sublabel="Heavy Duty Mount · 強固型支架"
-                  accent="emerald"
-                  onClick={() => setFeat('H', 'HDM (H) Heavy Duty')}
-                />
-                <WizardChoice
-                  label="否 → 進入下一步"
-                  onClick={() => goTo('feat-step3', 'Step 2：非 Heavy Duty')}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* === 特徵碼 Step 3：貼表面？=== */}
-          {current.step === 'feat-step3' && (
-            <div>
-              <h4 className="text-sm font-medium text-slate-800 mb-1">特徵碼 · Step 3</h4>
-              <p className="text-sm text-slate-700 mb-3 font-medium">產品「貼在某個表面」嗎？</p>
-              <p className="text-xs text-slate-400 mb-3">例：玻璃、桌面、牆面、車上</p>
-              <div className="space-y-2">
-                <WizardChoice
-                  label="是 → 使用 SCP (S)"
-                  sublabel="Suction Cup · 吸盤"
-                  accent="emerald"
-                  onClick={() => setFeat('S', 'SCP (S) 吸盤')}
-                />
-                <WizardChoice
-                  label="否 → 進入下一步"
-                  onClick={() => goTo('feat-step4', 'Step 3：非吸盤')}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* === 特徵碼 Step 4：扣/夾？=== */}
-          {current.step === 'feat-step4' && (
-            <div>
-              <h4 className="text-sm font-medium text-slate-800 mb-1">特徵碼 · Step 4</h4>
-              <p className="text-sm text-slate-700 mb-3 font-medium">用「扣 / 夾」的方式固定嗎？</p>
-              <p className="text-xs text-slate-400 mb-3">例：桌夾、冷氣夾</p>
-              <div className="space-y-2">
-                <WizardChoice
-                  label="是 → 使用 CLP (C)"
-                  sublabel="Clip · 夾扣"
-                  accent="emerald"
-                  onClick={() => setFeat('C', 'CLP (C) 夾扣')}
-                />
-                <WizardChoice
-                  label="否 → 進入下一步"
-                  onClick={() => goTo('feat-step5', 'Step 4：非夾扣')}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* === 特徵碼 Step 5：磁力？=== */}
-          {current.step === 'feat-step5' && (
-            <div>
-              <h4 className="text-sm font-medium text-slate-800 mb-1">特徵碼 · Step 5</h4>
-              <p className="text-sm text-slate-700 mb-3 font-medium">用「磁力」固定嗎？</p>
-              <p className="text-xs text-slate-400 mb-3">例：健身磁吸支架</p>
-              <div className="space-y-2">
-                <WizardChoice
-                  label="是 → 使用 MAG (G)"
-                  sublabel="Magnetic · 磁力"
-                  accent="emerald"
-                  onClick={() => setFeat('G', 'MAG (G) 磁力')}
-                />
-                <WizardChoice
-                  label="否 → 進入下一步"
-                  onClick={() => goTo('feat-step6', 'Step 5：非磁力')}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* === 特徵碼 Step 6：放著支撐？=== */}
-          {current.step === 'feat-step6' && (
-            <div>
-              <h4 className="text-sm font-medium text-slate-800 mb-1">特徵碼 · Step 6</h4>
-              <p className="text-sm text-slate-700 mb-3 font-medium">只是「放著支撐」嗎？</p>
-              <p className="text-xs text-slate-400 mb-3">例：平板支架（不吸、不夾、不磁）</p>
-              <div className="space-y-2">
-                <WizardChoice
-                  label="是 → 使用 TND (T)"
-                  sublabel="Stand · 支撐"
-                  accent="emerald"
-                  onClick={() => setFeat('T', 'TND (T) 支撐')}
-                />
-                <WizardChoice
-                  label="以上皆非 → 使用 NON (N)"
-                  sublabel="None · 都不適用"
-                  accent="amber"
-                  onClick={() => setFeat('N', 'NON (N) 其他')}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* === 最終確認頁 === */}
-          {current.step === 'final' && category && feature && (
-            <div>
-              <h4 className="text-sm font-medium text-slate-800 mb-1">確認流水號與後綴</h4>
-              <p className="text-xs text-slate-500 mb-3">系統已自動偵測下一個可用流水號</p>
-
-              <div className="bg-slate-50 rounded-lg p-3 mb-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-500">分類碼</span>
-                  <div className="text-right">
-                    <span className="font-mono text-sm font-medium text-blue-700">{category.code}</span>
-                    <span className="text-xs text-slate-400 ml-2">{category.label}</span>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-500">特徵碼</span>
-                  <div className="text-right">
-                    <span className="font-mono text-sm font-medium text-emerald-700">{feature.code}</span>
-                    <span className="text-xs text-slate-400 ml-2">{feature.full} · {feature.label}</span>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-500">流水號</span>
-                  <div className="flex items-center gap-2">
-                    {seqOverride !== null && (
-                      <button
-                        onClick={() => setSeqOverride(null)}
-                        className="text-[10px] text-blue-600 hover:underline"
-                      >還原自動</button>
-                    )}
-                    <input
-                      type="number"
-                      value={seq}
-                      onChange={(e) => setSeqOverride(parseInt(e.target.value, 10) || 1)}
-                      min="1"
-                      max="9999"
-                      className="font-mono text-sm font-medium text-slate-700 w-16 px-2 py-0.5 text-right border border-slate-200 rounded"
-                    />
-                  </div>
+          {/* 流水號 + 後綴 */}
+          {category && feature && (
+            <section className="bg-slate-50 rounded-lg p-3 space-y-2">
+              <h4 className="text-sm font-medium text-slate-800">
+                <span className="inline-flex items-center justify-center w-5 h-5 bg-slate-700 text-white rounded-full text-[10px] font-medium mr-1.5">3</span>
+                流水號與後綴
+              </h4>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500">流水號（系統建議）</span>
+                <div className="flex items-center gap-2">
+                  {seqOverride !== null && (
+                    <button onClick={() => setSeqOverride(null)} className="text-[10px] text-blue-600 hover:underline">
+                      還原自動
+                    </button>
+                  )}
+                  <input
+                    type="number"
+                    value={seq}
+                    onChange={(e) => setSeqOverride(parseInt(e.target.value, 10) || 1)}
+                    min="1"
+                    max="9999"
+                    className="font-mono text-sm font-medium text-slate-700 w-20 px-2 py-0.5 text-right border border-slate-200 rounded"
+                  />
                 </div>
               </div>
-
-              <div className="mb-3">
-                <p className="text-xs text-slate-600 mb-1">規格後綴（選用）</p>
-                <div className="flex gap-1.5 mb-2 flex-wrap">
+              <div>
+                <p className="text-xs text-slate-600 mb-1">後綴（選用）</p>
+                <div className="flex gap-1.5 flex-wrap">
                   {['', 'A', 'B', 'C', 'S'].map(s => (
                     <button
                       key={s || 'none'}
@@ -4329,46 +4122,50 @@ function ProductCodeWizard({ existingCodes, onApply, onClose }) {
                     onChange={(e) => setSuffix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
                     placeholder="自訂"
                     maxLength="3"
-                    className="flex-1 min-w-[80px] text-xs px-2 py-1 border border-slate-200 rounded font-mono"
+                    className="flex-1 min-w-[60px] text-xs px-2 py-1 border border-slate-200 rounded font-mono"
                   />
                 </div>
-                <p className="text-[10px] text-slate-400 leading-relaxed">
-                  -A / -B / -C：同產品不同規格（功率、尺寸、顏色） · -S：配套產品（Strap）
+                <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                  -A / -B / -C：同產品不同規格 · -S：配套（Strap / Accessory）
                 </p>
               </div>
+            </section>
+          )}
 
-              <div className={`rounded-lg p-4 text-center mb-2 ${
-                isDup ? 'bg-rose-50 border-2 border-rose-300' : 'bg-emerald-50 border-2 border-emerald-300'
-              }`}>
-                <p className="text-xs text-slate-500 mb-1">產生的料號</p>
-                <p className="font-mono text-2xl font-bold text-slate-800 tracking-wider">{finalCode}</p>
-                {isDup ? (
-                  <p className="text-xs text-rose-600 mt-2 font-medium">⚠ 此料號已存在，請改流水號或加後綴</p>
-                ) : (
-                  <p className="text-xs text-emerald-700 mt-2">✓ 此料號可用</p>
-                )}
-              </div>
+          {/* 預覽 */}
+          {category && feature && (
+            <div className={`rounded-lg p-4 text-center ${
+              isDup ? 'bg-rose-50 border-2 border-rose-300' : 'bg-emerald-50 border-2 border-emerald-300'
+            }`}>
+              <p className="text-xs text-slate-500 mb-1">產生的料號</p>
+              <p className="font-mono text-2xl font-bold text-slate-800 tracking-wider">{finalCode}</p>
+              {isDup ? (
+                <p className="text-xs text-rose-600 mt-2 font-medium">⚠ 此料號已存在，請改流水號或加後綴</p>
+              ) : (
+                <p className="text-xs text-emerald-700 mt-2">✓ 此料號可用</p>
+              )}
+            </div>
+          )}
+
+          {(!category || !feature) && (
+            <div className="bg-slate-50 rounded-lg p-4 text-center text-xs text-slate-500">
+              請先選擇分類碼 + 特徵碼，系統會自動產生料號
             </div>
           )}
         </div>
 
         {/* 底部按鈕 */}
         <div className="flex items-center justify-between gap-2 pt-3 mt-3 border-t border-slate-100">
-          <button
-            onClick={back}
-            className="text-xs px-3 py-1.5 hover:bg-slate-100 rounded text-slate-600"
-          >
-            {history.length > 1 ? '← 上一步' : '取消'}
+          <button onClick={onClose} className="text-xs px-3 py-1.5 hover:bg-slate-100 rounded text-slate-600">
+            取消
           </button>
-          {current.step === 'final' && (
-            <button
-              onClick={() => onApply(finalCode)}
-              disabled={isDup || !finalCode}
-              className="text-sm font-medium px-4 py-1.5 bg-slate-900 text-white rounded hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              套用此料號
-            </button>
-          )}
+          <button
+            onClick={() => onApply(finalCode)}
+            disabled={isDup || !finalCode}
+            className="text-sm font-medium px-4 py-1.5 bg-slate-900 text-white rounded hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            套用此料號
+          </button>
         </div>
       </div>
     </div>

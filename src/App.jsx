@@ -39,10 +39,19 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.20.0';
-const BUILD_ID = '20260506-1300';
+const APP_VERSION = 'v0.21.0';
+const BUILD_ID = '20260506-1500';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.21.0',
+    date: '2026-05-06',
+    changes: [
+      '🔧 修正：詳細頁編輯料號時加入重複偵測（紅框警告 + 儲存確認）',
+      '🎉 複製產品時保留：產品圖片、設計版本、DFM（之前會清空）',
+      '料號編輯時自動轉大寫、使用等寬字體',
+    ],
+  },
   {
     version: 'v0.20.0',
     date: '2026-05-06',
@@ -922,7 +931,6 @@ export default function ProductRoadmap() {
       openDate: new Date().toISOString().split('T')[0],  // 開案日改今天
       // 清空進度相關（複製來的是新案，從零開始）
       updates: [],
-      productImages: [],
       prototypeOrders: [],
       mouldOrders: [],
       trialRuns: [],
@@ -932,11 +940,12 @@ export default function ProductRoadmap() {
       status: '設計中',
       emailSubjects: [],
       emailSubject: '',
-      // 設計版本可以選擇是否複製。預設清空（新產品通常從新設計開始）
-      designs: { ID: [], '3D': [], BOM: [] },
-      hasDFM: false,
-      dfmNotes: '',
-      dfmAttachments: [],
+      // 保留：產品圖片、設計版本、DFM（使用者要自己決定是否刪除）
+      productImages: project.productImages || [],
+      designs: project.designs || { ID: [], '3D': [], BOM: [] },
+      hasDFM: project.hasDFM || false,
+      dfmNotes: project.dfmNotes || '',
+      dfmAttachments: project.dfmAttachments || [],
     };
     // 必須移除 _docId（Firestore 不接受 undefined，且新副本要存到新文件）
     delete dup._docId;
@@ -1433,6 +1442,15 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
   };
 
   const saveField = () => {
+    // 料號重複偵測：如果新值已存在於其他產品，警告但仍儲存（讓使用者決定）
+    if (editingField === 'code' && tempValue && tempValue !== project.code) {
+      if (isCodeDuplicate(tempValue, existingCodes)) {
+        if (!confirm(`料號「${tempValue}」已被其他產品使用。\n\n仍要儲存嗎？`)) {
+          setEditingField(null);
+          return;
+        }
+      }
+    }
     onUpdateField(editingField, tempValue);
     setEditingField(null);
   };
@@ -1483,20 +1501,29 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                 {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
               {editingField === 'code' ? (
-                <input
-                  type="text"
-                  value={tempValue}
-                  onChange={(e) => setTempValue(e.target.value)}
-                  onBlur={saveField}
-                  onKeyDown={(e) => { if (e.key === 'Enter') saveField(); if (e.key === 'Escape') setEditingField(null); }}
-                  autoFocus
-                  placeholder="料號"
-                  className="text-xs border border-slate-300 rounded px-2 py-0.5 w-32"
-                />
+                <div className="inline-flex flex-col">
+                  <input
+                    type="text"
+                    value={tempValue}
+                    onChange={(e) => setTempValue(e.target.value.toUpperCase())}
+                    onBlur={saveField}
+                    onKeyDown={(e) => { if (e.key === 'Enter') saveField(); if (e.key === 'Escape') setEditingField(null); }}
+                    autoFocus
+                    placeholder="料號"
+                    className={`text-xs border rounded px-2 py-0.5 w-36 font-mono ${
+                      tempValue && tempValue !== project.code && isCodeDuplicate(tempValue, existingCodes)
+                        ? 'border-rose-400 bg-rose-50 text-rose-700'
+                        : 'border-slate-300'
+                    }`}
+                  />
+                  {tempValue && tempValue !== project.code && isCodeDuplicate(tempValue, existingCodes) && (
+                    <span className="text-[10px] text-rose-600 mt-0.5">⚠ 此料號已存在</span>
+                  )}
+                </div>
               ) : (
                 <span
                   onClick={() => startEditField('code', project.code)}
-                  className="text-xs text-slate-500 cursor-text hover:bg-slate-100 px-1 py-0.5 rounded"
+                  className="text-xs text-slate-500 cursor-text hover:bg-slate-100 px-1 py-0.5 rounded font-mono"
                 >
                   {project.code || '+ 料號'}
                 </span>

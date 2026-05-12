@@ -30,6 +30,8 @@ const storageApp = initializeApp(storageFirebaseConfig, 'storage');
 const db = getFirestore(firebaseApp);
 const storage = getStorage(storageApp);
 const PROJECTS_COL = 'roadmap_projects';
+const CATEGORY_COL = 'code_categories';
+const FEATURE_COL = 'code_features';
 const STORAGE_FOLDER = 'roadmap';
 
 // === 簡易密碼設定 ===
@@ -39,10 +41,23 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.24.0';
-const BUILD_ID = '20260507-1900';
+const APP_VERSION = 'v0.25.0';
+const BUILD_ID = '20260507-2100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.25.0',
+    date: '2026-05-07',
+    changes: [
+      '🎉 圖片支援「複製貼上」（Ctrl+V）',
+      '滑鼠 hover 在「產品圖片」或「附件區塊」時按 Ctrl+V 可直接貼上剪貼簿圖片',
+      '🎉 編碼精靈支援自訂分類碼/特徵碼',
+      '點精靈右上角「⚙ 編輯規則」進入編輯模式',
+      '可修改備註說明、新增/刪除分類（已被使用的無法刪）',
+      '所有改動雲端同步，同事即時看到新增的分類',
+      '分類碼/特徵碼從寫死改為儲存在 Firestore（首次部署自動種子化）',
+    ],
+  },
   {
     version: 'v0.24.0',
     date: '2026-05-07',
@@ -732,6 +747,8 @@ export default function ProductRoadmap() {
   });
 
   const [projects, setProjects] = useState([]);
+  const [categoryCodes, setCategoryCodes] = useState(DEFAULT_CATEGORY_CODES);
+  const [featureCodes, setFeatureCodes] = useState(DEFAULT_FEATURE_CODES);
   const [saveStatus, setSaveStatus] = useState('idle');
   const [isLoading, setIsLoading] = useState(true);
 
@@ -781,6 +798,28 @@ export default function ProductRoadmap() {
     );
 
     return () => unsubscribe();
+  }, [currentUser]);
+
+  // === 訂閱分類碼 / 特徵碼（首次空白會種子化）===
+  useEffect(() => {
+    if (!currentUser) return;
+    const subscribe = (colName, defaults, setter, sortKey) => {
+      const colRef = collection(db, colName);
+      return onSnapshot(colRef, (snap) => {
+        const items = snap.docs.map(d => ({ ...d.data(), _docId: d.id }));
+        if (items.length === 0 && currentUser.role === 'admin') {
+          // 種子化
+          defaults.forEach(it => setDoc(doc(db, colName, it.code), it));
+        } else if (items.length > 0) {
+          // 依 order / code 排序
+          items.sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.code.localeCompare(b.code));
+          setter(items);
+        }
+      });
+    };
+    const u1 = subscribe(CATEGORY_COL, DEFAULT_CATEGORY_CODES.map((c, i) => ({ ...c, order: i })), setCategoryCodes);
+    const u2 = subscribe(FEATURE_COL, DEFAULT_FEATURE_CODES.map((c, i) => ({ ...c, order: i })), setFeatureCodes);
+    return () => { u1(); u2(); };
   }, [currentUser]);
 
   // 寫入單一 project 到 Firestore
@@ -1251,6 +1290,8 @@ export default function ProductRoadmap() {
           autoOpenWizard={autoOpenCodeWizard}
           onWizardClose={() => setAutoOpenCodeWizard(false)}
           existingCodes={projects.filter(p => p.id !== selectedProject.id).map(p => p.code).filter(Boolean)}
+          categoryCodes={categoryCodes}
+          featureCodes={featureCodes}
         />
       )}
 
@@ -1259,6 +1300,8 @@ export default function ProductRoadmap() {
           onSave={handleSaveProject}
           onClose={() => setShowNewModal(false)}
           existingCodes={projects.map(p => p.code).filter(Boolean)}
+          categoryCodes={categoryCodes}
+          featureCodes={featureCodes}
         />
       )}
 
@@ -1430,7 +1473,7 @@ function ProjectRow({ project, onClick }) {
   );
 }
 
-function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [] }) {
+function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES }) {
   const [showWizard, setShowWizard] = useState(false);
 
   // 收到自動打開請求時，跳出精靈
@@ -1782,6 +1825,8 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
       {showWizard && (
         <ProductCodeWizard
           existingCodes={existingCodes}
+          categoryCodes={categoryCodes}
+          featureCodes={featureCodes}
           onApply={(code) => {
             onUpdateField('code', code);
             closeWizard();
@@ -2233,10 +2278,38 @@ function ProductImagesSection({ images, onChange }) {
   const [dragOver, setDragOver] = useState(false);
   const [cropQueue, setCropQueue] = useState([]); // 等待裁剪的檔案
   const [cropCurrent, setCropCurrent] = useState(null); // 目前正在裁剪的檔案
+  const [pasteHint, setPasteHint] = useState(false); // 滑鼠進入時顯示「可貼上」提示
   const dragCounter = useRef(0);
+  const sectionRef = useRef(null);
   const fileRef = useRef(null);
 
   const getImgUrl = (img) => img.url || img.dataUrl;
+
+  // 監聽全域 paste 事件，但只有滑鼠在這個區塊時才處理
+  useEffect(() => {
+    const handlePaste = (e) => {
+      if (!pasteHint) return; // 滑鼠不在區塊內，不處理
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const imageFiles = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          const file = items[i].getAsFile();
+          if (file) {
+            // 重新命名（剪貼簿圖片通常叫 image.png）
+            const renamed = new File([file], `貼上圖片_${Date.now()}.${file.type.split('/')[1] || 'png'}`, { type: file.type });
+            imageFiles.push(renamed);
+          }
+        }
+      }
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        startCropFlow(imageFiles);
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [pasteHint]);
 
   const uploadOne = async (file) => {
     if (file.size > 10 * 1024 * 1024) {
@@ -2321,6 +2394,9 @@ function ProductImagesSection({ images, onChange }) {
 
   return (
     <section
+      ref={sectionRef}
+      onMouseEnter={() => setPasteHint(true)}
+      onMouseLeave={() => setPasteHint(false)}
       onDragEnter={(e) => {
         e.preventDefault();
         if (uploading) return;
@@ -2345,6 +2421,7 @@ function ProductImagesSection({ images, onChange }) {
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide">
           產品圖片 {dragOver && <span className="text-blue-600 ml-2 text-[11px]">↓ 放開以上傳</span>}
+          {pasteHint && !dragOver && <span className="text-slate-400 ml-2 text-[10px] normal-case">· 可拖檔或 Ctrl+V 貼上</span>}
         </h3>
         <button
           onClick={() => fileRef.current?.click()}
@@ -2727,8 +2804,34 @@ function AttachmentList({ attachments, onChange, readOnly }) {
   const [progress, setProgress] = useState(0);
   const [previewing, setPreviewing] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [pasteHint, setPasteHint] = useState(false);
   const dragCounter = useRef(0); // 用 counter 解決子元素進出誤判
   const fileInputRef = useRef(null);
+
+  // 監聽全域 paste（但只在滑鼠 hover 此區塊時觸發）
+  useEffect(() => {
+    const handlePaste = (e) => {
+      if (!pasteHint || readOnly || uploading) return;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const files = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          const f = items[i].getAsFile();
+          if (f) {
+            const renamed = new File([f], `貼上圖片_${Date.now()}.${f.type.split('/')[1] || 'png'}`, { type: f.type });
+            files.push(renamed);
+          }
+        }
+      }
+      if (files.length > 0) {
+        e.preventDefault();
+        handleFiles(files);
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [pasteHint, readOnly, uploading]);
 
   const handleAddLink = () => {
     if (!newUrl.trim()) return;
@@ -2858,6 +2961,8 @@ function AttachmentList({ attachments, onChange, readOnly }) {
   return (
     <div
       className={`mt-2 transition rounded ${dragOver ? 'bg-blue-50 ring-2 ring-blue-400 ring-offset-1 p-1' : ''}`}
+      onMouseEnter={() => setPasteHint(true)}
+      onMouseLeave={() => setPasteHint(false)}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -3900,7 +4005,8 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
 
 // === 產品料號編碼規則（依 COMART SOP v1.0）===
 // 分類碼：依產品結構/手機端固定方式分類
-const CATEGORY_CODES = [
+// 預設分類碼（首次部署時種子化到 Firestore，之後可在系統內編輯）
+const DEFAULT_CATEGORY_CODES = [
   { code: 'QIC', label: 'Qi Charger 無線充電', desc: '跟 Qi Charger 相關（優先級最高）' },
   { code: 'HDR', label: 'Holder 夾具', desc: '車用 A+B 結構的夾具' },
   { code: 'BKT', label: 'Bracket 支架', desc: '車用 A+B 結構的支架' },
@@ -3911,7 +4017,8 @@ const CATEGORY_CODES = [
 ];
 
 // 特徵碼：3 碼簡寫對應料號上的 1 碼
-const FEATURE_CODES = [
+// 預設特徵碼（首次部署時種子化到 Firestore，之後可在系統內編輯）
+const DEFAULT_FEATURE_CODES = [
   { code: 'M', full: 'MNT', label: 'Mounting System', desc: '車用夾具/支架，需與其他配件組合（優先級高）' },
   { code: 'H', full: 'HDM', label: 'Heavy Duty Mount', desc: '強固型支架（Heavy Duty 相關優先用此）' },
   { code: 'S', full: 'SCP', label: 'Suction Cup 吸盤', desc: '貼在平面表面（玻璃、桌面、牆面、車上）' },
@@ -3946,23 +4053,135 @@ function isCodeDuplicate(code, existingCodes) {
   return existingCodes.some(c => c.toUpperCase() === code.toUpperCase());
 }
 
-// 從料號推算類別（顯示用）
-function deriveCategoryFromCode(code) {
+// 從料號推算類別（顯示用）— 接收動態 codes
+function deriveCategoryFromCode(code, categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES) {
   if (!code) return '';
   const parsed = parseProductCode(code);
   if (!parsed) return '';
-  const cat = CATEGORY_CODES.find(c => c.code === parsed.category);
-  const feat = FEATURE_CODES.find(f => f.code === parsed.feature);
+  const cat = categoryCodes.find(c => c.code === parsed.category);
+  const feat = featureCodes.find(f => f.code === parsed.feature);
   if (!cat) return '';
   return `${cat.code} · ${cat.label}${feat ? ` / ${feat.label}` : ''}`;
 }
 
 // === 步驟式判斷流程的工具元件 ===
-function ProductCodeWizard({ existingCodes, onApply, onClose }) {
+function CodeEditModal({ kind, item, existingCodes, onSave, onClose }) {
+  const [code, setCode] = useState(item.code || '');
+  const [full, setFull] = useState(item.full || '');
+  const [label, setLabel] = useState(item.label || '');
+  const [desc, setDesc] = useState(item.desc || '');
+
+  const isNew = item.isNew || false;
+  const isCat = kind === 'cat';
+  const codeLength = isCat ? 3 : 1;
+  const codePlaceholder = isCat ? 'QIC' : 'S';
+
+  const codeValid = code.length === codeLength && /^[A-Z]+$/.test(code);
+  const isDuplicate = isNew && existingCodes.includes(code);
+  const canSave = codeValid && label.trim() && !isDuplicate;
+
+  const submit = () => {
+    if (!canSave) return;
+    const data = isCat
+      ? { code: code.toUpperCase(), label: label.trim(), desc: desc.trim() }
+      : { code: code.toUpperCase(), full: full.trim() || code, label: label.trim(), desc: desc.trim() };
+    onSave(data);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/70 z-[70] flex items-center justify-center p-3">
+      <div className="bg-white rounded-xl max-w-md w-full p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-medium">
+            {isNew ? '新增' : '編輯'} {isCat ? '分類碼' : '特徵碼'}
+          </h3>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">
+              代碼（{codeLength} 個英文大寫字母）
+            </label>
+            <input
+              type="text"
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase().slice(0, codeLength))}
+              disabled={!isNew}
+              maxLength={codeLength}
+              placeholder={codePlaceholder}
+              className={`w-full px-3 py-2 text-sm border rounded font-mono ${
+                isDuplicate ? 'border-rose-400 bg-rose-50' : 'border-slate-300'
+              } ${!isNew ? 'bg-slate-100 text-slate-400' : ''}`}
+            />
+            {isDuplicate && <p className="text-[11px] text-rose-600 mt-0.5">此代碼已存在</p>}
+            {!isNew && <p className="text-[10px] text-slate-400 mt-0.5">代碼建立後不能改</p>}
+          </div>
+
+          {!isCat && (
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">3 碼簡寫（顯示用）</label>
+              <input
+                type="text"
+                value={full}
+                onChange={(e) => setFull(e.target.value.toUpperCase().slice(0, 3))}
+                maxLength={3}
+                placeholder="SCP"
+                className="w-full px-3 py-2 text-sm border border-slate-300 rounded font-mono"
+              />
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">名稱</label>
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder={isCat ? 'Qi Charger 無線充電' : 'Suction Cup 吸盤'}
+              className="w-full px-3 py-2 text-sm border border-slate-300 rounded"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">備註 / 適用情境</label>
+            <textarea
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              rows={3}
+              placeholder={isCat ? '跟 Qi Charger 相關（優先級最高）' : '貼在某表面（玻璃、桌面、車上）'}
+              className="w-full px-3 py-2 text-sm border border-slate-300 rounded resize-none"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">
+            取消
+          </button>
+          <button
+            onClick={submit}
+            disabled={!canSave}
+            className="text-sm px-4 py-1.5 bg-slate-900 text-white rounded hover:bg-slate-800 disabled:opacity-40"
+          >
+            儲存
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProductCodeWizard({ existingCodes, categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, onApply, onClose }) {
   const [category, setCategory] = useState(null);
   const [feature, setFeature] = useState(null);
   const [seqOverride, setSeqOverride] = useState(null);
   const [suffix, setSuffix] = useState('');
+  const [editMode, setEditMode] = useState(false);
+  const [editingCat, setEditingCat] = useState(null); // {code, label, desc} or null
+  const [editingFeat, setEditingFeat] = useState(null);
 
   const autoSeq = (category && feature)
     ? suggestNextSequence(category.code, feature.code, existingCodes)
@@ -3977,6 +4196,32 @@ function ProductCodeWizard({ existingCodes, onApply, onClose }) {
   const setCat = (c) => { setCategory(c); setSeqOverride(null); };
   const setFeat = (f) => { setFeature(f); setSeqOverride(null); };
 
+  // 儲存單一 code 到 Firestore
+  const saveCode = async (kind, item) => {
+    const colName = kind === 'cat' ? CATEGORY_COL : FEATURE_COL;
+    const cleaned = {};
+    Object.keys(item).forEach(k => { if (item[k] !== undefined) cleaned[k] = item[k]; });
+    delete cleaned._docId;
+    await setDoc(doc(db, colName, item.code), cleaned);
+  };
+
+  // 刪除 code（前提：沒有產品使用此 code）
+  const deleteCode = async (kind, codeStr) => {
+    // 檢查是否被使用
+    const inUse = existingCodes.some(c => {
+      const parsed = parseProductCode(c);
+      if (!parsed) return false;
+      return kind === 'cat' ? parsed.category === codeStr : parsed.feature === codeStr;
+    });
+    if (inUse) {
+      alert(`「${codeStr}」已有產品使用，無法刪除。`);
+      return;
+    }
+    if (!confirm(`確定刪除「${codeStr}」嗎？此操作無法復原。`)) return;
+    const colName = kind === 'cat' ? CATEGORY_COL : FEATURE_COL;
+    await deleteDoc(doc(db, colName, codeStr));
+  };
+
   return (
     <div className="fixed inset-0 bg-slate-900/60 z-[60] flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-2xl w-full p-5 my-auto max-h-[95vh] flex flex-col">
@@ -3985,12 +4230,26 @@ function ProductCodeWizard({ existingCodes, onApply, onClose }) {
           <div>
             <h3 className="text-base font-medium flex items-center gap-2">
               <span>✨</span>料號編碼精靈
+              {editMode && <span className="text-xs px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-normal">編輯模式</span>}
             </h3>
-            <p className="text-xs text-slate-500 mt-0.5">依 COMART SOP v1.0 · 全部選項一頁顯示，可隨時更改</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {editMode ? '可改備註、新增、刪除分類碼/特徵碼' : '依 COMART SOP v1.0 · 全部選項一頁顯示，可隨時更改'}
+            </p>
           </div>
-          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
-            <X className="w-5 h-5 text-slate-500" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setEditMode(!editMode)}
+              title={editMode ? '結束編輯' : '編輯規則'}
+              className={`text-xs px-2 py-1 rounded inline-flex items-center gap-1 ${
+                editMode ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'hover:bg-slate-100 text-slate-600'
+              }`}
+            >
+              <span>⚙</span>{editMode ? '完成' : '編輯規則'}
+            </button>
+            <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+              <X className="w-5 h-5 text-slate-500" />
+            </button>
+          </div>
         </div>
 
         {/* 優先規則提示 */}
@@ -4014,26 +4273,57 @@ function ProductCodeWizard({ existingCodes, onApply, onClose }) {
               )}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-              {CATEGORY_CODES.map(c => {
+              {categoryCodes.map(c => {
                 const selected = category?.code === c.code;
                 return (
-                  <button
+                  <div
                     key={c.code}
-                    onClick={() => setCat(c)}
-                    className={`text-left p-2 rounded-lg border-2 transition ${
+                    className={`text-left p-2 rounded-lg border-2 transition relative ${
                       selected
                         ? 'bg-blue-50 border-blue-400'
                         : 'bg-white border-slate-200 hover:border-slate-400'
                     }`}
                   >
-                    <div className="flex items-baseline gap-1.5">
-                      <span className={`font-mono text-xs font-medium ${selected ? 'text-blue-700' : 'text-slate-700'}`}>{c.code}</span>
-                      <span className="text-xs text-slate-800">{c.label}</span>
-                    </div>
-                    <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{c.desc}</p>
-                  </button>
+                    <button
+                      onClick={() => !editMode && setCat(c)}
+                      disabled={editMode}
+                      className="w-full text-left"
+                    >
+                      <div className="flex items-baseline gap-1.5">
+                        <span className={`font-mono text-xs font-medium ${selected ? 'text-blue-700' : 'text-slate-700'}`}>{c.code}</span>
+                        <span className="text-xs text-slate-800">{c.label}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{c.desc}</p>
+                    </button>
+                    {editMode && (
+                      <div className="absolute top-1 right-1 flex gap-0.5">
+                        <button
+                          onClick={() => setEditingCat(c)}
+                          title="編輯"
+                          className="p-1 bg-white hover:bg-blue-50 rounded border border-slate-200 text-slate-500 hover:text-blue-600"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={() => deleteCode('cat', c.code)}
+                          title="刪除"
+                          className="p-1 bg-white hover:bg-rose-50 rounded border border-slate-200 text-slate-500 hover:text-rose-600"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
+              {editMode && (
+                <button
+                  onClick={() => setEditingCat({ code: '', label: '', desc: '', isNew: true })}
+                  className="text-left p-2 rounded-lg border-2 border-dashed border-blue-300 text-blue-600 hover:bg-blue-50 transition flex items-center justify-center gap-1 text-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />新增分類碼
+                </button>
+              )}
             </div>
           </section>
 
@@ -4051,27 +4341,58 @@ function ProductCodeWizard({ existingCodes, onApply, onClose }) {
               )}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-              {FEATURE_CODES.map(f => {
+              {featureCodes.map(f => {
                 const selected = feature?.code === f.code;
                 return (
-                  <button
+                  <div
                     key={f.code}
-                    onClick={() => setFeat(f)}
-                    className={`text-left p-2 rounded-lg border-2 transition ${
+                    className={`text-left p-2 rounded-lg border-2 transition relative ${
                       selected
                         ? 'bg-emerald-50 border-emerald-400'
                         : 'bg-white border-slate-200 hover:border-slate-400'
                     }`}
                   >
-                    <div className="flex items-baseline gap-1.5">
-                      <span className={`font-mono text-xs font-medium ${selected ? 'text-emerald-700' : 'text-slate-700'}`}>{f.code}</span>
-                      <span className="text-[10px] text-slate-400 font-mono">({f.full})</span>
-                      <span className="text-xs text-slate-800">{f.label}</span>
-                    </div>
-                    <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{f.desc}</p>
-                  </button>
+                    <button
+                      onClick={() => !editMode && setFeat(f)}
+                      disabled={editMode}
+                      className="w-full text-left"
+                    >
+                      <div className="flex items-baseline gap-1.5">
+                        <span className={`font-mono text-xs font-medium ${selected ? 'text-emerald-700' : 'text-slate-700'}`}>{f.code}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">({f.full})</span>
+                        <span className="text-xs text-slate-800">{f.label}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{f.desc}</p>
+                    </button>
+                    {editMode && (
+                      <div className="absolute top-1 right-1 flex gap-0.5">
+                        <button
+                          onClick={() => setEditingFeat(f)}
+                          title="編輯"
+                          className="p-1 bg-white hover:bg-emerald-50 rounded border border-slate-200 text-slate-500 hover:text-emerald-600"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={() => deleteCode('feat', f.code)}
+                          title="刪除"
+                          className="p-1 bg-white hover:bg-rose-50 rounded border border-slate-200 text-slate-500 hover:text-rose-600"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
+              {editMode && (
+                <button
+                  onClick={() => setEditingFeat({ code: '', full: '', label: '', desc: '', isNew: true })}
+                  className="text-left p-2 rounded-lg border-2 border-dashed border-emerald-300 text-emerald-600 hover:bg-emerald-50 transition flex items-center justify-center gap-1 text-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />新增特徵碼
+                </button>
+              )}
             </div>
           </section>
 
@@ -4168,12 +4489,32 @@ function ProductCodeWizard({ existingCodes, onApply, onClose }) {
           </button>
         </div>
       </div>
+
+      {editingCat !== null && (
+        <CodeEditModal
+          kind="cat"
+          item={editingCat}
+          existingCodes={categoryCodes.map(c => c.code)}
+          onSave={async (item) => { await saveCode('cat', item); setEditingCat(null); }}
+          onClose={() => setEditingCat(null)}
+        />
+      )}
+
+      {editingFeat !== null && (
+        <CodeEditModal
+          kind="feat"
+          item={editingFeat}
+          existingCodes={featureCodes.map(f => f.code)}
+          onSave={async (item) => { await saveCode('feat', item); setEditingFeat(null); }}
+          onClose={() => setEditingFeat(null)}
+        />
+      )}
     </div>
   );
 }
 
 
-function NewProjectModal({ onSave, onClose, existingCodes = [] }) {
+function NewProjectModal({ onSave, onClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES }) {
   const [showWizard, setShowWizard] = useState(false);
   const [form, setForm] = useState({
     name: '',
@@ -4361,6 +4702,8 @@ function NewProjectModal({ onSave, onClose, existingCodes = [] }) {
       {showWizard && (
         <ProductCodeWizard
           existingCodes={existingCodes}
+          categoryCodes={categoryCodes}
+          featureCodes={featureCodes}
           onApply={(code) => { update('code', code); setShowWizard(false); }}
           onClose={() => setShowWizard(false)}
         />

@@ -41,10 +41,21 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.27.0';
-const BUILD_ID = '20260508-1400';
+const APP_VERSION = 'v0.28.0';
+const BUILD_ID = '20260508-1600';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.28.0',
+    date: '2026-05-08',
+    changes: [
+      '🔧 BOM 區塊改為需要勾選才顯示（解決畫面太亂的問題）',
+      '版本卡片預設不顯示 BOM 區塊',
+      '滑鼠 hover 版本卡片 → 出現「☐ 有 BOM」勾選框',
+      '勾選後 → 出現 BOM 上傳區（可上傳檔案或貼連結）',
+      '若已上傳 BOM 檔案 → 自動視為有 BOM，固定顯示',
+    ],
+  },
   {
     version: 'v0.27.0',
     date: '2026-05-08',
@@ -3166,6 +3177,8 @@ function DesignSection({ designs, onChange }) {
                 <div className="space-y-1.5">
                   {list.map((d, i) => {
                     const hasBom = (d.bomAttachments || []).length > 0;
+                    // 已有檔案 → 一律顯示；沒檔案 → 看 bomEnabled 旗標
+                    const bomVisible = hasBom || d.bomEnabled === true;
                     return (
                       <div key={i} className={`p-2 rounded border text-xs group ${i === 0 ? 'bg-white border-blue-200' : 'bg-white border-slate-200'}`}>
                         <div className="flex items-baseline justify-between gap-2 mb-1">
@@ -3178,13 +3191,31 @@ function DesignSection({ designs, onChange }) {
                               </span>
                             )}
                           </div>
-                          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition">
-                            <button onClick={() => handleEdit(type, i)} className="p-0.5 text-slate-400 hover:text-slate-700">
-                              <Edit2 className="w-3 h-3" />
-                            </button>
-                            <button onClick={() => handleDelete(type, i)} className="p-0.5 text-slate-400 hover:text-rose-600">
-                              <Trash2 className="w-3 h-3" />
-                            </button>
+                          <div className="flex items-center gap-1">
+                            {/* BOM 勾選：沒檔案的時候才出現，已有檔案隱含為勾選 */}
+                            {!hasBom && (
+                              <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer hover:text-slate-700 opacity-0 group-hover:opacity-100 transition">
+                                <input
+                                  type="checkbox"
+                                  checked={d.bomEnabled === true}
+                                  onChange={(e) => {
+                                    const newList = [...list];
+                                    newList[i] = { ...d, bomEnabled: e.target.checked };
+                                    onChange({ ...designs, [type]: newList });
+                                  }}
+                                  className="w-3 h-3"
+                                />
+                                有 BOM
+                              </label>
+                            )}
+                            <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                              <button onClick={() => handleEdit(type, i)} className="p-0.5 text-slate-400 hover:text-slate-700">
+                                <Edit2 className="w-3 h-3" />
+                              </button>
+                              <button onClick={() => handleDelete(type, i)} className="p-0.5 text-slate-400 hover:text-rose-600">
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
                         </div>
                         {d.notes && <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{d.notes}</p>}
@@ -3196,21 +3227,35 @@ function DesignSection({ designs, onChange }) {
                             onChange({ ...designs, [type]: newList });
                           }}
                         />
-                        {/* BOM 區塊：綁在這個版本下 */}
-                        <div className="mt-2 pt-2 border-t border-slate-100">
-                          <div className="flex items-center gap-1 mb-1">
-                            <span className="text-[10px] text-slate-500 font-medium">📋 BOM 檔案</span>
-                            {!hasBom && <span className="text-[10px] text-slate-300">（此版本尚未出 BOM）</span>}
+                        {/* BOM 區塊：只在勾選或有檔案時顯示 */}
+                        {bomVisible && (
+                          <div className="mt-2 pt-2 border-t border-slate-100">
+                            <div className="flex items-center justify-between gap-1 mb-1">
+                              <span className="text-[10px] text-slate-500 font-medium">📋 BOM 檔案</span>
+                              {!hasBom && (
+                                <button
+                                  onClick={() => {
+                                    const newList = [...list];
+                                    newList[i] = { ...d, bomEnabled: false };
+                                    onChange({ ...designs, [type]: newList });
+                                  }}
+                                  className="text-[10px] text-slate-400 hover:text-rose-600"
+                                  title="收起此區（取消勾選有 BOM）"
+                                >
+                                  收起
+                                </button>
+                              )}
+                            </div>
+                            <AttachmentList
+                              attachments={d.bomAttachments || []}
+                              onChange={(newAtt) => {
+                                const newList = [...list];
+                                newList[i] = { ...d, bomAttachments: newAtt };
+                                onChange({ ...designs, [type]: newList });
+                              }}
+                            />
                           </div>
-                          <AttachmentList
-                            attachments={d.bomAttachments || []}
-                            onChange={(newAtt) => {
-                              const newList = [...list];
-                              newList[i] = { ...d, bomAttachments: newAtt };
-                              onChange({ ...designs, [type]: newList });
-                            }}
-                          />
-                        </div>
+                        )}
                       </div>
                     );
                   })}

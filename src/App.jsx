@@ -41,10 +41,21 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.26.0';
-const BUILD_ID = '20260508-1100';
+const APP_VERSION = 'v0.27.0';
+const BUILD_ID = '20260508-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.27.0',
+    date: '2026-05-08',
+    changes: [
+      '🎉 BOM 改為「綁定在 ID/3D 版本下」（之前是獨立區塊）',
+      '版本卡片若有 BOM 會顯示「📋 已出 BOM」標記',
+      '每個 ID/3D 版本下都有專屬 BOM 區塊（可上傳 BOM 檔案）',
+      '舊版獨立 BOM 紀錄會在黃色區塊顯示，可手動整理刪除',
+      '設計版本標題列會顯示「N 個版本 · M BOM」摘要',
+    ],
+  },
   {
     version: 'v0.26.0',
     date: '2026-05-08',
@@ -3076,8 +3087,15 @@ function AttachmentList({ attachments, onChange, readOnly }) {
 function DesignSection({ designs, onChange }) {
   const [editing, setEditing] = useState(null);
 
-  const types = ['ID', '3D', 'BOM'];
+  // BOM 不再是獨立區塊，而是綁在 ID/3D 版本下
+  const types = ['ID', '3D'];
+  const oldBomList = designs.BOM || []; // 舊資料相容
   const totalVersions = types.reduce((sum, t) => sum + (designs[t]?.length || 0), 0);
+
+  // 計算每個 type 中「有 BOM」的版本數
+  const bomCount = types.reduce((sum, t) => {
+    return sum + (designs[t] || []).filter(d => (d.bomAttachments || []).length > 0).length;
+  }, 0);
 
   // 自動推算下個版本號：找最大的 Vn，回傳 V(n+1)
   const getNextVersion = (type) => {
@@ -3096,7 +3114,7 @@ function DesignSection({ designs, onChange }) {
   const handleAdd = (type) => setEditing({
     type,
     idx: -1,
-    data: { version: getNextVersion(type), date: new Date().toISOString().split('T')[0], notes: '', images: [] }
+    data: { version: getNextVersion(type), date: new Date().toISOString().split('T')[0], notes: '', images: [], bomAttachments: [] }
   });
   const handleEdit = (type, idx) => setEditing({ type, idx, data: { ...designs[type][idx] } });
   const handleSave = () => {
@@ -3112,8 +3130,19 @@ function DesignSection({ designs, onChange }) {
     onChange({ ...designs, [type]: list });
   };
 
+  // 刪除舊版 BOM 紀錄
+  const handleDeleteOldBom = (idx) => {
+    if (!confirm('確定刪除這筆舊版 BOM 紀錄嗎？')) return;
+    const list = (designs.BOM || []).filter((_, i) => i !== idx);
+    onChange({ ...designs, BOM: list });
+  };
+
+  const badge = totalVersions > 0
+    ? `${totalVersions} 個版本${bomCount > 0 ? ` · ${bomCount} BOM` : ''}`
+    : '無';
+
   return (
-    <CollapsibleSection title="設計圖紙版本" badge={totalVersions > 0 ? `${totalVersions} 個版本` : '無'} defaultOpen={false} accent="slate">
+    <CollapsibleSection title="設計圖紙版本" badge={badge} defaultOpen={false} accent="slate">
       <div className="space-y-3 mt-2">
         {types.map(type => {
           const list = designs[type] || [];
@@ -3122,7 +3151,7 @@ function DesignSection({ designs, onChange }) {
             <div key={type} className="bg-slate-50 rounded-lg p-3">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-medium text-slate-800">{type === '3D' ? '3D 圖' : type === 'ID' ? 'ID 圖' : 'BOM'}</span>
+                  <span className="text-sm font-medium text-slate-800">{type === '3D' ? '3D 圖' : 'ID 圖'}</span>
                   {latest && (
                     <span className="text-xs px-1.5 py-0.5 bg-blue-600 text-white rounded font-medium">最新 {latest.version}</span>
                   )}
@@ -3135,38 +3164,95 @@ function DesignSection({ designs, onChange }) {
                 <p className="text-xs text-slate-400 py-1">尚無版本</p>
               ) : (
                 <div className="space-y-1.5">
-                  {list.map((d, i) => (
-                    <div key={i} className={`p-2 rounded border text-xs group ${i === 0 ? 'bg-white border-blue-200' : 'bg-white border-slate-200'}`}>
-                      <div className="flex items-baseline justify-between gap-2 mb-1">
-                        <div className="flex items-baseline gap-2">
-                          <span className={`font-medium ${i === 0 ? 'text-blue-700' : 'text-slate-600'}`}>{d.version}</span>
-                          <span className="text-slate-400 tabular-nums">{d.date}</span>
+                  {list.map((d, i) => {
+                    const hasBom = (d.bomAttachments || []).length > 0;
+                    return (
+                      <div key={i} className={`p-2 rounded border text-xs group ${i === 0 ? 'bg-white border-blue-200' : 'bg-white border-slate-200'}`}>
+                        <div className="flex items-baseline justify-between gap-2 mb-1">
+                          <div className="flex items-baseline gap-2 flex-wrap">
+                            <span className={`font-medium ${i === 0 ? 'text-blue-700' : 'text-slate-600'}`}>{d.version}</span>
+                            <span className="text-slate-400 tabular-nums">{d.date}</span>
+                            {hasBom && (
+                              <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-medium">
+                                📋 已出 BOM
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                            <button onClick={() => handleEdit(type, i)} className="p-0.5 text-slate-400 hover:text-slate-700">
+                              <Edit2 className="w-3 h-3" />
+                            </button>
+                            <button onClick={() => handleDelete(type, i)} className="p-0.5 text-slate-400 hover:text-rose-600">
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition">
-                          <button onClick={() => handleEdit(type, i)} className="p-0.5 text-slate-400 hover:text-slate-700">
-                            <Edit2 className="w-3 h-3" />
-                          </button>
-                          <button onClick={() => handleDelete(type, i)} className="p-0.5 text-slate-400 hover:text-rose-600">
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+                        {d.notes && <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{d.notes}</p>}
+                        <AttachmentList
+                          attachments={d.attachments || []}
+                          onChange={(newAtt) => {
+                            const newList = [...list];
+                            newList[i] = { ...d, attachments: newAtt };
+                            onChange({ ...designs, [type]: newList });
+                          }}
+                        />
+                        {/* BOM 區塊：綁在這個版本下 */}
+                        <div className="mt-2 pt-2 border-t border-slate-100">
+                          <div className="flex items-center gap-1 mb-1">
+                            <span className="text-[10px] text-slate-500 font-medium">📋 BOM 檔案</span>
+                            {!hasBom && <span className="text-[10px] text-slate-300">（此版本尚未出 BOM）</span>}
+                          </div>
+                          <AttachmentList
+                            attachments={d.bomAttachments || []}
+                            onChange={(newAtt) => {
+                              const newList = [...list];
+                              newList[i] = { ...d, bomAttachments: newAtt };
+                              onChange({ ...designs, [type]: newList });
+                            }}
+                          />
                         </div>
                       </div>
-                      {d.notes && <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{d.notes}</p>}
-                      <AttachmentList
-                        attachments={d.attachments || []}
-                        onChange={(newAtt) => {
-                          const newList = [...list];
-                          newList[i] = { ...d, attachments: newAtt };
-                          onChange({ ...designs, [type]: newList });
-                        }}
-                      />
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
           );
         })}
+
+        {/* 舊版獨立 BOM 紀錄區塊：只有舊資料有東西時才顯示 */}
+        {oldBomList.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm font-medium text-amber-800">📋 舊版 BOM 紀錄</span>
+              <span className="text-[10px] text-amber-600">（建議移轉到對應的 ID/3D 版本下）</span>
+            </div>
+            <div className="space-y-1.5">
+              {oldBomList.map((d, i) => (
+                <div key={i} className="p-2 rounded border bg-white border-amber-200 text-xs group">
+                  <div className="flex items-baseline justify-between gap-2 mb-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="font-medium text-amber-700">{d.version}</span>
+                      <span className="text-slate-400 tabular-nums">{d.date}</span>
+                    </div>
+                    <button onClick={() => handleDeleteOldBom(i)} className="opacity-0 group-hover:opacity-100 transition p-0.5 text-slate-400 hover:text-rose-600">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                  {d.notes && <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{d.notes}</p>}
+                  <AttachmentList
+                    attachments={d.attachments || []}
+                    onChange={(newAtt) => {
+                      const newList = [...oldBomList];
+                      newList[i] = { ...d, attachments: newAtt };
+                      onChange({ ...designs, BOM: newList });
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {editing && (

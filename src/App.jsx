@@ -41,10 +41,23 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.29.0';
-const BUILD_ID = '20260508-1900';
+const APP_VERSION = 'v0.30.0';
+const BUILD_ID = '20260509-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.30.0',
+    date: '2026-05-09',
+    changes: [
+      '🎉 手板訂單補強欄位：對應 ID 版本、對應 3D 版本、材質',
+      '🎉 手板訂單可上傳附件（測試報告、影片、圖片）',
+      '🎉 頂部新增「📦 手板總覽」按鈕（跨產品手板清單）',
+      '手板總覽：自動彙整所有產品的手板，無需手動同步',
+      '手板總覽支援篩選（狀態、位置、供應商）和搜尋',
+      '手板總覽支援匯出 CSV（方便傳給老闆/同事）',
+      '點任一手板可直接跳到該產品詳細頁',
+    ],
+  },
   {
     version: 'v0.29.0',
     date: '2026-05-08',
@@ -917,6 +930,7 @@ export default function ProductRoadmap() {
   const [selectedProject, setSelectedProject] = useState(null);
   const [autoOpenCodeWizard, setAutoOpenCodeWizard] = useState(false);
   const [showNewModal, setShowNewModal] = useState(false);
+  const [showPrototypeOverview, setShowPrototypeOverview] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showTagManager, setShowTagManager] = useState(false);
@@ -1198,6 +1212,14 @@ export default function ProductRoadmap() {
             <button onClick={() => fileInputRef.current?.click()} title="匯入 JSON" className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
               <Upload className="w-4 h-4" />
             </button>
+            <button
+              onClick={() => setShowPrototypeOverview(true)}
+              title="手板總覽（跨產品）"
+              className="p-2 text-slate-500 hover:bg-amber-50 hover:text-amber-700 rounded-lg inline-flex items-center gap-1"
+            >
+              <span>📦</span>
+              <span className="hidden sm:inline text-xs">手板</span>
+            </button>
             <div className="relative group">
               <button title="匯出" className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
                 <Download className="w-4 h-4" />
@@ -1345,6 +1367,20 @@ export default function ProductRoadmap() {
           existingCodes={projects.map(p => p.code).filter(Boolean)}
           categoryCodes={categoryCodes}
           featureCodes={featureCodes}
+        />
+      )}
+
+      {showPrototypeOverview && (
+        <PrototypeOverviewModal
+          projects={projects}
+          onClose={() => setShowPrototypeOverview(false)}
+          onJumpToProject={(id) => {
+            const target = projects.find(p => p.id === id);
+            if (target) {
+              setSelectedProject(target);
+              setShowPrototypeOverview(false);
+            }
+          }}
         />
       )}
 
@@ -1813,6 +1849,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             onChange={(o) => onUpdateField('prototypeOrders', o)}
             defaultSupplier={project.supplier}
             readOnly={isViewer}
+            designs={project.designs}
           />
 
           <MouldSection
@@ -3460,7 +3497,152 @@ function DFMSection({ hasDFM, dfmNotes, dfmAttachments, onToggle, onNotesChange,
   );
 }
 
-function PrototypeSection({ orders, onChange, defaultSupplier, readOnly }) {
+// 手板總覽 - 自動彙整所有產品的手板訂單
+function PrototypeOverviewModal({ projects, onClose, onJumpToProject }) {
+  const [statusFilter, setStatusFilter] = useState('全部');
+  const [locationFilter, setLocationFilter] = useState('全部');
+  const [supplierFilter, setSupplierFilter] = useState('全部');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // 把所有產品的手板訂單攤平成一個清單
+  const allPrototypes = useMemo(() => {
+    const list = [];
+    projects.forEach(p => {
+      (p.prototypeOrders || []).forEach(o => {
+        list.push({
+          ...o,
+          _projectId: p.id,
+          _projectName: p.name,
+          _projectCode: p.code,
+        });
+      });
+    });
+    return list;
+  }, [projects]);
+
+  // 取出唯一的篩選選項
+  const statusOptions = useMemo(() => [...new Set(allPrototypes.map(o => o.status).filter(Boolean))], [allPrototypes]);
+  const locationOptions = useMemo(() => [...new Set(allPrototypes.map(o => o.storageLocation).filter(Boolean))], [allPrototypes]);
+  const supplierOptions = useMemo(() => [...new Set(allPrototypes.map(o => o.supplier).filter(Boolean))], [allPrototypes]);
+
+  // 套用篩選
+  const filtered = useMemo(() => {
+    return allPrototypes.filter(o => {
+      const matchStatus = statusFilter === '全部' || o.status === statusFilter;
+      const matchLocation = locationFilter === '全部' || o.storageLocation === locationFilter;
+      const matchSupplier = supplierFilter === '全部' || o.supplier === supplierFilter;
+      const matchSearch = !searchTerm || [
+        o._projectName, o._projectCode, o.orderNo, o.partNo, o.material, o.storageLocation
+      ].some(v => (v || '').toLowerCase().includes(searchTerm.toLowerCase()));
+      return matchStatus && matchLocation && matchSupplier && matchSearch;
+    });
+  }, [allPrototypes, statusFilter, locationFilter, supplierFilter, searchTerm]);
+
+  // 匯出 CSV
+  const exportCSV = () => {
+    const headers = ['產品', '料號', '訂單號', '對應ID', '對應3D', '材質', '數量', '狀態', '存放位置', '供應商', '下單日'];
+    const rows = filtered.map(o => [
+      o._projectName, o._projectCode, o.orderNo, o.idVersion, o.threeDVersion,
+      o.material, o.quantity, o.status, o.storageLocation, o.supplier, o.orderDate
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(c => `"${(c || '').toString().replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' }); // BOM for Excel
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `手板總覽_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl max-w-5xl w-full p-4 sm:p-5 my-auto max-h-[95vh] flex flex-col">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-base font-medium flex items-center gap-2">
+              <span>📦</span>手板總覽
+              <span className="text-xs text-slate-400 font-normal">({filtered.length} / {allPrototypes.length} 筆)</span>
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">所有產品的手板訂單彙整 · 修改請到對應產品頁</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        {/* 篩選器 */}
+        <div className="flex flex-wrap gap-2 mb-3 pb-3 border-b border-slate-100">
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="搜尋產品、料號、訂單號、材質、位置..."
+            className="flex-1 min-w-[200px] px-3 py-1.5 text-sm border border-slate-200 rounded"
+          />
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="px-2 py-1.5 text-sm border border-slate-200 rounded bg-white">
+            <option value="全部">全部狀態</option>
+            {statusOptions.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} className="px-2 py-1.5 text-sm border border-slate-200 rounded bg-white">
+            <option value="全部">全部位置</option>
+            {locationOptions.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)} className="px-2 py-1.5 text-sm border border-slate-200 rounded bg-white">
+            <option value="全部">全部供應商</option>
+            {supplierOptions.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button
+            onClick={exportCSV}
+            className="px-3 py-1.5 text-xs text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded inline-flex items-center gap-1"
+          >
+            <Download className="w-3 h-3" />匯出 CSV
+          </button>
+        </div>
+
+        {/* 清單 */}
+        <div className="flex-1 overflow-y-auto -mx-1 px-1">
+          {filtered.length === 0 ? (
+            <p className="text-center text-sm text-slate-400 py-8">沒有符合條件的手板</p>
+          ) : (
+            <div className="space-y-1.5">
+              {filtered.map((o, i) => (
+                <div
+                  key={`${o._projectId}-${o.id || i}`}
+                  onClick={() => onJumpToProject(o._projectId)}
+                  className="bg-white border border-slate-200 hover:border-amber-400 hover:bg-amber-50/30 rounded-lg p-3 cursor-pointer transition"
+                >
+                  <div className="flex items-baseline justify-between gap-2 mb-1">
+                    <div className="flex items-baseline gap-2 flex-wrap min-w-0">
+                      <span className="text-sm font-medium text-slate-900 truncate">{o._projectName}</span>
+                      {o._projectCode && <span className="text-[10px] text-slate-400 font-mono">{o._projectCode}</span>}
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${ORDER_STATUS_COLORS[o.status] || ORDER_STATUS_COLORS['已下單']}`}>{o.status}</span>
+                    </div>
+                    <span className="text-xs text-slate-400 flex-shrink-0">{o.orderDate}</span>
+                  </div>
+                  <div className="text-xs text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5">
+                    {o.orderNo && <span className="text-slate-500">#{o.orderNo}</span>}
+                    {o.idVersion && <span className="text-blue-700">ID {o.idVersion}</span>}
+                    {o.threeDVersion && <span className="text-purple-700">3D {o.threeDVersion}</span>}
+                    {o.material && <span className="bg-slate-100 px-1.5 rounded">{o.material}</span>}
+                    <span>{o.supplier}</span>
+                    <span>{o.quantity} 個</span>
+                    {o.storageLocation && <span className="text-emerald-700">📍 {o.storageLocation}</span>}
+                  </div>
+                  {o.review && (
+                    <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{o.review}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PrototypeSection({ orders, onChange, defaultSupplier, readOnly, designs }) {
   const [editing, setEditing] = useState(null);
 
   const totalCost = orders.reduce((sum, o) => sum + (Number(o.quantity || 0) * Number(o.unitPrice || 0)), 0);
@@ -3472,6 +3654,7 @@ function PrototypeSection({ orders, onChange, defaultSupplier, readOnly }) {
       quantity: 1, unitPrice: 0, currency: 'TWD',
       orderDate: new Date().toISOString().split('T')[0], status: '已下單',
       storageLocation: '', review: '',
+      idVersion: '', threeDVersion: '', material: '', attachments: [],
     }
   });
   const handleEdit = (idx) => setEditing({ idx, data: { ...orders[idx] } });
@@ -3503,6 +3686,9 @@ function PrototypeSection({ orders, onChange, defaultSupplier, readOnly }) {
                   <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
                     <span className="text-sm font-medium text-slate-900">{o.orderNo || '(無單號)'}</span>
                     <span className={`text-xs px-1.5 py-0.5 rounded border ${ORDER_STATUS_COLORS[o.status] || ORDER_STATUS_COLORS['已下單']}`}>{o.status}</span>
+                    {o.idVersion && <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded font-mono">ID {o.idVersion}</span>}
+                    {o.threeDVersion && <span className="text-[10px] px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded font-mono">3D {o.threeDVersion}</span>}
+                    {o.material && <span className="text-[10px] px-1.5 py-0.5 bg-slate-50 text-slate-600 border border-slate-200 rounded">{o.material}</span>}
                   </div>
                   <div className="text-xs text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
                     {o.partNo && <span>料號: {o.partNo}</span>}
@@ -3520,8 +3706,20 @@ function PrototypeSection({ orders, onChange, defaultSupplier, readOnly }) {
                 <p className="text-xs text-slate-600 mb-1"><span className="text-slate-400">存放：</span>{o.storageLocation}</p>
               )}
               {o.review && (
-                <p className="text-xs text-slate-700 leading-relaxed bg-white p-2 rounded border border-amber-100 whitespace-pre-wrap"><span className="text-slate-400">評價：</span>{o.review}</p>
+                <p className="text-xs text-slate-700 leading-relaxed bg-white p-2 rounded border border-amber-100 whitespace-pre-wrap mb-1"><span className="text-slate-400">評價：</span>{o.review}</p>
               )}
+              {/* 附件區 - 測試報告 / 影片 / 圖片 */}
+              <div className="mt-1">
+                <AttachmentList
+                  attachments={o.attachments || []}
+                  onChange={(newAtt) => {
+                    const list = [...orders];
+                    list[i] = { ...o, attachments: newAtt };
+                    onChange(list);
+                  }}
+                  readOnly={readOnly}
+                />
+              </div>
             </div>
           ))
         )}
@@ -3544,6 +3742,8 @@ function PrototypeSection({ orders, onChange, defaultSupplier, readOnly }) {
           onSave={handleSave}
           showStorage
           showReview
+          showVersionMaterial
+          designs={designs}
         />
       )}
     </CollapsibleSection>
@@ -3636,7 +3836,9 @@ function MouldSection({ orders, onChange, defaultSupplier, readOnly }) {
   );
 }
 
-function OrderForm({ kind, data, onChange, onCancel, onSave, showStorage, showReview, showNotes }) {
+function OrderForm({ kind, data, onChange, onCancel, onSave, showStorage, showReview, showNotes, showVersionMaterial, designs }) {
+  const idVersions = (designs?.ID || []).map(v => v.version).filter(Boolean);
+  const threeDVersions = (designs?.['3D'] || []).map(v => v.version).filter(Boolean);
   return (
     <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-lg w-full p-5 my-auto">
@@ -3727,6 +3929,42 @@ function OrderForm({ kind, data, onChange, onCancel, onSave, showStorage, showRe
               {ORDER_STATUS.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
+          {showVersionMaterial && (
+            <div className="grid grid-cols-3 gap-3 pt-1 border-t border-slate-100">
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">對應 ID 版本</label>
+                <select
+                  value={data.idVersion || ''}
+                  onChange={(e) => onChange({ ...data, idVersion: e.target.value })}
+                  className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
+                >
+                  <option value="">未指定</option>
+                  {idVersions.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">對應 3D 版本</label>
+                <select
+                  value={data.threeDVersion || ''}
+                  onChange={(e) => onChange({ ...data, threeDVersion: e.target.value })}
+                  className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
+                >
+                  <option value="">未指定</option>
+                  {threeDVersions.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">材質</label>
+                <input
+                  type="text"
+                  value={data.material || ''}
+                  onChange={(e) => onChange({ ...data, material: e.target.value })}
+                  placeholder="例：ABS、PC、鋁"
+                  className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+                />
+              </div>
+            </div>
+          )}
           {showStorage && (
             <div>
               <label className="block text-xs text-slate-600 mb-1">收到後存放位置</label>

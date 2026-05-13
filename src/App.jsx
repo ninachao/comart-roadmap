@@ -41,10 +41,23 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.30.0';
-const BUILD_ID = '20260509-1100';
+const APP_VERSION = 'v0.31.0';
+const BUILD_ID = '20260509-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.31.0',
+    date: '2026-05-09',
+    changes: [
+      '🎉 附件區塊新增「全部下載」按鈕（有 2+ 個檔案時出現）',
+      '🔧 日期輸入限制年份為 4 位（解決打成 6 位數的問題）',
+      '🎉 複製產品時改為完整複製（圖片、版本、進度、訂單全部複製過去）',
+      '只有料號清空（必須重新編碼），其他資料保留讓使用者自己刪',
+      '🎉 手板總覽改版面：左側顯示產品圖、右側突出產品名/料號/數量/位置',
+      '手板總覽的版本/材質/變更說明保留但放在次要位置',
+      '手板若有自己的圖片附件會優先顯示，否則用產品主圖',
+    ],
+  },
   {
     version: 'v0.30.0',
     date: '2026-05-09',
@@ -822,6 +835,24 @@ export default function ProductRoadmap() {
     };
   }, []);
 
+  // === 限制 date input 年份為 4 位 ===
+  // 瀏覽器原生 date input 預設允許 6 位年份。
+  // 我們對所有 date input 自動加 max="9999-12-31"，這樣使用者打到 5 位時瀏覽器會自動裁切。
+  useEffect(() => {
+    const applyDateLimits = () => {
+      const inputs = document.querySelectorAll('input[type="date"]');
+      inputs.forEach(input => {
+        if (!input.hasAttribute('max')) input.setAttribute('max', '9999-12-31');
+        if (!input.hasAttribute('min')) input.setAttribute('min', '1900-01-01');
+      });
+    };
+    applyDateLimits();
+    // 觀察 DOM 變動，對新增的 date input 也套用
+    const observer = new MutationObserver(applyDateLimits);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
   // === Firestore 即時同步 ===
   useEffect(() => {
     if (!currentUser) return;
@@ -1063,27 +1094,29 @@ export default function ProductRoadmap() {
     const dup = {
       ...project,
       id: newId,
-      // 清空專屬資料：
+      // 只清空料號 + 改品名 + 改開案日
       code: '',                    // 料號清空（必須重新編碼）
       name: project.name + ' (副本)', // 品名加副本
       openDate: new Date().toISOString().split('T')[0],  // 開案日改今天
-      // 清空進度相關（複製來的是新案，從零開始）
-      updates: [],
-      prototypeOrders: [],
-      mouldOrders: [],
-      trialRuns: [],
-      materialCodeStatus: '未申請',
-      materialCodeNumber: '',
-      phaseOverride: null,
-      status: '設計中',
-      emailSubjects: [],
-      emailSubject: '',
-      // 保留：產品圖片、設計版本、DFM（使用者要自己決定是否刪除）
+      // 全部保留（使用者要自己刪不需要的）：
+      updates: project.updates || [],
+      prototypeOrders: project.prototypeOrders || [],
+      mouldOrders: project.mouldOrders || [],
+      trialRuns: project.trialRuns || [],
+      materialCodeStatus: project.materialCodeStatus || '未申請',
+      materialCodeNumber: project.materialCodeNumber || '',
+      phaseOverride: project.phaseOverride || null,
+      status: project.status || '設計中',
+      emailSubjects: project.emailSubjects || [],
+      emailSubject: project.emailSubject || '',
       productImages: project.productImages || [],
       designs: project.designs || { ID: [], '3D': [], BOM: [] },
       hasDFM: project.hasDFM || false,
       dfmNotes: project.dfmNotes || '',
       dfmAttachments: project.dfmAttachments || [],
+      tags: project.tags || [],
+      trialNotes: project.trialNotes || '',
+      notes: project.notes || '',
     };
     // 必須移除 _docId（Firestore 不接受 undefined，且新副本要存到新文件）
     delete dup._docId;
@@ -1685,7 +1718,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             {!isViewer && onDuplicate && (
               <button
                 onClick={() => {
-                  if (confirm(`確定要複製「${project.name}」嗎？\n會建立一個新專案，料號和進度會清空，其他設定保留。`)) {
+                  if (confirm(`確定要複製「${project.name}」嗎？\n會建立一個新專案，所有資料（圖片、版本、進度、訂單等）都會複製過去，只有料號需要重新編碼。`)) {
                     onDuplicate();
                   }
                 }}
@@ -3037,6 +3070,31 @@ function AttachmentList({ attachments, onChange, readOnly }) {
   };
 
   const list = attachments || [];
+  const uploadCount = list.filter(a => a.kind === 'upload' && a.url).length;
+
+  // 批次下載：逐一觸發瀏覽器下載
+  const downloadAll = async () => {
+    const uploads = list.filter(a => a.kind === 'upload' && a.url);
+    for (let i = 0; i < uploads.length; i++) {
+      const a = uploads[i];
+      try {
+        const res = await fetch(a.url);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = a.name || `file-${i + 1}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        // 小延遲避免瀏覽器擋下載
+        await new Promise(r => setTimeout(r, 300));
+      } catch (e) {
+        console.warn('下載失敗：', a.name, e);
+      }
+    }
+  };
 
   return (
     <div
@@ -3133,6 +3191,11 @@ function AttachmentList({ attachments, onChange, readOnly }) {
             <button onClick={() => setAdding(true)} className="text-[11px] text-blue-600 hover:bg-blue-50 px-2 py-1 rounded inline-flex items-center gap-1">
               <Plus className="w-3 h-3" />貼連結
             </button>
+            {uploadCount >= 2 && (
+              <button onClick={downloadAll} title="批次下載全部上傳檔案" className="text-[11px] text-slate-600 hover:bg-slate-100 px-2 py-1 rounded inline-flex items-center gap-1 border border-slate-200">
+                <Download className="w-3 h-3" />全部下載 ({uploadCount})
+              </button>
+            )}
             <span className="text-[10px] text-slate-400">或拖檔案到這裡</span>
             <input ref={fileInputRef} type="file" multiple onChange={handleFilePick} className="hidden" />
           </div>
@@ -3509,11 +3572,15 @@ function PrototypeOverviewModal({ projects, onClose, onJumpToProject }) {
     const list = [];
     projects.forEach(p => {
       (p.prototypeOrders || []).forEach(o => {
+        // 優先使用手板訂單自己的圖片附件，沒有的話用產品主圖
+        const ownImage = (o.attachments || []).find(a => isImageFile(a.name, a.type));
+        const productMainImage = (p.productImages || [])[0];
         list.push({
           ...o,
           _projectId: p.id,
           _projectName: p.name,
           _projectCode: p.code,
+          _displayImage: ownImage || productMainImage,
         });
       });
     });
@@ -3605,33 +3672,69 @@ function PrototypeOverviewModal({ projects, onClose, onJumpToProject }) {
           {filtered.length === 0 ? (
             <p className="text-center text-sm text-slate-400 py-8">沒有符合條件的手板</p>
           ) : (
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {filtered.map((o, i) => (
                 <div
                   key={`${o._projectId}-${o.id || i}`}
                   onClick={() => onJumpToProject(o._projectId)}
-                  className="bg-white border border-slate-200 hover:border-amber-400 hover:bg-amber-50/30 rounded-lg p-3 cursor-pointer transition"
+                  className="bg-white border border-slate-200 hover:border-amber-400 hover:bg-amber-50/30 rounded-lg p-3 cursor-pointer transition flex gap-3"
                 >
-                  <div className="flex items-baseline justify-between gap-2 mb-1">
-                    <div className="flex items-baseline gap-2 flex-wrap min-w-0">
-                      <span className="text-sm font-medium text-slate-900 truncate">{o._projectName}</span>
-                      {o._projectCode && <span className="text-[10px] text-slate-400 font-mono">{o._projectCode}</span>}
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${ORDER_STATUS_COLORS[o.status] || ORDER_STATUS_COLORS['已下單']}`}>{o.status}</span>
+                  {/* 左側：產品圖片 */}
+                  <div className="flex-shrink-0 w-20 h-20 bg-slate-100 rounded overflow-hidden flex items-center justify-center">
+                    {o._displayImage ? (
+                      <StorageImage
+                        src={o._displayImage.url || o._displayImage.dataUrl}
+                        path={o._displayImage.path}
+                        alt={o._projectName}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <ImageIcon className="w-6 h-6 text-slate-300" />
+                    )}
+                  </div>
+
+                  {/* 右側：主要資訊 */}
+                  <div className="flex-1 min-w-0">
+                    {/* 第一行：產品名（大）+ 料號 + 狀態 */}
+                    <div className="flex items-baseline justify-between gap-2 mb-1">
+                      <div className="flex items-baseline gap-2 flex-wrap min-w-0">
+                        <span className="text-base font-semibold text-slate-900 truncate">{o._projectName}</span>
+                        {o._projectCode && (
+                          <span className="text-xs font-mono text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">{o._projectCode}</span>
+                        )}
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded border flex-shrink-0 ${ORDER_STATUS_COLORS[o.status] || ORDER_STATUS_COLORS['已下單']}`}>{o.status}</span>
                     </div>
-                    <span className="text-xs text-slate-400 flex-shrink-0">{o.orderDate}</span>
+
+                    {/* 第二行：數量 + 位置（顯眼） */}
+                    <div className="flex items-baseline gap-3 mb-1 flex-wrap">
+                      <span className="text-sm font-medium text-slate-800">
+                        <span className="text-slate-400 text-xs mr-0.5">數量</span>
+                        {o.quantity} 個
+                      </span>
+                      {o.storageLocation && (
+                        <span className="text-sm font-medium text-emerald-700">
+                          <span className="text-slate-400 text-xs mr-0.5">📍 位置</span>
+                          {o.storageLocation}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* 第三行：版本/材質/供應商（次要，小字） */}
+                    <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-2 gap-y-0.5">
+                      {o.orderNo && <span>#{o.orderNo}</span>}
+                      {o.idVersion && <span className="text-blue-600">ID {o.idVersion}</span>}
+                      {o.threeDVersion && <span className="text-purple-600">3D {o.threeDVersion}</span>}
+                      {o.material && <span>{o.material}</span>}
+                      {o.supplier && <span>{o.supplier}</span>}
+                      <span className="tabular-nums">{o.orderDate}</span>
+                    </div>
+
+                    {/* 變更說明（最不顯眼，但仍列出） */}
+                    {o.review && (
+                      <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">{o.review}</p>
+                    )}
                   </div>
-                  <div className="text-xs text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5">
-                    {o.orderNo && <span className="text-slate-500">#{o.orderNo}</span>}
-                    {o.idVersion && <span className="text-blue-700">ID {o.idVersion}</span>}
-                    {o.threeDVersion && <span className="text-purple-700">3D {o.threeDVersion}</span>}
-                    {o.material && <span className="bg-slate-100 px-1.5 rounded">{o.material}</span>}
-                    <span>{o.supplier}</span>
-                    <span>{o.quantity} 個</span>
-                    {o.storageLocation && <span className="text-emerald-700">📍 {o.storageLocation}</span>}
-                  </div>
-                  {o.review && (
-                    <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{o.review}</p>
-                  )}
                 </div>
               ))}
             </div>

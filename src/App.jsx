@@ -41,10 +41,29 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.31.0';
-const BUILD_ID = '20260509-1400';
+const APP_VERSION = 'v0.33.0';
+const BUILD_ID = '20260509-1900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.33.0',
+    date: '2026-05-09',
+    changes: [
+      '🎉 主頁產品支援拖曳排序',
+      '把性質相似的產品拖在一起，排序儲存到雲端，所有人看到一樣的順序',
+      '拖曳中：原位變半透明、目標位置出現藍色框',
+      '篩選後仍可拖曳，只動可見產品的相對順序',
+    ],
+  },
+  {
+    version: 'v0.32.0',
+    date: '2026-05-09',
+    changes: [
+      '🔧 列表縮圖改為「完整顯示」（不再切圖），背景改白色',
+      '🎉 每張產品圖可切換「完整顯示 ⊟ / 填滿格子 ⊞」（hover 時的小按鈕）',
+      '🔧 主頁預設篩選器改為「全部」（之前是「設計中」）',
+    ],
+  },
   {
     version: 'v0.31.0',
     date: '2026-05-09',
@@ -955,7 +974,7 @@ export default function ProductRoadmap() {
   };
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('設計中');
+  const [statusFilter, setStatusFilter] = useState('全部');
   const [tagFilter, setTagFilter] = useState('全部');
   const [phaseFilter, setPhaseFilter] = useState('全部');
   const [selectedProject, setSelectedProject] = useState(null);
@@ -991,8 +1010,61 @@ export default function ProductRoadmap() {
       const matchTag = tagFilter === '全部' || (p.tags || []).includes(tagFilter);
       const matchPhase = phaseFilter === '全部' || getCurrentPhase(p) === phaseFilter;
       return matchSearch && matchStatus && matchTag && matchPhase;
+    }).sort((a, b) => {
+      // 依 sortOrder 排序，沒有的補 999999（放後面）
+      const oa = a.sortOrder ?? 999999;
+      const ob = b.sortOrder ?? 999999;
+      if (oa !== ob) return oa - ob;
+      // sortOrder 相同就依 id 排（保持穩定）
+      return (a.id || 0) - (b.id || 0);
     });
   }, [projects, searchTerm, statusFilter, tagFilter, phaseFilter]);
+
+  // 重新排序所有產品的 sortOrder（用 10/20/30 留間隔）
+  const reorderProjects = async (newOrderList) => {
+    if (!isAdmin) return;
+    const updates = newOrderList.map((p, i) => ({ ...p, sortOrder: (i + 1) * 10 }));
+    // 批次寫入 Firestore
+    for (const p of updates) {
+      const cleaned = {};
+      Object.keys(p).forEach(k => { if (p[k] !== undefined && k !== '_docId') cleaned[k] = p[k]; });
+      await setDoc(doc(db, PROJECTS_COL, String(p.id)), cleaned);
+    }
+  };
+
+  // 拖曳狀態
+  const [dragProjectId, setDragProjectId] = useState(null);
+  const [dropTargetId, setDropTargetId] = useState(null);
+
+  // 處理拖曳放開
+  const handleProjectDrop = (targetId) => {
+    if (!dragProjectId || dragProjectId === targetId) {
+      setDragProjectId(null);
+      setDropTargetId(null);
+      return;
+    }
+    // 用「目前篩選後的順序」當基準（拖曳必須在當前可見的清單裡進行）
+    const visibleList = filteredProjects;
+    const dragIdx = visibleList.findIndex(p => p.id === dragProjectId);
+    const targetIdx = visibleList.findIndex(p => p.id === targetId);
+    if (dragIdx < 0 || targetIdx < 0) {
+      setDragProjectId(null);
+      setDropTargetId(null);
+      return;
+    }
+    // 建立新順序
+    const newVisible = [...visibleList];
+    const [moved] = newVisible.splice(dragIdx, 1);
+    newVisible.splice(targetIdx, 0, moved);
+    // 重新計算全部產品的 sortOrder（保留不在可見清單裡的相對位置）
+    const visibleIds = new Set(newVisible.map(p => p.id));
+    const hiddenProjects = projects.filter(p => !visibleIds.has(p.id));
+    // 可見的依新順序、隱藏的接在後面（保留原順序）
+    const allReordered = [...newVisible, ...hiddenProjects.sort((a, b) => (a.sortOrder ?? 999999) - (b.sortOrder ?? 999999))];
+    reorderProjects(allReordered);
+    setDragProjectId(null);
+    setDropTargetId(null);
+  };
 
   const counts = useMemo(() => {
     const c = { 全部: projects.length };
@@ -1364,6 +1436,14 @@ export default function ProductRoadmap() {
                 key={p.id}
                 project={p}
                 onClick={() => setSelectedProject(p)}
+                draggable={isAdmin}
+                isDragging={dragProjectId === p.id}
+                isDropTarget={dropTargetId === p.id && dragProjectId !== p.id}
+                onDragStart={() => setDragProjectId(p.id)}
+                onDragOver={() => setDropTargetId(p.id)}
+                onDragLeave={() => setDropTargetId(prev => prev === p.id ? null : prev)}
+                onDrop={() => handleProjectDrop(p.id)}
+                onDragEnd={() => { setDragProjectId(null); setDropTargetId(null); }}
               />
             ))}
           </div>
@@ -1509,7 +1589,7 @@ function getPhaseDetail(project) {
   return '';
 }
 
-function ProjectRow({ project, onClick }) {
+function ProjectRow({ project, onClick, draggable = false, isDragging = false, isDropTarget = false, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd }) {
   const latest = project.updates?.[0];
   const cfg = STATUS_COLORS[project.status];
 
@@ -1520,14 +1600,48 @@ function ProjectRow({ project, onClick }) {
   const isOverridden = !!project.phaseOverride;
 
   return (
+    <div
+      draggable={draggable}
+      onDragStart={(e) => {
+        if (!draggable) return;
+        e.dataTransfer.effectAllowed = 'move';
+        // 不要傳遞檔案資料，這是內部排序拖曳
+        e.dataTransfer.setData('text/plain', 'reorder');
+        if (onDragStart) onDragStart();
+      }}
+      onDragOver={(e) => {
+        if (!draggable) return;
+        e.preventDefault();
+        if (onDragOver) onDragOver();
+      }}
+      onDragLeave={(e) => {
+        if (!draggable) return;
+        if (onDragLeave) onDragLeave();
+      }}
+      onDrop={(e) => {
+        if (!draggable) return;
+        e.preventDefault();
+        if (onDrop) onDrop();
+      }}
+      onDragEnd={() => {
+        if (onDragEnd) onDragEnd();
+      }}
+      className={`transition ${isDragging ? 'opacity-30' : ''} ${isDropTarget ? 'ring-2 ring-blue-400 ring-offset-1 rounded-xl' : ''}`}
+    >
     <button
       onClick={onClick}
-      className="w-full text-left bg-white rounded-xl border border-slate-200 p-4 hover:border-slate-300 hover:shadow-sm transition group"
+      className={`w-full text-left bg-white rounded-xl border border-slate-200 p-4 hover:border-slate-300 hover:shadow-sm transition group ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
     >
       <div className="flex items-start gap-3">
-        <div className="flex-shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center">
+        <div className="flex-shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-lg bg-white border border-slate-200 overflow-hidden flex items-center justify-center">
           {mainImage ? (
-            <StorageImage src={mainImage.url || mainImage.dataUrl} path={mainImage.path} alt={project.name} className="w-full h-full object-cover" />
+            <StorageImage
+              src={mainImage.url || mainImage.dataUrl}
+              path={mainImage.path}
+              alt={project.name}
+              className="w-full h-full object-contain"
+              style={mainImage.fit === 'cover' ? { objectFit: 'cover' } : undefined}
+            />
           ) : (
             <ImageIcon className="w-5 h-5 text-slate-300" />
           )}
@@ -1582,6 +1696,7 @@ function ProjectRow({ project, onClick }) {
         </div>
       </div>
     </button>
+    </div>
   );
 }
 
@@ -2572,39 +2687,61 @@ function ProductImagesSection({ images, onChange }) {
       ) : (
         <>
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-            {images.map((img, i) => (
-              <div key={i} className="relative group">
-                <button
-                  onClick={() => setPreviewIdx(i)}
-                  className="block w-full aspect-square rounded-lg border border-slate-200 overflow-hidden bg-slate-50 hover:border-slate-400"
-                >
-                  <StorageImage src={getImgUrl(img)} path={img.path} alt={img.name} className="w-full h-full object-cover" />
-                </button>
-                {i === 0 && (
-                  <span className="absolute top-1 left-1 text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded">主圖</span>
-                )}
-                <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition">
-                  {i !== 0 && (
+            {images.map((img, i) => {
+              const isCover = img.fit === 'cover'; // 預設 contain
+              return (
+                <div key={i} className="relative group">
+                  <button
+                    onClick={() => setPreviewIdx(i)}
+                    className="block w-full aspect-square rounded-lg border border-slate-200 overflow-hidden bg-white hover:border-slate-400"
+                  >
+                    <StorageImage
+                      src={getImgUrl(img)}
+                      path={img.path}
+                      alt={img.name}
+                      className="w-full h-full"
+                      style={{ objectFit: isCover ? 'cover' : 'contain' }}
+                    />
+                  </button>
+                  {i === 0 && (
+                    <span className="absolute top-1 left-1 text-[10px] px-1.5 py-0.5 bg-blue-600 text-white rounded">主圖</span>
+                  )}
+                  <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition">
+                    {i !== 0 && (
+                      <button
+                        onClick={() => handleSetAsMain(i)}
+                        title="設為主圖"
+                        className="bg-white/90 hover:bg-white text-slate-700 rounded w-5 h-5 flex items-center justify-center text-[10px] border border-slate-200"
+                      >
+                        ★
+                      </button>
+                    )}
                     <button
-                      onClick={() => handleSetAsMain(i)}
-                      title="設為主圖"
+                      onClick={() => {
+                        const newImages = [...images];
+                        newImages[i] = { ...img, fit: isCover ? 'contain' : 'cover' };
+                        onChange(newImages);
+                      }}
+                      title={isCover ? '改為「完整顯示」（不切圖、留白邊）' : '改為「填滿」（切圖填滿格子）'}
                       className="bg-white/90 hover:bg-white text-slate-700 rounded w-5 h-5 flex items-center justify-center text-[10px] border border-slate-200"
                     >
-                      ★
+                      {isCover ? '⊞' : '⊟'}
                     </button>
-                  )}
-                  <button
-                    onClick={() => handleRemove(i)}
-                    title="刪除"
-                    className="bg-white/90 hover:bg-rose-50 text-rose-600 rounded w-5 h-5 flex items-center justify-center border border-slate-200"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
+                    <button
+                      onClick={() => handleRemove(i)}
+                      title="刪除"
+                      className="bg-white/90 hover:bg-rose-50 text-rose-600 rounded w-5 h-5 flex items-center justify-center border border-slate-200"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
-          <p className="text-xs text-slate-400 mt-1.5">第一張為主圖（顯示在列表縮圖），滑鼠移上去可改主圖或刪除</p>
+          <p className="text-xs text-slate-400 mt-1.5">
+            第一張為主圖（顯示在列表縮圖）。⊟ 完整顯示 / ⊞ 填滿格子可切換
+          </p>
         </>
       )}
 

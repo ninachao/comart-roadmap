@@ -41,10 +41,21 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.33.0';
-const BUILD_ID = '20260509-1900';
+const APP_VERSION = 'v0.34.0';
+const BUILD_ID = '20260509-2100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.34.0',
+    date: '2026-05-09',
+    changes: [
+      '🔧 修正：複製產品後共用同一張圖時，主頁列表會「整批顯示壞圖」的問題',
+      '加入全域 URL 快取（相同檔案的多個顯示處共享解析結果）',
+      '圖片載入失敗時使用退避重試（最多 3 次：立即 / 1 秒 / 3 秒）',
+      '重試 3 次仍失敗時顯示淡灰圖示佔位符（不會繼續搶 Firebase API）',
+      '圖片加 lazy loading（捲到該位置才載入，避免一次抓太多）',
+    ],
+  },
   {
     version: 'v0.33.0',
     date: '2026-05-09',
@@ -2237,27 +2248,90 @@ function InfoField({ label, value, type = 'text', onSave, placeholder = '' }) {
 
 // 圖片上傳前的簡單裁剪/區域選取 Modal
 // 智慧圖片元件：如果 URL 過期，自動用 path 重新取得 URL
+// 全域 URL 快取：相同 path 共享解析結果，避免 N 個元件同時打 Firebase API
+const _storageUrlCache = new Map(); // path -> { url, expiry }
+const _storageUrlPending = new Map(); // path -> Promise (進行中的請求)
+
+async function getStorageUrl(path) {
+  if (!path) return null;
+  // 檢查快取（15 分鐘有效）
+  const cached = _storageUrlCache.get(path);
+  if (cached && Date.now() < cached.expiry) {
+    return cached.url;
+  }
+  // 檢查是否有相同 path 正在請求
+  if (_storageUrlPending.has(path)) {
+    return _storageUrlPending.get(path);
+  }
+  // 發起新請求
+  const promise = (async () => {
+    try {
+      const url = await getDownloadURL(storageRef(storage, path));
+      _storageUrlCache.set(path, { url, expiry: Date.now() + 15 * 60 * 1000 });
+      return url;
+    } catch (e) {
+      console.warn('getDownloadURL failed for', path, e.message);
+      throw e;
+    } finally {
+      _storageUrlPending.delete(path);
+    }
+  })();
+  _storageUrlPending.set(path, promise);
+  return promise;
+}
+
 function StorageImage({ src, path, alt, className, onClick, style }) {
   const [currentSrc, setCurrentSrc] = useState(src);
-  const [retrying, setRetrying] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   // 當 src 變更時更新
   useEffect(() => {
     setCurrentSrc(src);
+    setRetryCount(0);
+    setLoadFailed(false);
   }, [src]);
 
   const handleError = async () => {
-    if (retrying || !path) return; // 無 path 無法重試
-    setRetrying(true);
+    if (!path || retryCount >= 3) {
+      // 沒有 path 無法重試，或已重試太多次
+      setLoadFailed(true);
+      return;
+    }
+    // 退避：第 1 次重試立即、第 2 次等 1 秒、第 3 次等 3 秒
+    const delays = [0, 1000, 3000];
+    const delay = delays[retryCount] || 0;
+    setRetryCount(c => c + 1);
+    if (delay > 0) {
+      await new Promise(r => setTimeout(r, delay));
+    }
     try {
-      const newUrl = await getDownloadURL(storageRef(storage, path));
-      setCurrentSrc(newUrl);
+      const newUrl = await getStorageUrl(path);
+      if (newUrl) {
+        setCurrentSrc(newUrl + (newUrl.includes('?') ? '&' : '?') + '_r=' + retryCount);
+        setLoadFailed(false);
+      } else {
+        setLoadFailed(true);
+      }
     } catch (e) {
       console.warn('Storage image refresh failed:', path, e.message);
-    } finally {
-      setRetrying(false);
+      setLoadFailed(true);
     }
   };
+
+  if (loadFailed) {
+    // 載入失敗的 fallback：顯示佔位符而不是壞圖
+    return (
+      <div
+        className={`${className} bg-slate-50 flex items-center justify-center`}
+        style={style}
+        onClick={onClick}
+        title={`圖片無法載入：${alt || path}`}
+      >
+        <ImageIcon className="w-1/3 h-1/3 text-slate-300" />
+      </div>
+    );
+  }
 
   return (
     <img
@@ -2267,6 +2341,7 @@ function StorageImage({ src, path, alt, className, onClick, style }) {
       onClick={onClick}
       onError={handleError}
       style={style}
+      loading="lazy"
     />
   );
 }

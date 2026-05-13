@@ -41,10 +41,21 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.28.0';
-const BUILD_ID = '20260508-1600';
+const APP_VERSION = 'v0.29.0';
+const BUILD_ID = '20260508-1900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.29.0',
+    date: '2026-05-08',
+    changes: [
+      '🎉 ID/3D 版本可折疊（解決檔案多時拉太長的問題）',
+      '最新版本預設展開，其他舊版本預設收起',
+      '收起時標題顯示摘要：版本號、日期、📋BOM 標記、N 檔/M BOM',
+      '點標題列可展開/收起',
+      '收起的版本中編輯/刪除按鈕需展開後才出現',
+    ],
+  },
   {
     version: 'v0.28.0',
     date: '2026-05-08',
@@ -3095,6 +3106,104 @@ function AttachmentList({ attachments, onChange, readOnly }) {
 }
 
 
+// 單一版本的可折疊卡片
+function DesignVersionCard({ d, type, isLatest, onUpdateVersion, onEdit, onDelete }) {
+  const hasBom = (d.bomAttachments || []).length > 0;
+  const bomVisible = hasBom || d.bomEnabled === true;
+  const attCount = (d.attachments || []).length;
+  const bomCount = (d.bomAttachments || []).length;
+
+  // 最新版本預設展開，其他預設收起
+  const [expanded, setExpanded] = useState(isLatest);
+
+  return (
+    <div className={`rounded border text-xs group ${isLatest ? 'bg-white border-blue-200' : 'bg-white border-slate-200'}`}>
+      {/* 標題列 (一律可見) */}
+      <div
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-baseline justify-between gap-2 p-2 cursor-pointer hover:bg-slate-50 select-none"
+      >
+        <div className="flex items-baseline gap-2 flex-wrap min-w-0">
+          <span className="text-slate-400 text-[10px]">{expanded ? '▼' : '▶'}</span>
+          <span className={`font-medium ${isLatest ? 'text-blue-700' : 'text-slate-600'}`}>{d.version}</span>
+          <span className="text-slate-400 tabular-nums">{d.date}</span>
+          {hasBom && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-medium">
+              📋 BOM
+            </span>
+          )}
+          {/* 收起時顯示摘要 */}
+          {!expanded && (
+            <span className="text-[10px] text-slate-400 truncate">
+              {attCount > 0 && `${attCount} 檔`}
+              {attCount > 0 && bomCount > 0 && ' · '}
+              {bomCount > 0 && `${bomCount} BOM`}
+              {(attCount === 0 && bomCount === 0 && d.notes) && d.notes.slice(0, 30)}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {/* BOM 勾選：沒檔案時可勾 */}
+          {expanded && !hasBom && (
+            <label
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer hover:text-slate-700 opacity-0 group-hover:opacity-100 transition"
+            >
+              <input
+                type="checkbox"
+                checked={d.bomEnabled === true}
+                onChange={(e) => onUpdateVersion({ ...d, bomEnabled: e.target.checked })}
+                className="w-3 h-3"
+              />
+              有 BOM
+            </label>
+          )}
+          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition" onClick={(e) => e.stopPropagation()}>
+            <button onClick={onEdit} className="p-0.5 text-slate-400 hover:text-slate-700">
+              <Edit2 className="w-3 h-3" />
+            </button>
+            <button onClick={onDelete} className="p-0.5 text-slate-400 hover:text-rose-600">
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 展開內容 */}
+      {expanded && (
+        <div className="px-2 pb-2 -mt-1">
+          {d.notes && <p className="text-slate-700 leading-relaxed whitespace-pre-wrap mb-1">{d.notes}</p>}
+          <AttachmentList
+            attachments={d.attachments || []}
+            onChange={(newAtt) => onUpdateVersion({ ...d, attachments: newAtt })}
+          />
+          {/* BOM 區塊 */}
+          {bomVisible && (
+            <div className="mt-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between gap-1 mb-1">
+                <span className="text-[10px] text-slate-500 font-medium">📋 BOM 檔案</span>
+                {!hasBom && (
+                  <button
+                    onClick={() => onUpdateVersion({ ...d, bomEnabled: false })}
+                    className="text-[10px] text-slate-400 hover:text-rose-600"
+                    title="收起此區（取消勾選有 BOM）"
+                  >
+                    收起
+                  </button>
+                )}
+              </div>
+              <AttachmentList
+                attachments={d.bomAttachments || []}
+                onChange={(newAtt) => onUpdateVersion({ ...d, bomAttachments: newAtt })}
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DesignSection({ designs, onChange }) {
   const [editing, setEditing] = useState(null);
 
@@ -3175,90 +3284,21 @@ function DesignSection({ designs, onChange }) {
                 <p className="text-xs text-slate-400 py-1">尚無版本</p>
               ) : (
                 <div className="space-y-1.5">
-                  {list.map((d, i) => {
-                    const hasBom = (d.bomAttachments || []).length > 0;
-                    // 已有檔案 → 一律顯示；沒檔案 → 看 bomEnabled 旗標
-                    const bomVisible = hasBom || d.bomEnabled === true;
-                    return (
-                      <div key={i} className={`p-2 rounded border text-xs group ${i === 0 ? 'bg-white border-blue-200' : 'bg-white border-slate-200'}`}>
-                        <div className="flex items-baseline justify-between gap-2 mb-1">
-                          <div className="flex items-baseline gap-2 flex-wrap">
-                            <span className={`font-medium ${i === 0 ? 'text-blue-700' : 'text-slate-600'}`}>{d.version}</span>
-                            <span className="text-slate-400 tabular-nums">{d.date}</span>
-                            {hasBom && (
-                              <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-medium">
-                                📋 已出 BOM
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {/* BOM 勾選：沒檔案的時候才出現，已有檔案隱含為勾選 */}
-                            {!hasBom && (
-                              <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer hover:text-slate-700 opacity-0 group-hover:opacity-100 transition">
-                                <input
-                                  type="checkbox"
-                                  checked={d.bomEnabled === true}
-                                  onChange={(e) => {
-                                    const newList = [...list];
-                                    newList[i] = { ...d, bomEnabled: e.target.checked };
-                                    onChange({ ...designs, [type]: newList });
-                                  }}
-                                  className="w-3 h-3"
-                                />
-                                有 BOM
-                              </label>
-                            )}
-                            <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition">
-                              <button onClick={() => handleEdit(type, i)} className="p-0.5 text-slate-400 hover:text-slate-700">
-                                <Edit2 className="w-3 h-3" />
-                              </button>
-                              <button onClick={() => handleDelete(type, i)} className="p-0.5 text-slate-400 hover:text-rose-600">
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                        {d.notes && <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{d.notes}</p>}
-                        <AttachmentList
-                          attachments={d.attachments || []}
-                          onChange={(newAtt) => {
-                            const newList = [...list];
-                            newList[i] = { ...d, attachments: newAtt };
-                            onChange({ ...designs, [type]: newList });
-                          }}
-                        />
-                        {/* BOM 區塊：只在勾選或有檔案時顯示 */}
-                        {bomVisible && (
-                          <div className="mt-2 pt-2 border-t border-slate-100">
-                            <div className="flex items-center justify-between gap-1 mb-1">
-                              <span className="text-[10px] text-slate-500 font-medium">📋 BOM 檔案</span>
-                              {!hasBom && (
-                                <button
-                                  onClick={() => {
-                                    const newList = [...list];
-                                    newList[i] = { ...d, bomEnabled: false };
-                                    onChange({ ...designs, [type]: newList });
-                                  }}
-                                  className="text-[10px] text-slate-400 hover:text-rose-600"
-                                  title="收起此區（取消勾選有 BOM）"
-                                >
-                                  收起
-                                </button>
-                              )}
-                            </div>
-                            <AttachmentList
-                              attachments={d.bomAttachments || []}
-                              onChange={(newAtt) => {
-                                const newList = [...list];
-                                newList[i] = { ...d, bomAttachments: newAtt };
-                                onChange({ ...designs, [type]: newList });
-                              }}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {list.map((d, i) => (
+                    <DesignVersionCard
+                      key={i}
+                      d={d}
+                      type={type}
+                      isLatest={i === 0}
+                      onUpdateVersion={(newD) => {
+                        const newList = [...list];
+                        newList[i] = newD;
+                        onChange({ ...designs, [type]: newList });
+                      }}
+                      onEdit={() => handleEdit(type, i)}
+                      onDelete={() => handleDelete(type, i)}
+                    />
+                  ))}
                 </div>
               )}
             </div>

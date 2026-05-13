@@ -41,10 +41,20 @@ const USERS = {
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
 };
 
-const APP_VERSION = 'v0.25.0';
-const BUILD_ID = '20260507-2100';
+const APP_VERSION = 'v0.26.0';
+const BUILD_ID = '20260508-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.26.0',
+    date: '2026-05-08',
+    changes: [
+      '🎉 進度紀錄區塊也支援 Ctrl+V 貼上圖片',
+      '🎉 新增 ID/3D/BOM 版本時，自動帶入下一個版本號（V1、V2、V3...）',
+      '🎉 編輯分類碼/特徵碼可拖曳排序，順序儲存到雲端',
+      '🔧 修正：編輯後重開順序會亂掉的問題（保留 order 欄位）',
+    ],
+  },
   {
     version: 'v0.25.0',
     date: '2026-05-07',
@@ -3069,7 +3079,25 @@ function DesignSection({ designs, onChange }) {
   const types = ['ID', '3D', 'BOM'];
   const totalVersions = types.reduce((sum, t) => sum + (designs[t]?.length || 0), 0);
 
-  const handleAdd = (type) => setEditing({ type, idx: -1, data: { version: '', date: new Date().toISOString().split('T')[0], notes: '', images: [] } });
+  // 自動推算下個版本號：找最大的 Vn，回傳 V(n+1)
+  const getNextVersion = (type) => {
+    const list = designs[type] || [];
+    let maxN = 0;
+    list.forEach(item => {
+      const m = (item.version || '').match(/^V(\d+)/i);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > maxN) maxN = n;
+      }
+    });
+    return `V${maxN + 1}`;
+  };
+
+  const handleAdd = (type) => setEditing({
+    type,
+    idx: -1,
+    data: { version: getNextVersion(type), date: new Date().toISOString().split('T')[0], notes: '', images: [] }
+  });
   const handleEdit = (type, idx) => setEditing({ type, idx, data: { ...designs[type][idx] } });
   const handleSave = () => {
     const { type, idx, data } = editing;
@@ -3852,7 +3880,48 @@ function UpdateForm({ initial, onCancel, onSave }) {
   const [text, setText] = useState(initial?.text || '');
   const [images, setImages] = useState(initial?.images || []);
   const [uploading, setUploading] = useState(false);
+  const [pasteHint, setPasteHint] = useState(false);
   const fileRef = useRef(null);
+
+  const uploadImageFile = async (file) => {
+    if (file.size > 10 * 1024 * 1024) {
+      alert(`「${file.name}」超過 10MB，跳過`);
+      return;
+    }
+    const result = await uploadFileToStorage(file);
+    setImages(prev => [...prev, { name: result.name, url: result.url, path: result.path }]);
+  };
+
+  // 監聽 paste（hover 時生效）
+  useEffect(() => {
+    const handlePaste = async (e) => {
+      if (!pasteHint || uploading) return;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const files = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          const f = items[i].getAsFile();
+          if (f) {
+            const renamed = new File([f], `貼上圖片_${Date.now()}.${f.type.split('/')[1] || 'png'}`, { type: f.type });
+            files.push(renamed);
+          }
+        }
+      }
+      if (files.length > 0) {
+        e.preventDefault();
+        setUploading(true);
+        try {
+          for (const file of files) await uploadImageFile(file);
+        } catch (err) {
+          alert('上傳失敗：' + err.message);
+        }
+        setUploading(false);
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [pasteHint, uploading]);
 
   const handleFileChange = async (e) => {
     const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'));
@@ -3860,14 +3929,7 @@ function UpdateForm({ initial, onCancel, onSave }) {
     if (files.length === 0) return;
     setUploading(true);
     try {
-      for (const file of files) {
-        if (file.size > 10 * 1024 * 1024) {
-          alert(`「${file.name}」超過 10MB，跳過`);
-          continue;
-        }
-        const result = await uploadFileToStorage(file);
-        setImages(prev => [...prev, { name: result.name, url: result.url, path: result.path }]);
-      }
+      for (const file of files) await uploadImageFile(file);
     } catch (err) {
       alert('上傳失敗：' + err.message);
     }
@@ -3888,7 +3950,11 @@ function UpdateForm({ initial, onCancel, onSave }) {
   };
 
   return (
-    <div className="border border-blue-200 bg-blue-50/40 rounded-lg p-3 mb-2">
+    <div
+      className="border border-blue-200 bg-blue-50/40 rounded-lg p-3 mb-2"
+      onMouseEnter={() => setPasteHint(true)}
+      onMouseLeave={() => setPasteHint(false)}
+    >
       <div className="flex items-center gap-2 mb-2">
         <Calendar className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
         <input
@@ -3897,6 +3963,7 @@ function UpdateForm({ initial, onCancel, onSave }) {
           onChange={(e) => setDate(e.target.value)}
           className="text-xs px-2 py-1 border border-slate-200 rounded bg-white"
         />
+        {pasteHint && <span className="text-[10px] text-slate-400">· Ctrl+V 可貼上圖片</span>}
       </div>
       <textarea
         value={text}
@@ -4199,11 +4266,48 @@ function ProductCodeWizard({ existingCodes, categoryCodes = DEFAULT_CATEGORY_COD
   // 儲存單一 code 到 Firestore
   const saveCode = async (kind, item) => {
     const colName = kind === 'cat' ? CATEGORY_COL : FEATURE_COL;
+    const list = kind === 'cat' ? categoryCodes : featureCodes;
     const cleaned = {};
     Object.keys(item).forEach(k => { if (item[k] !== undefined) cleaned[k] = item[k]; });
     delete cleaned._docId;
+    // 保留 order：若已存在就用原本的，新增的用 max+1
+    const existing = list.find(c => c.code === item.code);
+    if (existing && existing.order !== undefined) {
+      cleaned.order = existing.order;
+    } else {
+      const maxOrder = list.reduce((m, c) => Math.max(m, c.order ?? 0), 0);
+      cleaned.order = maxOrder + 1;
+    }
     await setDoc(doc(db, colName, item.code), cleaned);
   };
+
+  // 拖曳排序：把 dragCode 移到 targetCode 之前
+  const reorder = async (kind, dragCode, targetCode) => {
+    if (dragCode === targetCode) return;
+    const colName = kind === 'cat' ? CATEGORY_COL : FEATURE_COL;
+    const list = kind === 'cat' ? categoryCodes : featureCodes;
+    const dragIdx = list.findIndex(c => c.code === dragCode);
+    const targetIdx = list.findIndex(c => c.code === targetCode);
+    if (dragIdx < 0 || targetIdx < 0) return;
+
+    // 建立新排序的陣列
+    const newList = [...list];
+    const [moved] = newList.splice(dragIdx, 1);
+    newList.splice(targetIdx, 0, moved);
+
+    // 重新分配 order（用 10/20/30 留間隔）
+    const updates = newList.map((item, i) => ({ ...item, order: (i + 1) * 10 }));
+    // 批次寫入
+    for (const u of updates) {
+      const cleaned = {};
+      Object.keys(u).forEach(k => { if (u[k] !== undefined && k !== '_docId') cleaned[k] = u[k]; });
+      await setDoc(doc(db, colName, u.code), cleaned);
+    }
+  };
+
+  // 拖曳狀態
+  const [draggingCode, setDraggingCode] = useState(null);
+  const [dropTargetCode, setDropTargetCode] = useState(null);
 
   // 刪除 code（前提：沒有產品使用此 code）
   const deleteCode = async (kind, codeStr) => {
@@ -4233,7 +4337,7 @@ function ProductCodeWizard({ existingCodes, categoryCodes = DEFAULT_CATEGORY_COD
               {editMode && <span className="text-xs px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-normal">編輯模式</span>}
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              {editMode ? '可改備註、新增、刪除分類碼/特徵碼' : '依 COMART SOP v1.0 · 全部選項一頁顯示，可隨時更改'}
+              {editMode ? '可改備註、新增、刪除分類碼/特徵碼。可直接拖曳卡片調整順序。' : '依 COMART SOP v1.0 · 全部選項一頁顯示，可隨時更改'}
             </p>
           </div>
           <div className="flex items-center gap-1">
@@ -4275,14 +4379,39 @@ function ProductCodeWizard({ existingCodes, categoryCodes = DEFAULT_CATEGORY_COD
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
               {categoryCodes.map(c => {
                 const selected = category?.code === c.code;
+                const isDragging = draggingCode === c.code;
+                const isDropTarget = dropTargetCode === c.code && draggingCode !== c.code;
                 return (
                   <div
                     key={c.code}
+                    draggable={editMode}
+                    onDragStart={(e) => {
+                      if (!editMode) return;
+                      setDraggingCode(c.code);
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    onDragOver={(e) => {
+                      if (!editMode || !draggingCode) return;
+                      e.preventDefault();
+                      setDropTargetCode(c.code);
+                    }}
+                    onDragLeave={() => setDropTargetCode(null)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (editMode && draggingCode && draggingCode !== c.code) {
+                        reorder('cat', draggingCode, c.code);
+                      }
+                      setDraggingCode(null);
+                      setDropTargetCode(null);
+                    }}
+                    onDragEnd={() => { setDraggingCode(null); setDropTargetCode(null); }}
                     className={`text-left p-2 rounded-lg border-2 transition relative ${
                       selected
                         ? 'bg-blue-50 border-blue-400'
+                        : isDropTarget
+                        ? 'bg-blue-50 border-blue-500 border-dashed'
                         : 'bg-white border-slate-200 hover:border-slate-400'
-                    }`}
+                    } ${isDragging ? 'opacity-40' : ''} ${editMode ? 'cursor-grab active:cursor-grabbing' : ''}`}
                   >
                     <button
                       onClick={() => !editMode && setCat(c)}
@@ -4343,14 +4472,40 @@ function ProductCodeWizard({ existingCodes, categoryCodes = DEFAULT_CATEGORY_COD
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
               {featureCodes.map(f => {
                 const selected = feature?.code === f.code;
+                const isDragging = draggingCode === 'F:' + f.code;
+                const isDropTarget = dropTargetCode === 'F:' + f.code && draggingCode !== 'F:' + f.code;
                 return (
                   <div
                     key={f.code}
+                    draggable={editMode}
+                    onDragStart={(e) => {
+                      if (!editMode) return;
+                      setDraggingCode('F:' + f.code);
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    onDragOver={(e) => {
+                      if (!editMode || !draggingCode || !draggingCode.startsWith('F:')) return;
+                      e.preventDefault();
+                      setDropTargetCode('F:' + f.code);
+                    }}
+                    onDragLeave={() => setDropTargetCode(null)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (editMode && draggingCode && draggingCode.startsWith('F:')) {
+                        const dragF = draggingCode.slice(2);
+                        if (dragF !== f.code) reorder('feat', dragF, f.code);
+                      }
+                      setDraggingCode(null);
+                      setDropTargetCode(null);
+                    }}
+                    onDragEnd={() => { setDraggingCode(null); setDropTargetCode(null); }}
                     className={`text-left p-2 rounded-lg border-2 transition relative ${
                       selected
                         ? 'bg-emerald-50 border-emerald-400'
+                        : isDropTarget
+                        ? 'bg-emerald-50 border-emerald-500 border-dashed'
                         : 'bg-white border-slate-200 hover:border-slate-400'
-                    }`}
+                    } ${isDragging ? 'opacity-40' : ''} ${editMode ? 'cursor-grab active:cursor-grabbing' : ''}`}
                   >
                     <button
                       onClick={() => !editMode && setFeat(f)}

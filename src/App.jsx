@@ -44,10 +44,23 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.36.0';
-const BUILD_ID = '20260510-1500';
+const APP_VERSION = 'v0.37.0';
+const BUILD_ID = '20260514-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.37.0',
+    date: '2026-05-14',
+    changes: [
+      '🔧 樣品欄位統一：所有類型都有 數量/名稱/位置/材質/備註/對應ID版本/對應3D版本',
+      '🎉 對應 ID/3D 版本：若關聯產品有版本資料 → 下拉選擇；沒有 → 自由輸入',
+      '🔧 移除樣品的「狀態」「供應商」欄位（簡化）',
+      '🔧 「來源」改為自由輸入',
+      '🎉 類型選「手板」時才出現「手板訂單備註」欄位（其他類型不顯示）',
+      '🎉 樣品與產品連動：關聯產品改名 → 樣品庫即時跟著顯示新名稱/料號',
+      '🎉 樣品庫卡片可點「看產品 →」直接跳到關聯產品',
+    ],
+  },
   {
     version: 'v0.36.0',
     date: '2026-05-10',
@@ -1025,7 +1038,6 @@ export default function ProductRoadmap() {
             name: p.name,
             relatedProjectId: p.id,
             relatedProjectCode: p.code || '',
-            orderNo: order.orderNo || '',
             material: order.material || '',
             idVersion: order.idVersion || '',
             threeDVersion: order.threeDVersion || '',
@@ -1033,7 +1045,13 @@ export default function ProductRoadmap() {
             location: order.storageLocation || '',
             notes: order.review || '',
             images: ownImage ? [ownImage] : (productMainImage ? [productMainImage] : []),
-            supplier: order.supplier || '',
+            source: '舊手板訂單同步',
+            // 把舊訂單的單號/供應商整理進手板訂單備註
+            orderNote: [
+              order.orderNo ? `單號 ${order.orderNo}` : '',
+              order.supplier ? `供應商 ${order.supplier}` : '',
+              order.unitPrice ? `單價 ${order.unitPrice}` : '',
+            ].filter(Boolean).join(' · '),
             createdAt: existingSample?.createdAt || Date.now(),
             autoSynced: true,  // 標記為自動同步來的
           };
@@ -4007,9 +4025,6 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
                   <div className="flex items-baseline gap-1.5 flex-wrap mb-0.5">
                     <span className="text-sm font-medium text-slate-900">{s.name}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
-                    {s.status && s.status !== '已收到' && (
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${SAMPLE_STATUS_COLORS[s.status]}`}>{s.status}</span>
-                    )}
                   </div>
                   <div className="flex items-baseline gap-3 mb-0.5 text-xs">
                     <span className="font-medium">
@@ -4022,9 +4037,11 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
                     {s.idVersion && <span className="text-blue-600">ID {s.idVersion}</span>}
                     {s.threeDVersion && <span className="text-purple-600">3D {s.threeDVersion}</span>}
                     {s.material && <span>{s.material}</span>}
-                    {s.supplier && <span>{s.supplier}</span>}
                     {s.source && <span className="text-slate-400">· {s.source}</span>}
                   </div>
+                  {s.orderNote && (
+                    <p className="text-[11px] text-amber-600 mt-0.5 line-clamp-1">📋 {s.orderNote}</p>
+                  )}
                 </div>
               </div>
             );
@@ -4046,7 +4063,8 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
       {editingSample && (
         <SampleEditModal
           sample={editingSample}
-          projects={null}  // 不顯示產品下拉（已固定為此產品）
+          projects={[project]}  // 傳當前產品（讓 ID/3D 版本可連動下拉）
+          lockProject={true}    // 鎖定產品（不顯示產品下拉）
           onSave={handleSave}
           onClose={() => setEditingSample(null)}
         />
@@ -4092,20 +4110,29 @@ function SampleLibraryModal({ samples, withdrawals, projects, currentUser, canEd
 
   const locationOptions = useMemo(() => [...new Set(samples.map(s => s.location).filter(Boolean))], [samples]);
 
-  // 計算每個樣品的剩餘數量
+  // 計算每個樣品的剩餘數量 + 連動關聯產品的即時名稱/料號
   const samplesWithRemaining = useMemo(() => {
-    return samples.map(s => ({
-      ...s,
-      _remaining: computeRemaining(s, withdrawals),
-    }));
-  }, [samples, withdrawals]);
+    return samples.map(s => {
+      const relatedProj = s.relatedProjectId
+        ? projects.find(p => String(p.id) === String(s.relatedProjectId))
+        : null;
+      return {
+        ...s,
+        _remaining: computeRemaining(s, withdrawals),
+        // 有關聯產品 → 用產品即時資料；沒有 → 用樣品自己存的
+        _displayName: relatedProj ? relatedProj.name : s.name,
+        _displayCode: relatedProj ? (relatedProj.code || '') : (s.relatedProjectCode || ''),
+        _projectExists: !!relatedProj,
+      };
+    });
+  }, [samples, withdrawals, projects]);
 
   const filtered = useMemo(() => {
     return samplesWithRemaining.filter(s => {
       const matchType = typeFilter === '全部' || s.type === typeFilter;
       const matchLocation = locationFilter === '全部' || s.location === locationFilter;
       const matchSearch = !searchTerm || [
-        s.name, s.relatedProjectCode, s.orderNo, s.material, s.location, s.notes
+        s._displayName, s._displayCode, s.material, s.location, s.notes, s.orderNote, s.source
       ].some(v => (v || '').toLowerCase().includes(searchTerm.toLowerCase()));
       return matchType && matchLocation && matchSearch;
     }).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -4249,7 +4276,7 @@ function SampleLibraryModal({ samples, withdrawals, projects, currentUser, canEd
                         <div className="flex-1 min-w-0">
                           <div className="flex items-baseline justify-between gap-2 mb-1">
                             <div className="flex items-baseline gap-1.5 flex-wrap min-w-0">
-                              <span className="text-sm font-semibold text-slate-900 truncate">{s.name}</span>
+                              <span className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</span>
                               <span className={`text-[10px] px-1.5 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
                             </div>
                           </div>
@@ -4263,22 +4290,25 @@ function SampleLibraryModal({ samples, withdrawals, projects, currentUser, canEd
                             )}
                           </div>
                           <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-2 gap-y-0.5">
-                            {s.relatedProjectCode && (
+                            {s._displayCode && (
                               <button
                                 onClick={() => onJumpToProject(s.relatedProjectId)}
                                 className="text-blue-600 hover:underline"
                               >
-                                {s.relatedProjectCode}
+                                {s._displayCode}
                               </button>
                             )}
                             {s.material && <span>{s.material}</span>}
-                            {s.supplier && <span>{s.supplier}</span>}
                             {s.idVersion && <span className="text-blue-600">ID {s.idVersion}</span>}
                             {s.threeDVersion && <span className="text-purple-600">3D {s.threeDVersion}</span>}
+                            {s.source && <span className="text-slate-400">· {s.source}</span>}
                           </div>
+                          {s.orderNote && (
+                            <p className="text-[11px] text-amber-600 mt-1 line-clamp-1">📋 {s.orderNote}</p>
+                          )}
                           {s.notes && <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">{s.notes}</p>}
                           {/* 操作按鈕 */}
-                          <div className="flex gap-1 mt-2">
+                          <div className="flex gap-1 mt-2 flex-wrap">
                             {canEdit && remaining > 0 && (
                               <button
                                 onClick={() => setWithdrawingSample(s)}
@@ -4293,6 +4323,14 @@ function SampleLibraryModal({ samples, withdrawals, projects, currentUser, canEd
                                 className="text-xs px-2 py-1 text-slate-500 hover:bg-slate-100 rounded"
                               >
                                 <Edit2 className="w-3 h-3" />
+                              </button>
+                            )}
+                            {s.relatedProjectId && (
+                              <button
+                                onClick={() => onJumpToProject(s.relatedProjectId)}
+                                className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded"
+                              >
+                                看產品 →
                               </button>
                             )}
                             {canEdit && !s.autoSynced && (
@@ -4372,7 +4410,7 @@ function SampleLibraryModal({ samples, withdrawals, projects, currentUser, canEd
 }
 
 // === 樣品編輯 Modal ===
-function SampleEditModal({ sample, projects, onSave, onClose }) {
+function SampleEditModal({ sample, projects, lockProject = false, onSave, onClose }) {
   const [data, setData] = useState({
     type: sample.type || '其他',
     name: sample.name || '',
@@ -4382,18 +4420,11 @@ function SampleEditModal({ sample, projects, onSave, onClose }) {
     initialQuantity: sample.initialQuantity || 1,
     location: sample.location || '',
     notes: sample.notes || '',
-    supplier: sample.supplier || '',
     images: sample.images || [],
-    // 新欄位 - 訂單資訊（選填）
-    status: sample.status || '已收到',
-    orderNo: sample.orderNo || '',
-    unitPrice: sample.unitPrice || '',
-    currency: sample.currency || 'TWD',
-    orderDate: sample.orderDate || '',
-    expectedDate: sample.expectedDate || '',
     idVersion: sample.idVersion || '',
     threeDVersion: sample.threeDVersion || '',
-    source: sample.source || '工程提供', // 工程提供 / 供應商訂單 / 外購 / 其他
+    source: sample.source || '',  // 自由輸入
+    orderNote: sample.orderNote || '',  // 手板訂單備註（只有手板類型用）
     ...sample,  // 保留其他現有欄位
   });
   const [uploading, setUploading] = useState(false);
@@ -4486,27 +4517,15 @@ function SampleEditModal({ sample, projects, onSave, onClose }) {
         )}
 
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs text-slate-600 mb-1">類型</label>
-              <select
-                value={data.type}
-                onChange={(e) => setData(prev => ({ ...prev, type: e.target.value }))}
-                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
-              >
-                {SAMPLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-slate-600 mb-1">初始數量</label>
-              <input
-                type="number"
-                min="0"
-                value={data.initialQuantity}
-                onChange={(e) => setData(prev => ({ ...prev, initialQuantity: Number(e.target.value) }))}
-                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
-              />
-            </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">類型</label>
+            <select
+              value={data.type}
+              onChange={(e) => setData(prev => ({ ...prev, type: e.target.value }))}
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
+            >
+              {SAMPLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
           </div>
 
           <div>
@@ -4520,7 +4539,8 @@ function SampleEditModal({ sample, projects, onSave, onClose }) {
             />
           </div>
 
-          {data.type === '手板' && projects && projects.length > 0 && (
+          {/* 關聯產品（所有類型都可選，非僅手板） */}
+          {!lockProject && projects && projects.length > 0 && (
             <div>
               <label className="block text-xs text-slate-600 mb-1">關聯產品（選填）</label>
               <select
@@ -4528,7 +4548,14 @@ function SampleEditModal({ sample, projects, onSave, onClose }) {
                 onChange={(e) => {
                   const pid = e.target.value;
                   const proj = projects.find(p => String(p.id) === pid);
-                  setData(prev => ({ ...prev, relatedProjectId: pid ? Number(pid) : '', relatedProjectCode: proj?.code || '' }));
+                  setData(prev => ({
+                    ...prev,
+                    relatedProjectId: pid ? Number(pid) : '',
+                    relatedProjectCode: proj?.code || '',
+                    // 換產品時清空版本（避免帶到別產品的版本）
+                    idVersion: '',
+                    threeDVersion: '',
+                  }));
                 }}
                 className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
               >
@@ -4538,7 +4565,18 @@ function SampleEditModal({ sample, projects, onSave, onClose }) {
             </div>
           )}
 
+          {/* 數量 + 存放位置 */}
           <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">數量</label>
+              <input
+                type="number"
+                min="0"
+                value={data.initialQuantity}
+                onChange={(e) => setData(prev => ({ ...prev, initialQuantity: Number(e.target.value) }))}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
             <div>
               <label className="block text-xs text-slate-600 mb-1">存放位置</label>
               <input
@@ -4549,128 +4587,99 @@ function SampleEditModal({ sample, projects, onSave, onClose }) {
                 className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
               />
             </div>
+          </div>
+
+          {/* 材質 + 來源 */}
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-slate-600 mb-1">材質</label>
               <input
                 type="text"
                 value={data.material}
                 onChange={(e) => setData(prev => ({ ...prev, material: e.target.value }))}
-                placeholder="ABS、PC..."
+                placeholder="ABS、PC、鋁..."
                 className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
               />
-            </div>
-          </div>
-
-          {/* 對應版本 + 狀態 + 來源（手板類型必看，其他類型可選） */}
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs text-slate-600 mb-1">狀態</label>
-              <select
-                value={data.status}
-                onChange={(e) => setData(prev => ({ ...prev, status: e.target.value }))}
-                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
-              >
-                {SAMPLE_STATUS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
             </div>
             <div>
               <label className="block text-xs text-slate-600 mb-1">來源</label>
-              <select
-                value={data.source}
-                onChange={(e) => setData(prev => ({ ...prev, source: e.target.value }))}
-                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
-              >
-                <option value="工程提供">工程提供</option>
-                <option value="供應商訂單">供應商訂單</option>
-                <option value="外購">外購</option>
-                <option value="量產">量產</option>
-                <option value="其他">其他</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-slate-600 mb-1">供應商</label>
               <input
                 type="text"
-                value={data.supplier}
-                onChange={(e) => setData(prev => ({ ...prev, supplier: e.target.value }))}
-                placeholder="恆群、新益..."
+                value={data.source}
+                onChange={(e) => setData(prev => ({ ...prev, source: e.target.value }))}
+                placeholder="工程提供、外購..."
                 className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
               />
             </div>
           </div>
 
-          {/* 對應版本（手板和量產樣建議填） */}
-          {(data.type === '手板' || data.type === '量產樣') && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-slate-600 mb-1">對應 ID 版本</label>
-                <input
-                  type="text"
-                  value={data.idVersion}
-                  onChange={(e) => setData(prev => ({ ...prev, idVersion: e.target.value }))}
-                  placeholder="V1、V2..."
-                  className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
-                />
+          {/* 對應 ID/3D 版本：有關聯產品且該產品有版本 → 下拉；否則自由輸入 */}
+          {(() => {
+            const relatedProj = projects?.find(p => String(p.id) === String(data.relatedProjectId));
+            const idVersions = (relatedProj?.designs?.ID || []).map(v => v.version).filter(Boolean);
+            const threeDVersions = (relatedProj?.designs?.['3D'] || []).map(v => v.version).filter(Boolean);
+            return (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">對應 ID 版本</label>
+                  {idVersions.length > 0 ? (
+                    <select
+                      value={data.idVersion}
+                      onChange={(e) => setData(prev => ({ ...prev, idVersion: e.target.value }))}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
+                    >
+                      <option value="">未指定</option>
+                      {idVersions.map(v => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={data.idVersion}
+                      onChange={(e) => setData(prev => ({ ...prev, idVersion: e.target.value }))}
+                      placeholder="V1、V2..."
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">對應 3D 版本</label>
+                  {threeDVersions.length > 0 ? (
+                    <select
+                      value={data.threeDVersion}
+                      onChange={(e) => setData(prev => ({ ...prev, threeDVersion: e.target.value }))}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
+                    >
+                      <option value="">未指定</option>
+                      {threeDVersions.map(v => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={data.threeDVersion}
+                      onChange={(e) => setData(prev => ({ ...prev, threeDVersion: e.target.value }))}
+                      placeholder="V1、V2..."
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+                    />
+                  )}
+                </div>
               </div>
-              <div>
-                <label className="block text-xs text-slate-600 mb-1">對應 3D 版本</label>
-                <input
-                  type="text"
-                  value={data.threeDVersion}
-                  onChange={(e) => setData(prev => ({ ...prev, threeDVersion: e.target.value }))}
-                  placeholder="V1、V2..."
-                  className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
-                />
-              </div>
+            );
+          })()}
+
+          {/* 手板訂單備註：只有「手板」類型才出現 */}
+          {data.type === '手板' && (
+            <div className="bg-amber-50/50 border border-amber-200 rounded p-2">
+              <label className="block text-xs text-amber-800 font-medium mb-1">📋 手板訂單備註</label>
+              <textarea
+                value={data.orderNote}
+                onChange={(e) => setData(prev => ({ ...prev, orderNote: e.target.value }))}
+                rows={2}
+                placeholder="訂單編號、單價、供應商、下單日期等（台北下單給工程時填寫；工程直接提供可留空）"
+                className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded resize-none"
+              />
             </div>
           )}
 
-          {/* 訂單資訊（折疊式 - 只有「供應商訂單」來源才預設展開） */}
-          {data.source === '供應商訂單' && (
-            <div className="bg-blue-50/40 border border-blue-200 rounded p-2 space-y-2">
-              <p className="text-[11px] text-blue-700 font-medium">📋 訂單資訊（選填）</p>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] text-slate-500 mb-0.5">訂單編號</label>
-                  <input
-                    type="text"
-                    value={data.orderNo}
-                    onChange={(e) => setData(prev => ({ ...prev, orderNo: e.target.value }))}
-                    placeholder="PT-XXX-01"
-                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] text-slate-500 mb-0.5">下單日期</label>
-                  <input
-                    type="date"
-                    value={data.orderDate}
-                    onChange={(e) => setData(prev => ({ ...prev, orderDate: e.target.value }))}
-                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] text-slate-500 mb-0.5">單價</label>
-                  <input
-                    type="number"
-                    value={data.unitPrice}
-                    onChange={(e) => setData(prev => ({ ...prev, unitPrice: e.target.value }))}
-                    placeholder="0"
-                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] text-slate-500 mb-0.5">預計到貨</label>
-                  <input
-                    type="date"
-                    value={data.expectedDate}
-                    onChange={(e) => setData(prev => ({ ...prev, expectedDate: e.target.value }))}
-                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
 
           <div>
             <label className="block text-xs text-slate-600 mb-1">備註</label>

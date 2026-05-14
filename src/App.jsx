@@ -32,6 +32,8 @@ const storage = getStorage(storageApp);
 const PROJECTS_COL = 'roadmap_projects';
 const CATEGORY_COL = 'code_categories';
 const FEATURE_COL = 'code_features';
+const SAMPLES_COL = 'samples';
+const WITHDRAWALS_COL = 'sample_withdrawals';
 const STORAGE_FOLDER = 'roadmap';
 
 // === 簡易密碼設定 ===
@@ -39,12 +41,27 @@ const STORAGE_FOLDER = 'roadmap';
 const USERS = {
   'nina': { password: 'nina2026', role: 'admin', name: 'Nina' },
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
+  'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.34.0';
-const BUILD_ID = '20260509-2100';
+const APP_VERSION = 'v0.35.0';
+const BUILD_ID = '20260510-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.35.0',
+    date: '2026-05-10',
+    changes: [
+      '🎉 新增「樣品庫」管理（取代手板總覽）',
+      '樣品分 5 類：手板、量產樣、外購品、不知名、其他',
+      '可獨立新增樣品（如量產樣、外購品、舊樣品）+ 手機拍照上傳',
+      '🎉 已收到的手板自動同步到樣品庫，無需手動建立',
+      '🎉 領用紀錄：誰、何時、拿幾個、做什麼用',
+      '系統自動計算剩餘數量（初始 - 已拿走未歸還）',
+      '🎉 新增「業務」帳號（sales / sales2026），可登入並登記領用，但不能改產品資料',
+      '業務登入後自動打開樣品庫',
+    ],
+  },
   {
     version: 'v0.34.0',
     date: '2026-05-09',
@@ -848,6 +865,8 @@ export default function ProductRoadmap() {
   const [projects, setProjects] = useState([]);
   const [categoryCodes, setCategoryCodes] = useState(DEFAULT_CATEGORY_CODES);
   const [featureCodes, setFeatureCodes] = useState(DEFAULT_FEATURE_CODES);
+  const [samples, setSamples] = useState([]);
+  const [withdrawals, setWithdrawals] = useState([]);
   const [saveStatus, setSaveStatus] = useState('idle');
   const [isLoading, setIsLoading] = useState(true);
 
@@ -939,6 +958,91 @@ export default function ProductRoadmap() {
     return () => { u1(); u2(); };
   }, [currentUser]);
 
+  // === 訂閱樣品庫 ===
+  useEffect(() => {
+    if (!currentUser) return;
+    const colRef = collection(db, SAMPLES_COL);
+    const unsub = onSnapshot(colRef, (snap) => {
+      const items = snap.docs.map(d => ({ ...d.data(), _docId: d.id }));
+      setSamples(items);
+    });
+    return () => unsub();
+  }, [currentUser]);
+
+  // === 訂閱領用紀錄 ===
+  useEffect(() => {
+    if (!currentUser) return;
+    const colRef = collection(db, WITHDRAWALS_COL);
+    const unsub = onSnapshot(colRef, (snap) => {
+      const items = snap.docs.map(d => ({ ...d.data(), _docId: d.id }));
+      // 依時間倒序（最新的在前）
+      items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      setWithdrawals(items);
+    });
+    return () => unsub();
+  }, [currentUser]);
+
+  // 業務登入自動打開樣品庫
+  useEffect(() => {
+    if (currentUser?.role === 'sales') {
+      setShowSampleLibrary(true);
+    }
+  }, [currentUser]);
+
+  // === 自動同步「已收到」的手板訂單到樣品庫 ===
+  // 規則：
+  // - 狀態「已收到」的手板 → 在樣品庫建立/更新對應記錄
+  // - 樣品 id 為 `proto-{projectId}-{orderId}`
+  // - 其他類型樣品（手動建立的）不會被覆蓋
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'admin') return;
+    const syncSamples = async () => {
+      for (const p of projects) {
+        for (const order of (p.prototypeOrders || [])) {
+          if (order.status !== '已收到') continue;
+          const sampleId = `proto-${p.id}-${order.id || ''}`;
+          if (!order.id) continue;
+          const existingSample = samples.find(s => s.id === sampleId);
+          const ownImage = (order.attachments || []).find(a => isImageFile(a.name, a.type));
+          const productMainImage = (p.productImages || [])[0];
+          const synced = {
+            id: sampleId,
+            type: '手板',
+            name: p.name,
+            relatedProjectId: p.id,
+            relatedProjectCode: p.code || '',
+            orderNo: order.orderNo || '',
+            material: order.material || '',
+            idVersion: order.idVersion || '',
+            threeDVersion: order.threeDVersion || '',
+            initialQuantity: order.quantity || 0,
+            location: order.storageLocation || '',
+            notes: order.review || '',
+            images: ownImage ? [ownImage] : (productMainImage ? [productMainImage] : []),
+            supplier: order.supplier || '',
+            createdAt: existingSample?.createdAt || Date.now(),
+            autoSynced: true,  // 標記為自動同步來的
+          };
+          // 只在需要時更新（避免無限循環）
+          if (!existingSample
+              || existingSample.initialQuantity !== synced.initialQuantity
+              || existingSample.location !== synced.location
+              || existingSample.material !== synced.material
+              || existingSample.name !== synced.name) {
+            const cleaned = {};
+            Object.keys(synced).forEach(k => { if (synced[k] !== undefined) cleaned[k] = synced[k]; });
+            try {
+              await setDoc(doc(db, SAMPLES_COL, sampleId), cleaned);
+            } catch (e) {
+              console.warn('同步手板到樣品庫失敗:', sampleId, e.message);
+            }
+          }
+        }
+      }
+    };
+    syncSamples();
+  }, [projects, currentUser, samples.length]); // samples.length 而非 samples 避免每次更新都重跑
+
   // 寫入單一 project 到 Firestore
   const saveProjectToCloud = async (project) => {
     setSaveStatus('saving');
@@ -992,6 +1096,7 @@ export default function ProductRoadmap() {
   const [autoOpenCodeWizard, setAutoOpenCodeWizard] = useState(false);
   const [showNewModal, setShowNewModal] = useState(false);
   const [showPrototypeOverview, setShowPrototypeOverview] = useState(false);
+  const [showSampleLibrary, setShowSampleLibrary] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showTagManager, setShowTagManager] = useState(false);
@@ -1003,6 +1108,9 @@ export default function ProductRoadmap() {
 
   const isAdmin = currentUser.role === 'admin';
   const isViewer = currentUser.role === 'viewer';
+  const isSales = currentUser.role === 'sales';
+  // admin 和 sales 都可以管理樣品；viewer 不行
+  const canEditSamples = isAdmin || isSales;
   const fileInputRef = useRef(null);
 
   const allTags = useMemo(() => {
@@ -1317,8 +1425,12 @@ export default function ProductRoadmap() {
             <SaveStatusIndicator status={saveStatus} />
             <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-600 bg-slate-50 border border-slate-200 px-2 py-1 rounded">
               <span>{currentUser.name}</span>
-              <span className={`text-[9px] px-1 rounded font-medium ${isAdmin ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'}`}>
-                {isAdmin ? '管理員' : '檢視'}
+              <span className={`text-[9px] px-1 rounded font-medium ${
+                isAdmin ? 'bg-blue-100 text-blue-700' :
+                isSales ? 'bg-amber-100 text-amber-700' :
+                'bg-slate-200 text-slate-600'
+              }`}>
+                {isAdmin ? '管理員' : isSales ? '業務' : '檢視'}
               </span>
             </div>
             <button onClick={handleLogout} title="登出" className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
@@ -1329,12 +1441,12 @@ export default function ProductRoadmap() {
               <Upload className="w-4 h-4" />
             </button>
             <button
-              onClick={() => setShowPrototypeOverview(true)}
-              title="手板總覽（跨產品）"
+              onClick={() => setShowSampleLibrary(true)}
+              title="樣品庫（含手板）"
               className="p-2 text-slate-500 hover:bg-amber-50 hover:text-amber-700 rounded-lg inline-flex items-center gap-1"
             >
               <span>📦</span>
-              <span className="hidden sm:inline text-xs">手板</span>
+              <span className="hidden sm:inline text-xs">樣品庫</span>
             </button>
             <div className="relative group">
               <button title="匯出" className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
@@ -1503,6 +1615,24 @@ export default function ProductRoadmap() {
             if (target) {
               setSelectedProject(target);
               setShowPrototypeOverview(false);
+            }
+          }}
+        />
+      )}
+
+      {showSampleLibrary && (
+        <SampleLibraryModal
+          samples={samples}
+          withdrawals={withdrawals}
+          projects={projects}
+          currentUser={currentUser}
+          canEdit={canEditSamples}
+          onClose={() => setShowSampleLibrary(false)}
+          onJumpToProject={(id) => {
+            const target = projects.find(p => p.id === id);
+            if (target) {
+              setSelectedProject(target);
+              setShowSampleLibrary(false);
             }
           }}
         />
@@ -3773,6 +3903,648 @@ function DFMSection({ hasDFM, dfmNotes, dfmAttachments, onToggle, onNotesChange,
 }
 
 // 手板總覽 - 自動彙整所有產品的手板訂單
+// ============= 樣品庫 Modal =============
+// 統合所有樣品（手板、量產樣、外購品、不知名、其他）+ 領用紀錄
+const SAMPLE_TYPES = ['手板', '量產樣', '外購品', '不知名', '其他'];
+const SAMPLE_TYPE_COLORS = {
+  '手板': 'bg-amber-50 text-amber-700 border-amber-200',
+  '量產樣': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  '外購品': 'bg-blue-50 text-blue-700 border-blue-200',
+  '不知名': 'bg-slate-50 text-slate-600 border-slate-200',
+  '其他': 'bg-violet-50 text-violet-700 border-violet-200',
+};
+
+// 計算某樣品的剩餘數量
+function computeRemaining(sample, withdrawalsList) {
+  const initial = Number(sample.initialQuantity || 0);
+  const totalOut = withdrawalsList
+    .filter(w => w.sampleId === sample.id && !w.returned)
+    .reduce((sum, w) => sum + Number(w.quantity || 0), 0);
+  return Math.max(0, initial - totalOut);
+}
+
+function SampleLibraryModal({ samples, withdrawals, projects, currentUser, canEdit, onClose, onJumpToProject }) {
+  const [tab, setTab] = useState('samples'); // 'samples' or 'withdrawals'
+  const [typeFilter, setTypeFilter] = useState('全部');
+  const [locationFilter, setLocationFilter] = useState('全部');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [editingSample, setEditingSample] = useState(null);
+  const [withdrawingSample, setWithdrawingSample] = useState(null);
+
+  const locationOptions = useMemo(() => [...new Set(samples.map(s => s.location).filter(Boolean))], [samples]);
+
+  // 計算每個樣品的剩餘數量
+  const samplesWithRemaining = useMemo(() => {
+    return samples.map(s => ({
+      ...s,
+      _remaining: computeRemaining(s, withdrawals),
+    }));
+  }, [samples, withdrawals]);
+
+  const filtered = useMemo(() => {
+    return samplesWithRemaining.filter(s => {
+      const matchType = typeFilter === '全部' || s.type === typeFilter;
+      const matchLocation = locationFilter === '全部' || s.location === locationFilter;
+      const matchSearch = !searchTerm || [
+        s.name, s.relatedProjectCode, s.orderNo, s.material, s.location, s.notes
+      ].some(v => (v || '').toLowerCase().includes(searchTerm.toLowerCase()));
+      return matchType && matchLocation && matchSearch;
+    }).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }, [samplesWithRemaining, typeFilter, locationFilter, searchTerm]);
+
+  const handleSaveSample = async (sample) => {
+    const sampleId = sample.id || `s${Date.now()}`;
+    const cleaned = {};
+    Object.keys(sample).forEach(k => { if (sample[k] !== undefined && k !== '_docId' && k !== '_remaining') cleaned[k] = sample[k]; });
+    cleaned.id = sampleId;
+    if (!cleaned.createdAt) cleaned.createdAt = Date.now();
+    await setDoc(doc(db, SAMPLES_COL, sampleId), cleaned);
+    setEditingSample(null);
+  };
+
+  const handleDeleteSample = async (sample) => {
+    if (sample.autoSynced) {
+      alert('此樣品由「手板訂單」自動同步，請到對應產品專案編輯，不能在此直接刪除。');
+      return;
+    }
+    if (!confirm(`確定刪除「${sample.name}」嗎？相關領用紀錄會保留作為歷史。`)) return;
+    await deleteDoc(doc(db, SAMPLES_COL, sample.id));
+  };
+
+  const handleSaveWithdrawal = async (data) => {
+    const id = `w${Date.now()}`;
+    const cleaned = {
+      id,
+      sampleId: data.sampleId,
+      sampleName: data.sampleName,
+      personName: data.personName,
+      quantity: Number(data.quantity || 0),
+      purpose: data.purpose || '',
+      timestamp: Date.now(),
+      date: new Date().toISOString().split('T')[0],
+      returned: false,
+      operator: currentUser?.name || '',
+    };
+    await setDoc(doc(db, WITHDRAWALS_COL, id), cleaned);
+    setWithdrawingSample(null);
+  };
+
+  const handleToggleReturn = async (w) => {
+    const updated = { ...w, returned: !w.returned, returnedAt: !w.returned ? Date.now() : null };
+    const cleaned = {};
+    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && k !== '_docId') cleaned[k] = updated[k]; });
+    await setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl max-w-5xl w-full p-4 sm:p-5 my-auto max-h-[95vh] flex flex-col">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-base font-medium flex items-center gap-2">
+              <span>📦</span>樣品庫
+              <span className="text-xs text-slate-400 font-normal">
+                ({tab === 'samples' ? `${filtered.length} 項` : `${withdrawals.length} 筆紀錄`})
+              </span>
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">公司所有樣品 · 領用前請登記</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        {/* 分頁 */}
+        <div className="flex gap-1 mb-3 border-b border-slate-100">
+          <button
+            onClick={() => setTab('samples')}
+            className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'samples' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          >
+            📦 樣品 ({samples.length})
+          </button>
+          <button
+            onClick={() => setTab('withdrawals')}
+            className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'withdrawals' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          >
+            📝 領用紀錄 ({withdrawals.length})
+          </button>
+        </div>
+
+        {tab === 'samples' && (
+          <>
+            <div className="flex flex-wrap gap-2 mb-3">
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="搜尋產品名、料號、材質、位置..."
+                className="flex-1 min-w-[200px] px-3 py-1.5 text-sm border border-slate-200 rounded"
+              />
+              <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="px-2 py-1.5 text-sm border border-slate-200 rounded bg-white">
+                <option value="全部">全部類型</option>
+                {SAMPLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} className="px-2 py-1.5 text-sm border border-slate-200 rounded bg-white">
+                <option value="全部">全部位置</option>
+                {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+              {canEdit && (
+                <button
+                  onClick={() => setEditingSample({ isNew: true, type: '量產樣', initialQuantity: 1 })}
+                  className="text-xs px-3 py-1.5 bg-slate-900 text-white rounded hover:bg-slate-800 inline-flex items-center gap-1"
+                >
+                  <Plus className="w-3 h-3" />新增樣品
+                </button>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto -mx-1 px-1">
+              {filtered.length === 0 ? (
+                <p className="text-center text-sm text-slate-400 py-8">沒有符合條件的樣品</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {filtered.map(s => {
+                    const mainImage = (s.images || [])[0];
+                    const remaining = s._remaining;
+                    const isOut = remaining === 0;
+                    return (
+                      <div
+                        key={s.id}
+                        className={`bg-white border rounded-lg p-3 flex gap-3 ${isOut ? 'opacity-60 border-rose-200' : 'border-slate-200 hover:border-amber-400'} transition`}
+                      >
+                        {/* 圖片 */}
+                        <div className="flex-shrink-0 w-20 h-20 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
+                          {mainImage ? (
+                            <StorageImage
+                              src={mainImage.url || mainImage.dataUrl}
+                              path={mainImage.path}
+                              alt={s.name}
+                              className="w-full h-full"
+                              style={{ objectFit: 'contain' }}
+                            />
+                          ) : (
+                            <ImageIcon className="w-6 h-6 text-slate-300" />
+                          )}
+                        </div>
+                        {/* 資訊 */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline justify-between gap-2 mb-1">
+                            <div className="flex items-baseline gap-1.5 flex-wrap min-w-0">
+                              <span className="text-sm font-semibold text-slate-900 truncate">{s.name}</span>
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-baseline gap-3 mb-1 flex-wrap text-sm">
+                            <span className="font-medium">
+                              剩餘 <span className={`text-base ${isOut ? 'text-rose-600' : remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}`}>{remaining}</span>
+                              <span className="text-slate-400 text-xs"> / {s.initialQuantity || 0}</span>
+                            </span>
+                            {s.location && (
+                              <span className="text-emerald-700 text-xs">📍 {s.location}</span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-2 gap-y-0.5">
+                            {s.relatedProjectCode && (
+                              <button
+                                onClick={() => onJumpToProject(s.relatedProjectId)}
+                                className="text-blue-600 hover:underline"
+                              >
+                                {s.relatedProjectCode}
+                              </button>
+                            )}
+                            {s.material && <span>{s.material}</span>}
+                            {s.supplier && <span>{s.supplier}</span>}
+                            {s.idVersion && <span className="text-blue-600">ID {s.idVersion}</span>}
+                            {s.threeDVersion && <span className="text-purple-600">3D {s.threeDVersion}</span>}
+                          </div>
+                          {s.notes && <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">{s.notes}</p>}
+                          {/* 操作按鈕 */}
+                          <div className="flex gap-1 mt-2">
+                            {canEdit && remaining > 0 && (
+                              <button
+                                onClick={() => setWithdrawingSample(s)}
+                                className="text-xs px-2 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100"
+                              >
+                                📝 領用
+                              </button>
+                            )}
+                            {canEdit && (
+                              <button
+                                onClick={() => setEditingSample(s)}
+                                className="text-xs px-2 py-1 text-slate-500 hover:bg-slate-100 rounded"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                              </button>
+                            )}
+                            {canEdit && !s.autoSynced && (
+                              <button
+                                onClick={() => handleDeleteSample(s)}
+                                className="text-xs px-2 py-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {tab === 'withdrawals' && (
+          <div className="flex-1 overflow-y-auto -mx-1 px-1">
+            {withdrawals.length === 0 ? (
+              <p className="text-center text-sm text-slate-400 py-8">尚無領用紀錄</p>
+            ) : (
+              <div className="space-y-1.5">
+                {withdrawals.map(w => (
+                  <div key={w.id} className={`bg-white border rounded-lg p-3 ${w.returned ? 'opacity-60 border-slate-200' : 'border-amber-200 bg-amber-50/30'}`}>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <div className="flex items-baseline gap-2 flex-wrap min-w-0">
+                        <span className="text-sm font-medium text-slate-900">{w.personName}</span>
+                        <span className="text-xs text-slate-600">領 {w.quantity} 個</span>
+                        <span className="text-xs text-slate-500 truncate">「{w.sampleName}」</span>
+                        {w.returned && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded">已歸還</span>}
+                      </div>
+                      <span className="text-xs text-slate-400 flex-shrink-0">{w.date}</span>
+                    </div>
+                    {w.purpose && <p className="text-xs text-slate-600 mt-1">用途：{w.purpose}</p>}
+                    {canEdit && (
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          onClick={() => handleToggleReturn(w)}
+                          className={`text-xs px-2 py-1 rounded ${w.returned ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'}`}
+                        >
+                          {w.returned ? '取消歸還' : '標記已歸還'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {editingSample && (
+          <SampleEditModal
+            sample={editingSample}
+            projects={projects}
+            onSave={handleSaveSample}
+            onClose={() => setEditingSample(null)}
+          />
+        )}
+
+        {withdrawingSample && (
+          <WithdrawalModal
+            sample={withdrawingSample}
+            currentUser={currentUser}
+            onSave={handleSaveWithdrawal}
+            onClose={() => setWithdrawingSample(null)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// === 樣品編輯 Modal ===
+function SampleEditModal({ sample, projects, onSave, onClose }) {
+  const [data, setData] = useState({
+    type: sample.type || '其他',
+    name: sample.name || '',
+    relatedProjectId: sample.relatedProjectId || '',
+    relatedProjectCode: sample.relatedProjectCode || '',
+    material: sample.material || '',
+    initialQuantity: sample.initialQuantity || 1,
+    location: sample.location || '',
+    notes: sample.notes || '',
+    supplier: sample.supplier || '',
+    images: sample.images || [],
+    ...sample,  // 保留其他現有欄位
+  });
+  const [uploading, setUploading] = useState(false);
+  const [pasteHint, setPasteHint] = useState(false);
+  const fileRef = useRef(null);
+  const cameraRef = useRef(null);
+  const dragCounter = useRef(0);
+  const [dragOver, setDragOver] = useState(false);
+
+  const isReadOnlyAuto = sample.autoSynced && !sample.isNew;
+
+  const handleFiles = async (files) => {
+    const images = files.filter(f => f.type.startsWith('image/'));
+    if (images.length === 0) return;
+    setUploading(true);
+    try {
+      const uploads = [];
+      for (const file of images) {
+        if (file.size > 10 * 1024 * 1024) {
+          alert(`「${file.name}」超過 10MB，跳過`);
+          continue;
+        }
+        const res = await uploadFileToStorage(file);
+        uploads.push({ name: res.name, url: res.url, path: res.path, size: res.size, type: res.type });
+      }
+      if (uploads.length > 0) {
+        setData(prev => ({ ...prev, images: [...(prev.images || []), ...uploads] }));
+      }
+    } catch (e) {
+      alert('上傳失敗：' + e.message);
+    }
+    setUploading(false);
+  };
+
+  useEffect(() => {
+    const handlePaste = (e) => {
+      if (!pasteHint) return;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const files = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          const f = items[i].getAsFile();
+          if (f) files.push(new File([f], `貼上_${Date.now()}.${f.type.split('/')[1] || 'png'}`, { type: f.type }));
+        }
+      }
+      if (files.length > 0) {
+        e.preventDefault();
+        handleFiles(files);
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [pasteHint]);
+
+  const removeImage = (i) => {
+    setData(prev => ({ ...prev, images: prev.images.filter((_, idx) => idx !== i) }));
+  };
+
+  const submit = () => {
+    if (!data.name.trim()) {
+      alert('請輸入名稱');
+      return;
+    }
+    onSave(data);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/70 z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div
+        className="bg-white rounded-xl max-w-lg w-full p-4 sm:p-5 my-auto max-h-[95vh] overflow-y-auto"
+        onMouseEnter={() => setPasteHint(true)}
+        onMouseLeave={() => setPasteHint(false)}
+        onDragEnter={(e) => { e.preventDefault(); dragCounter.current += 1; setDragOver(true); }}
+        onDragOver={(e) => e.preventDefault()}
+        onDragLeave={(e) => { e.preventDefault(); dragCounter.current -= 1; if (dragCounter.current <= 0) setDragOver(false); }}
+        onDrop={(e) => { e.preventDefault(); dragCounter.current = 0; setDragOver(false); handleFiles(Array.from(e.dataTransfer.files || [])); }}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-medium">{sample.isNew ? '新增' : '編輯'}樣品</h3>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        {isReadOnlyAuto && (
+          <div className="bg-blue-50 border border-blue-200 rounded p-2 mb-3 text-[11px] text-blue-700">
+            ℹ 此樣品由「手板訂單」自動同步。數量、位置、材質會被原訂單覆蓋。建議直接到對應產品專案編輯。
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">類型</label>
+              <select
+                value={data.type}
+                onChange={(e) => setData(prev => ({ ...prev, type: e.target.value }))}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
+              >
+                {SAMPLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">初始數量</label>
+              <input
+                type="number"
+                min="0"
+                value={data.initialQuantity}
+                onChange={(e) => setData(prev => ({ ...prev, initialQuantity: Number(e.target.value) }))}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">名稱 *</label>
+            <input
+              type="text"
+              value={data.name}
+              onChange={(e) => setData(prev => ({ ...prev, name: e.target.value }))}
+              placeholder="例：MagSafe 磁吸支架"
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+            />
+          </div>
+
+          {data.type === '手板' && projects && projects.length > 0 && (
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">關聯產品（選填）</label>
+              <select
+                value={data.relatedProjectId || ''}
+                onChange={(e) => {
+                  const pid = e.target.value;
+                  const proj = projects.find(p => String(p.id) === pid);
+                  setData(prev => ({ ...prev, relatedProjectId: pid ? Number(pid) : '', relatedProjectCode: proj?.code || '' }));
+                }}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
+              >
+                <option value="">無</option>
+                {projects.map(p => <option key={p.id} value={p.id}>{p.code ? `${p.code} · ` : ''}{p.name}</option>)}
+              </select>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">存放位置</label>
+              <input
+                type="text"
+                value={data.location}
+                onChange={(e) => setData(prev => ({ ...prev, location: e.target.value }))}
+                placeholder="辦公室 A-3"
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">材質</label>
+              <input
+                type="text"
+                value={data.material}
+                onChange={(e) => setData(prev => ({ ...prev, material: e.target.value }))}
+                placeholder="ABS、PC..."
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">備註</label>
+            <textarea
+              value={data.notes}
+              onChange={(e) => setData(prev => ({ ...prev, notes: e.target.value }))}
+              rows={2}
+              placeholder="版本、顏色、來源等..."
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none"
+            />
+          </div>
+
+          {/* 圖片 */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs text-slate-600">照片</label>
+              <span className="text-[10px] text-slate-400">{pasteHint && '· Ctrl+V 貼上'}</span>
+            </div>
+            {(data.images || []).length > 0 && (
+              <div className="grid grid-cols-4 gap-1.5 mb-1.5">
+                {data.images.map((img, i) => (
+                  <div key={i} className="relative aspect-square bg-white border border-slate-200 rounded overflow-hidden group">
+                    <StorageImage
+                      src={img.url || img.dataUrl}
+                      path={img.path}
+                      alt={img.name}
+                      className="w-full h-full"
+                      style={{ objectFit: 'contain' }}
+                    />
+                    <button
+                      onClick={() => removeImage(i)}
+                      className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 bg-white/90 rounded p-0.5 hover:bg-rose-50 text-rose-600 transition"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-1.5 flex-wrap">
+              <button
+                onClick={() => cameraRef.current?.click()}
+                disabled={uploading}
+                className="text-xs px-2 py-1 text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 inline-flex items-center gap-1"
+              >
+                📸 拍照
+              </button>
+              <button
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+                className="text-xs px-2 py-1 text-emerald-700 bg-emerald-50 border border-emerald-200 rounded hover:bg-emerald-100 inline-flex items-center gap-1"
+              >
+                <Upload className="w-3 h-3" />選照片
+              </button>
+              {uploading && <span className="text-xs text-slate-500">上傳中...</span>}
+              <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={(e) => { handleFiles(Array.from(e.target.files || [])); e.target.value = ''; }} className="hidden" />
+              <input ref={fileRef} type="file" accept="image/*" multiple onChange={(e) => { handleFiles(Array.from(e.target.files || [])); e.target.value = ''; }} className="hidden" />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+          <button onClick={submit} className="text-sm px-4 py-1.5 bg-slate-900 text-white rounded hover:bg-slate-800">儲存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// === 領用 Modal ===
+function WithdrawalModal({ sample, currentUser, onSave, onClose }) {
+  const [personName, setPersonName] = useState(currentUser?.name || '');
+  const [quantity, setQuantity] = useState(1);
+  const [purpose, setPurpose] = useState('');
+
+  const remaining = sample._remaining || 0;
+
+  const submit = () => {
+    if (!personName.trim()) {
+      alert('請輸入領用人姓名');
+      return;
+    }
+    if (quantity <= 0 || quantity > remaining) {
+      alert(`數量需在 1 到 ${remaining} 之間`);
+      return;
+    }
+    onSave({
+      sampleId: sample.id,
+      sampleName: sample.name,
+      personName: personName.trim(),
+      quantity,
+      purpose: purpose.trim(),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/70 z-[60] flex items-center justify-center p-3">
+      <div className="bg-white rounded-xl max-w-sm w-full p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-medium">領用樣品</h3>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        <div className="bg-slate-50 rounded p-2 mb-3">
+          <p className="text-sm font-medium text-slate-800">{sample.name}</p>
+          <p className="text-xs text-slate-500 mt-0.5">目前剩餘 {remaining} 個</p>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">領用人 *</label>
+            <input
+              type="text"
+              value={personName}
+              onChange={(e) => setPersonName(e.target.value)}
+              placeholder="王小明"
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">數量 (最多 {remaining})</label>
+            <input
+              type="number"
+              min="1"
+              max={remaining}
+              value={quantity}
+              onChange={(e) => setQuantity(Number(e.target.value))}
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">用途</label>
+            <textarea
+              value={purpose}
+              onChange={(e) => setPurpose(e.target.value)}
+              rows={2}
+              placeholder="例：寄客戶 XYZ、展會、測試..."
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+          <button onClick={submit} className="text-sm px-4 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700">確認領用</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PrototypeOverviewModal({ projects, onClose, onJumpToProject }) {
   const [statusFilter, setStatusFilter] = useState('全部');
   const [locationFilter, setLocationFilter] = useState('全部');
@@ -5753,6 +6525,7 @@ function LoginScreen({ onLogin }) {
         <div className="mt-6 pt-4 border-t border-slate-100">
           <p className="text-[10px] text-slate-400 text-center leading-relaxed">
             管理員：<code className="bg-slate-50 px-1 rounded">nina</code> / <code className="bg-slate-50 px-1 rounded">nina2026</code><br />
+            業務：<code className="bg-slate-50 px-1 rounded">sales</code> / <code className="bg-slate-50 px-1 rounded">sales2026</code><br />
             檢視者：<code className="bg-slate-50 px-1 rounded">viewer</code> / <code className="bg-slate-50 px-1 rounded">comart</code>
           </p>
         </div>

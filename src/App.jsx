@@ -34,6 +34,7 @@ const CATEGORY_COL = 'code_categories';
 const FEATURE_COL = 'code_features';
 const SAMPLES_COL = 'samples';
 const WITHDRAWALS_COL = 'sample_withdrawals';
+const EXHIBITIONS_COL = 'exhibitions';
 const STORAGE_FOLDER = 'roadmap';
 
 // === 簡易密碼設定 ===
@@ -44,10 +45,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.37.0';
-const BUILD_ID = '20260514-1200';
+const APP_VERSION = 'v0.38.0';
+const BUILD_ID = '20260515-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.38.0',
+    date: '2026-05-15',
+    changes: [
+      '🎉 新增「展覽籌備」功能（樣品庫第三個分頁 🎪 展覽）',
+      '可建立多個展覽專案（如 2026 台北電腦展），各含名稱、日期、地點、備註',
+      '每個展覽可從樣品庫勾選要帶的樣品，設定數量',
+      '每個樣品有打包狀態：待準備 / 已打包 / 已帶走 / 已歸還',
+      '展覽標題列顯示「已打包 N/M」進度，籌備時對清單準備不用翻實體',
+    ],
+  },
   {
     version: 'v0.37.0',
     date: '2026-05-14',
@@ -894,6 +906,7 @@ export default function ProductRoadmap() {
   const [featureCodes, setFeatureCodes] = useState(DEFAULT_FEATURE_CODES);
   const [samples, setSamples] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
+  const [exhibitions, setExhibitions] = useState([]);
   const [saveStatus, setSaveStatus] = useState('idle');
   const [isLoading, setIsLoading] = useState(true);
 
@@ -1005,6 +1018,19 @@ export default function ProductRoadmap() {
       // 依時間倒序（最新的在前）
       items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       setWithdrawals(items);
+    });
+    return () => unsub();
+  }, [currentUser]);
+
+  // === 訂閱展覽專案 ===
+  useEffect(() => {
+    if (!currentUser) return;
+    const colRef = collection(db, EXHIBITIONS_COL);
+    const unsub = onSnapshot(colRef, (snap) => {
+      const items = snap.docs.map(d => ({ ...d.data(), _docId: d.id }));
+      // 依日期倒序（最近的展覽在前）
+      items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setExhibitions(items);
     });
     return () => unsub();
   }, [currentUser]);
@@ -1659,6 +1685,7 @@ export default function ProductRoadmap() {
         <SampleLibraryModal
           samples={samples}
           withdrawals={withdrawals}
+          exhibitions={exhibitions}
           projects={projects}
           currentUser={currentUser}
           canEdit={canEditSamples}
@@ -4100,13 +4127,17 @@ function computeRemaining(sample, withdrawalsList) {
   return Math.max(0, initial - totalOut);
 }
 
-function SampleLibraryModal({ samples, withdrawals, projects, currentUser, canEdit, onClose, onJumpToProject }) {
-  const [tab, setTab] = useState('samples'); // 'samples' or 'withdrawals'
+function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, currentUser, canEdit, onClose, onJumpToProject }) {
+  const [tab, setTab] = useState('samples'); // 'samples' | 'withdrawals' | 'exhibitions'
   const [typeFilter, setTypeFilter] = useState('全部');
   const [locationFilter, setLocationFilter] = useState('全部');
   const [searchTerm, setSearchTerm] = useState('');
   const [editingSample, setEditingSample] = useState(null);
   const [withdrawingSample, setWithdrawingSample] = useState(null);
+  // 展覽相關
+  const [editingExhibition, setEditingExhibition] = useState(null); // 編輯/新增展覽
+  const [openExhibitionId, setOpenExhibitionId] = useState(null);    // 展開的展覽
+  const [addingSamplesToExId, setAddingSamplesToExId] = useState(null); // 正在加樣品的展覽
 
   const locationOptions = useMemo(() => [...new Set(samples.map(s => s.location).filter(Boolean))], [samples]);
 
@@ -4182,6 +4213,64 @@ function SampleLibraryModal({ samples, withdrawals, projects, currentUser, canEd
     await setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
   };
 
+  // === 展覽 handlers ===
+  // 儲存展覽（新增或編輯基本資料）
+  const handleSaveExhibition = async (ex) => {
+    const exId = ex.id || `ex${Date.now()}`;
+    const cleaned = {};
+    Object.keys(ex).forEach(k => { if (ex[k] !== undefined && k !== '_docId') cleaned[k] = ex[k]; });
+    cleaned.id = exId;
+    if (!cleaned.createdAt) cleaned.createdAt = Date.now();
+    if (!cleaned.items) cleaned.items = [];
+    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
+    setEditingExhibition(null);
+  };
+
+  const handleDeleteExhibition = async (ex) => {
+    if (!confirm(`確定刪除展覽「${ex.name}」嗎？此操作無法復原。`)) return;
+    await deleteDoc(doc(db, EXHIBITIONS_COL, ex.id));
+    if (openExhibitionId === ex.id) setOpenExhibitionId(null);
+  };
+
+  // 把樣品加進展覽（items 是 [{sampleId, qty, packStatus}]）
+  const handleAddSamplesToExhibition = async (exId, sampleIds) => {
+    const ex = exhibitions.find(e => e.id === exId);
+    if (!ex) return;
+    const existing = ex.items || [];
+    const existingIds = new Set(existing.map(it => it.sampleId));
+    const newItems = sampleIds
+      .filter(sid => !existingIds.has(sid))
+      .map(sid => ({ sampleId: sid, qty: 1, packStatus: '待準備' }));
+    const updated = { ...ex, items: [...existing, ...newItems] };
+    const cleaned = {};
+    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
+    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
+    setAddingSamplesToExId(null);
+  };
+
+  // 更新展覽裡某個樣品的狀態/數量
+  const handleUpdateExhibitionItem = async (exId, sampleId, patch) => {
+    const ex = exhibitions.find(e => e.id === exId);
+    if (!ex) return;
+    const updated = {
+      ...ex,
+      items: (ex.items || []).map(it => it.sampleId === sampleId ? { ...it, ...patch } : it),
+    };
+    const cleaned = {};
+    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
+    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
+  };
+
+  // 從展覽移除某個樣品
+  const handleRemoveExhibitionItem = async (exId, sampleId) => {
+    const ex = exhibitions.find(e => e.id === exId);
+    if (!ex) return;
+    const updated = { ...ex, items: (ex.items || []).filter(it => it.sampleId !== sampleId) };
+    const cleaned = {};
+    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
+    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
+  };
+
   return (
     <div className="fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-5xl w-full p-4 sm:p-5 my-auto max-h-[95vh] flex flex-col">
@@ -4190,7 +4279,7 @@ function SampleLibraryModal({ samples, withdrawals, projects, currentUser, canEd
             <h3 className="text-base font-medium flex items-center gap-2">
               <span>📦</span>樣品庫
               <span className="text-xs text-slate-400 font-normal">
-                ({tab === 'samples' ? `${filtered.length} 項` : `${withdrawals.length} 筆紀錄`})
+                ({tab === 'samples' ? `${filtered.length} 項` : tab === 'withdrawals' ? `${withdrawals.length} 筆紀錄` : `${exhibitions.length} 場展覽`})
               </span>
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">公司所有樣品 · 領用前請登記</p>
@@ -4213,6 +4302,12 @@ function SampleLibraryModal({ samples, withdrawals, projects, currentUser, canEd
             className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'withdrawals' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
           >
             📝 領用紀錄 ({withdrawals.length})
+          </button>
+          <button
+            onClick={() => setTab('exhibitions')}
+            className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'exhibitions' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          >
+            🎪 展覽 ({exhibitions.length})
           </button>
         </div>
 
@@ -4387,12 +4482,182 @@ function SampleLibraryModal({ samples, withdrawals, projects, currentUser, canEd
           </div>
         )}
 
+        {tab === 'exhibitions' && (
+          <div className="flex-1 overflow-y-auto -mx-1 px-1">
+            {canEdit && (
+              <button
+                onClick={() => setEditingExhibition({ isNew: true, name: '', date: '', location: '', notes: '' })}
+                className="w-full mb-3 py-2 text-xs text-amber-700 hover:bg-amber-50 border border-dashed border-amber-300 rounded-lg flex items-center justify-center gap-1"
+              >
+                <Plus className="w-3 h-3" />新增展覽專案
+              </button>
+            )}
+            {exhibitions.length === 0 ? (
+              <p className="text-center text-sm text-slate-400 py-8">尚無展覽專案</p>
+            ) : (
+              <div className="space-y-2">
+                {exhibitions.map(ex => {
+                  const items = ex.items || [];
+                  const packedCount = items.filter(it => it.packStatus === '已打包' || it.packStatus === '已帶走' || it.packStatus === '已歸還').length;
+                  const isOpen = openExhibitionId === ex.id;
+                  return (
+                    <div key={ex.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                      {/* 展覽標題列 */}
+                      <div
+                        onClick={() => setOpenExhibitionId(isOpen ? null : ex.id)}
+                        className="bg-slate-50 hover:bg-slate-100 p-3 cursor-pointer flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline gap-2 flex-wrap">
+                            <span className="text-slate-400 text-xs">{isOpen ? '▼' : '▶'}</span>
+                            <span className="text-sm font-semibold text-slate-900">{ex.name || '(未命名展覽)'}</span>
+                            {ex.date && <span className="text-xs text-slate-500">{ex.date}</span>}
+                            {ex.location && <span className="text-xs text-slate-500">📍 {ex.location}</span>}
+                          </div>
+                          <div className="text-[11px] text-slate-500 mt-0.5 ml-4">
+                            {items.length} 項樣品 · 已打包 {packedCount}/{items.length}
+                          </div>
+                        </div>
+                        {canEdit && (
+                          <div className="flex gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <button onClick={() => setEditingExhibition(ex)} className="p-1 text-slate-400 hover:text-slate-700">
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => handleDeleteExhibition(ex)} className="p-1 text-slate-400 hover:text-rose-600">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 展開：樣品籌備清單 */}
+                      {isOpen && (
+                        <div className="p-3 bg-white">
+                          {ex.notes && (
+                            <p className="text-xs text-slate-500 bg-slate-50 rounded p-2 mb-2 whitespace-pre-wrap">{ex.notes}</p>
+                          )}
+                          {items.length === 0 ? (
+                            <p className="text-xs text-slate-400 py-3 text-center">尚未加入樣品</p>
+                          ) : (
+                            <div className="space-y-1.5 mb-2">
+                              {items.map(it => {
+                                const sample = samplesWithRemaining.find(s => s.id === it.sampleId);
+                                if (!sample) {
+                                  return (
+                                    <div key={it.sampleId} className="text-[11px] text-slate-400 bg-slate-50 rounded p-2 flex items-center justify-between">
+                                      <span>（樣品已被刪除）</span>
+                                      {canEdit && (
+                                        <button onClick={() => handleRemoveExhibitionItem(ex.id, it.sampleId)} className="text-rose-500 hover:underline">移除</button>
+                                      )}
+                                    </div>
+                                  );
+                                }
+                                const mainImage = (sample.images || [])[0];
+                                return (
+                                  <div key={it.sampleId} className="flex gap-2 items-center bg-white border border-slate-200 rounded-lg p-2">
+                                    <div className="flex-shrink-0 w-12 h-12 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
+                                      {mainImage ? (
+                                        <StorageImage src={mainImage.url || mainImage.dataUrl} path={mainImage.path} alt={sample._displayName || sample.name} className="w-full h-full" style={{ objectFit: 'contain' }} />
+                                      ) : (
+                                        <ImageIcon className="w-4 h-4 text-slate-300" />
+                                      )}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-baseline gap-1.5 flex-wrap">
+                                        <span className="text-xs font-medium text-slate-900 truncate">{sample._displayName || sample.name}</span>
+                                        <span className={`text-[9px] px-1 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[sample.type] || SAMPLE_TYPE_COLORS['其他']}`}>{sample.type}</span>
+                                      </div>
+                                      <div className="text-[10px] text-slate-500 flex flex-wrap gap-x-2">
+                                        {sample.location && <span>📍 {sample.location}</span>}
+                                        <span>庫存剩 {sample._remaining}</span>
+                                      </div>
+                                    </div>
+                                    {/* 帶幾個 */}
+                                    <div className="flex-shrink-0">
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        value={it.qty}
+                                        disabled={!canEdit}
+                                        onChange={(e) => handleUpdateExhibitionItem(ex.id, it.sampleId, { qty: Number(e.target.value) })}
+                                        className="w-12 px-1 py-1 text-xs border border-slate-200 rounded text-center"
+                                        title="要帶的數量"
+                                      />
+                                    </div>
+                                    {/* 打包狀態 */}
+                                    <div className="flex-shrink-0">
+                                      <select
+                                        value={it.packStatus || '待準備'}
+                                        disabled={!canEdit}
+                                        onChange={(e) => handleUpdateExhibitionItem(ex.id, it.sampleId, { packStatus: e.target.value })}
+                                        className={`text-[11px] px-1.5 py-1 border rounded ${
+                                          it.packStatus === '已打包' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                                          it.packStatus === '已帶走' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                          it.packStatus === '已歸還' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                                          'bg-slate-50 text-slate-600 border-slate-200'
+                                        }`}
+                                      >
+                                        <option value="待準備">待準備</option>
+                                        <option value="已打包">已打包</option>
+                                        <option value="已帶走">已帶走</option>
+                                        <option value="已歸還">已歸還</option>
+                                      </select>
+                                    </div>
+                                    {canEdit && (
+                                      <button
+                                        onClick={() => handleRemoveExhibitionItem(ex.id, it.sampleId)}
+                                        className="flex-shrink-0 p-1 text-slate-300 hover:text-rose-600"
+                                        title="從展覽移除"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {canEdit && (
+                            <button
+                              onClick={() => setAddingSamplesToExId(ex.id)}
+                              className="w-full py-1.5 text-xs text-blue-600 hover:bg-blue-50 border border-dashed border-blue-200 rounded flex items-center justify-center gap-1"
+                            >
+                              <Plus className="w-3 h-3" />加入樣品
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {editingSample && (
           <SampleEditModal
             sample={editingSample}
             projects={projects}
             onSave={handleSaveSample}
             onClose={() => setEditingSample(null)}
+          />
+        )}
+
+        {editingExhibition && (
+          <ExhibitionEditModal
+            exhibition={editingExhibition}
+            onSave={handleSaveExhibition}
+            onClose={() => setEditingExhibition(null)}
+          />
+        )}
+
+        {addingSamplesToExId && (
+          <AddSamplesToExhibitionModal
+            exhibition={exhibitions.find(e => e.id === addingSamplesToExId)}
+            samples={samplesWithRemaining}
+            onConfirm={(sampleIds) => handleAddSamplesToExhibition(addingSamplesToExId, sampleIds)}
+            onClose={() => setAddingSamplesToExId(null)}
           />
         )}
 
@@ -4404,6 +4669,178 @@ function SampleLibraryModal({ samples, withdrawals, projects, currentUser, canEd
             onClose={() => setWithdrawingSample(null)}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+// === 展覽編輯 Modal（新增/編輯展覽基本資料）===
+function ExhibitionEditModal({ exhibition, onSave, onClose }) {
+  const [name, setName] = useState(exhibition.name || '');
+  const [date, setDate] = useState(exhibition.date || '');
+  const [location, setLocation] = useState(exhibition.location || '');
+  const [notes, setNotes] = useState(exhibition.notes || '');
+
+  const submit = () => {
+    if (!name.trim()) {
+      alert('請輸入展覽名稱');
+      return;
+    }
+    onSave({ ...exhibition, name: name.trim(), date, location: location.trim(), notes: notes.trim() });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/70 z-[60] flex items-center justify-center p-3">
+      <div className="bg-white rounded-xl max-w-sm w-full p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-medium">{exhibition.isNew ? '新增' : '編輯'}展覽專案</h3>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">展覽名稱 *</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="例：2026 台北國際電腦展"
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">展覽日期</label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">地點</label>
+              <input
+                type="text"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="台北南港展覽館"
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">備註</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              placeholder="攤位號碼、負責人、注意事項..."
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+          <button onClick={submit} className="text-sm px-4 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700">儲存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// === 加樣品到展覽 Modal ===
+function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose }) {
+  const [selected, setSelected] = useState(new Set());
+  const [search, setSearch] = useState('');
+
+  // 已在展覽裡的樣品 id
+  const alreadyIn = new Set((exhibition?.items || []).map(it => it.sampleId));
+
+  const filtered = samples.filter(s => {
+    if (alreadyIn.has(s.id)) return false; // 已加入的不顯示
+    if (!search) return true;
+    return [s._displayName, s.name, s.location, s.type, s.material]
+      .some(v => (v || '').toLowerCase().includes(search.toLowerCase()));
+  });
+
+  const toggle = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/70 z-[60] flex items-start sm:items-center justify-center p-3 overflow-y-auto">
+      <div className="bg-white rounded-xl max-w-md w-full p-4 my-auto max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-medium">加入樣品到「{exhibition?.name}」</h3>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="搜尋樣品名稱、位置、類型..."
+          className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded mb-2"
+        />
+        <div className="flex-1 overflow-y-auto -mx-1 px-1">
+          {filtered.length === 0 ? (
+            <p className="text-center text-sm text-slate-400 py-6">沒有可加入的樣品</p>
+          ) : (
+            <div className="space-y-1">
+              {filtered.map(s => {
+                const mainImage = (s.images || [])[0];
+                const isSel = selected.has(s.id);
+                return (
+                  <div
+                    key={s.id}
+                    onClick={() => toggle(s.id)}
+                    className={`flex gap-2 items-center p-2 rounded-lg border cursor-pointer transition ${isSel ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200 hover:border-slate-300'}`}
+                  >
+                    <input type="checkbox" checked={isSel} readOnly className="w-4 h-4 flex-shrink-0" />
+                    <div className="flex-shrink-0 w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
+                      {mainImage ? (
+                        <StorageImage src={mainImage.url || mainImage.dataUrl} path={mainImage.path} alt={s._displayName || s.name} className="w-full h-full" style={{ objectFit: 'contain' }} />
+                      ) : (
+                        <ImageIcon className="w-4 h-4 text-slate-300" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-xs font-medium text-slate-900 truncate">{s._displayName || s.name}</span>
+                        <span className={`text-[9px] px-1 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {s.location && <span>📍 {s.location} · </span>}
+                        剩 {s._remaining}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div className="flex justify-between items-center gap-2 mt-3 pt-3 border-t border-slate-100">
+          <span className="text-xs text-slate-500">已選 {selected.size} 項</span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+            <button
+              onClick={() => onConfirm([...selected])}
+              disabled={selected.size === 0}
+              className="text-sm px-4 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-40"
+            >
+              加入 {selected.size > 0 ? `(${selected.size})` : ''}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

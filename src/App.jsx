@@ -45,10 +45,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.41.1';
-const BUILD_ID = '20260519-1800';
+const APP_VERSION = 'v0.42.0';
+const BUILD_ID = '20260519-1900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.42.0',
+    date: '2026-05-19',
+    changes: [
+      '🔧 Firebase Storage CORS 設定完成',
+      '下載檔案現在可以保留原始檔名（不再亂碼）',
+      '下載方式：fetch→Blob→本地URL，完整保留檔名',
+    ],
+  },
   {
     version: 'v0.41.0',
     date: '2026-05-19',
@@ -3348,33 +3357,26 @@ function PhasePickerModal({ currentPhase, autoPhase, onSelect, onClose }) {
 }
 
 // 上傳檔案到 Firebase Storage
-// 下載檔案
-// 注意：Firebase Storage URL 是跨域，需要 CORS 設定才能用 fetch()
-// 在 CORS 設定好之前，改用 window.open 讓瀏覽器自己處理下載
-// 代價：檔名可能不正確（是已知的權衡）
-function downloadFile(url, filename) {
-  // 嘗試用 <a> + blob 方式（需要 CORS，設好 CORS 後此方式可保留檔名）
-  // 若 CORS 未設定則 fallback 到 window.open
-  const tryFetch = async () => {
-    try {
-      const res = await fetch(url, { mode: 'cors' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = filename || '下載檔案';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-    } catch (e) {
-      // CORS 失敗 → fallback：用 window.open 讓瀏覽器下載（檔名可能不正確）
-      console.warn('fetch 下載失敗，改用 window.open：', e.message);
-      window.open(url, '_blank');
-    }
-  };
-  tryFetch();
+// 下載檔案並保留原始檔名
+// CORS 已設定允許 ninachao.github.io，fetch 可正常使用
+async function downloadFile(url, filename) {
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename || '下載檔案';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  } catch (e) {
+    console.error('下載失敗：', filename, e);
+    // Fallback：用 window.open
+    window.open(url, '_blank');
+  }
 }
 
 async function uploadFileToStorage(file, onProgress) {

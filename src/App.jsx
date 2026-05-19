@@ -45,10 +45,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.42.0';
-const BUILD_ID = '20260519-1900';
+const APP_VERSION = 'v0.43.0';
+const BUILD_ID = '20260519-2000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.43.0',
+    date: '2026-05-19',
+    changes: [
+      '🔧 下載按鈕按下後立即顯示「下載中...」+ 旋轉圖示',
+      '按下後按鈕變灰（防止重複點擊）',
+      '大檔案（>5MB）改用 window.open 讓瀏覽器直接處理（速度更快）',
+      '小檔案仍用 fetch+Blob 方式，可保留原始檔名',
+    ],
+  },
   {
     version: 'v0.42.0',
     date: '2026-05-19',
@@ -3358,8 +3368,21 @@ function PhasePickerModal({ currentPhase, autoPhase, onSelect, onClose }) {
 
 // 上傳檔案到 Firebase Storage
 // 下載檔案並保留原始檔名
-// CORS 已設定允許 ninachao.github.io，fetch 可正常使用
-async function downloadFile(url, filename) {
+// - 小檔案（fileSize < 5MB）：fetch→Blob 方式，可保留檔名
+// - 大檔案或未知大小：window.open 讓瀏覽器直接處理，速度快
+// - onStatusChange(msg)：更新按鈕狀態文字，傳 null 代表完成
+async function downloadFile(url, filename, fileSize = 0, onStatusChange) {
+  const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024; // 5MB
+  const isLargeFile = fileSize > LARGE_FILE_THRESHOLD;
+
+  if (isLargeFile || !url.includes('firebasestorage')) {
+    // 大檔案或非 Storage 連結 → 直接開新頁讓瀏覽器處理
+    window.open(url, '_blank');
+    return;
+  }
+
+  // 小檔案 → fetch+Blob 保留檔名
+  if (onStatusChange) onStatusChange('下載中...');
   try {
     const res = await fetch(url, { mode: 'cors' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -3374,8 +3397,9 @@ async function downloadFile(url, filename) {
     setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
   } catch (e) {
     console.error('下載失敗：', filename, e);
-    // Fallback：用 window.open
     window.open(url, '_blank');
+  } finally {
+    if (onStatusChange) onStatusChange(null);
   }
 }
 
@@ -3440,6 +3464,12 @@ function FilePreviewModal({ file, onClose }) {
   if (!file) return null;
   const isImage = isImageFile(file.name, file.type);
   const isPdf = isPdfFile(file.name, file.type);
+  const [dlStatus, setDlStatus] = useState(null); // null=正常, '下載中...'=loading
+
+  const handleDownload = () => {
+    downloadFile(file.url, file.name, file.size || 0, setDlStatus);
+  };
+
   return (
     <div className="fixed inset-0 bg-slate-900/80 z-[60] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-xl max-w-5xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -3451,10 +3481,15 @@ function FilePreviewModal({ file, onClose }) {
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
             <button
-              onClick={() => downloadFile(file.url, file.name)}
-              className="text-xs text-slate-600 hover:bg-slate-100 px-2 py-1 rounded inline-flex items-center gap-1"
+              onClick={handleDownload}
+              disabled={!!dlStatus}
+              className="text-xs text-slate-600 hover:bg-slate-100 px-2 py-1 rounded inline-flex items-center gap-1 disabled:opacity-50"
             >
-              <Download className="w-3.5 h-3.5" />下載
+              {dlStatus ? (
+                <><Loader className="w-3.5 h-3.5 animate-spin" />{dlStatus}</>
+              ) : (
+                <><Download className="w-3.5 h-3.5" />下載</>
+              )}
             </button>
             <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
               <X className="w-5 h-5 text-slate-500" />
@@ -3472,10 +3507,15 @@ function FilePreviewModal({ file, onClose }) {
               <p className="text-slate-600 mb-1">{file.name}</p>
               <p className="text-xs text-slate-400 mb-4">此檔案類型無法在系統內預覽</p>
               <button
-                onClick={() => downloadFile(file.url, file.name)}
-                className="inline-flex items-center gap-1.5 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm"
+                onClick={handleDownload}
+                disabled={!!dlStatus}
+                className="inline-flex items-center gap-1.5 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50"
               >
-                <Download className="w-4 h-4" />下載檔案
+                {dlStatus ? (
+                  <><Loader className="w-4 h-4 animate-spin" />{dlStatus}</>
+                ) : (
+                  <><Download className="w-4 h-4" />下載檔案</>
+                )}
               </button>
             </div>
           )}
@@ -3494,6 +3534,7 @@ function AttachmentList({ attachments, onChange, readOnly }) {
   const [previewing, setPreviewing] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const [pasteHint, setPasteHint] = useState(false);
+  const [downloadingIdx, setDownloadingIdx] = useState(null); // 正在下載的附件 index
   const dragCounter = useRef(0); // 用 counter 解決子元素進出誤判
   const fileInputRef = useRef(null);
 
@@ -3694,11 +3735,20 @@ function AttachmentList({ attachments, onChange, readOnly }) {
                 {a.size && <span className="text-[10px] text-slate-400 flex-shrink-0">{formatFileSize(a.size)}</span>}
                 {a.kind === 'upload' ? (
                   <button
-                    onClick={() => downloadFile(a.url, a.name)}
+                    onClick={() => {
+                      setDownloadingIdx(i);
+                      downloadFile(a.url, a.name, a.size || 0, (status) => {
+                        if (!status) setDownloadingIdx(null);
+                      });
+                    }}
+                    disabled={downloadingIdx === i}
                     title={`下載 ${a.name}`}
-                    className="opacity-0 group-hover:opacity-100 transition p-0.5 text-slate-400 hover:text-blue-600 flex-shrink-0"
+                    className="opacity-0 group-hover:opacity-100 transition p-0.5 text-slate-400 hover:text-blue-600 flex-shrink-0 disabled:opacity-50"
                   >
-                    <Download className="w-3 h-3" />
+                    {downloadingIdx === i
+                      ? <Loader className="w-3 h-3 animate-spin text-blue-500" />
+                      : <Download className="w-3 h-3" />
+                    }
                   </button>
                 ) : (
                   <span className="text-[10px] text-slate-400 flex-shrink-0">↗</span>

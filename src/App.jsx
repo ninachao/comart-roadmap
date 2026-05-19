@@ -45,10 +45,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.40.0';
-const BUILD_ID = '20260519-1400';
+const APP_VERSION = 'v0.41.0';
+const BUILD_ID = '20260519-1600';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.41.0',
+    date: '2026-05-19',
+    changes: [
+      '🔧 修正：從系統下載檔案時檔名變亂碼的問題',
+      '根本原因：Firebase Storage 是跨域 URL，瀏覽器的 <a download> 對跨域 URL 無效',
+      '修法：改用 fetch→Blob→createObjectURL 的方式下載，確保檔名正確',
+      '影響範圍：預覽彈窗的「下載」按鈕、「全部下載」批次按鈕',
+      '附件清單 hover 時出現 ⬇ 快速下載按鈕（不用先開預覽）',
+    ],
+  },
   {
     version: 'v0.40.0',
     date: '2026-05-19',
@@ -3337,6 +3348,27 @@ function PhasePickerModal({ currentPhase, autoPhase, onSelect, onClose }) {
 }
 
 // 上傳檔案到 Firebase Storage
+// 下載檔案並保留原始檔名（解決跨域 URL 亂碼問題）
+async function downloadFile(url, filename) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename || '下載檔案';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    // 稍作延遲再釋放，確保瀏覽器已開始下載
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  } catch (e) {
+    console.error('下載失敗：', filename, e);
+    alert(`下載失敗：${filename}\n${e.message}`);
+  }
+}
+
 async function uploadFileToStorage(file, onProgress) {
   const safeName = file.name.replace(/[^\w.-]/g, '_');
   const path = `${STORAGE_FOLDER}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeName}`;
@@ -3408,9 +3440,12 @@ function FilePreviewModal({ file, onClose }) {
             {file.size && <span className="text-xs text-slate-400 flex-shrink-0">({formatFileSize(file.size)})</span>}
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
-            <a href={file.url} download={file.name} target="_blank" rel="noopener noreferrer" className="text-xs text-slate-600 hover:bg-slate-100 px-2 py-1 rounded inline-flex items-center gap-1">
+            <button
+              onClick={() => downloadFile(file.url, file.name)}
+              className="text-xs text-slate-600 hover:bg-slate-100 px-2 py-1 rounded inline-flex items-center gap-1"
+            >
               <Download className="w-3.5 h-3.5" />下載
-            </a>
+            </button>
             <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
               <X className="w-5 h-5 text-slate-500" />
             </button>
@@ -3426,9 +3461,12 @@ function FilePreviewModal({ file, onClose }) {
               <div className="text-6xl mb-4">{getFileIcon(file.name, file.type)}</div>
               <p className="text-slate-600 mb-1">{file.name}</p>
               <p className="text-xs text-slate-400 mb-4">此檔案類型無法在系統內預覽</p>
-              <a href={file.url} download={file.name} className="inline-flex items-center gap-1.5 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm">
+              <button
+                onClick={() => downloadFile(file.url, file.name)}
+                className="inline-flex items-center gap-1.5 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm"
+              >
                 <Download className="w-4 h-4" />下載檔案
-              </a>
+              </button>
             </div>
           )}
         </div>
@@ -3600,27 +3638,13 @@ function AttachmentList({ attachments, onChange, readOnly }) {
   const list = attachments || [];
   const uploadCount = list.filter(a => a.kind === 'upload' && a.url).length;
 
-  // 批次下載：逐一觸發瀏覽器下載
+  // 批次下載：逐一觸發瀏覽器下載（保留原始檔名）
   const downloadAll = async () => {
     const uploads = list.filter(a => a.kind === 'upload' && a.url);
     for (let i = 0; i < uploads.length; i++) {
-      const a = uploads[i];
-      try {
-        const res = await fetch(a.url);
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = a.name || `file-${i + 1}`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-        // 小延遲避免瀏覽器擋下載
-        await new Promise(r => setTimeout(r, 300));
-      } catch (e) {
-        console.warn('下載失敗：', a.name, e);
-      }
+      await downloadFile(uploads[i].url, uploads[i].name || `file-${i + 1}`);
+      // 間隔避免瀏覽器擋住多個下載
+      if (i < uploads.length - 1) await new Promise(r => setTimeout(r, 400));
     }
   };
 
@@ -3658,7 +3682,17 @@ function AttachmentList({ attachments, onChange, readOnly }) {
                   {a.name}
                 </button>
                 {a.size && <span className="text-[10px] text-slate-400 flex-shrink-0">{formatFileSize(a.size)}</span>}
-                <span className="text-[10px] text-slate-400 flex-shrink-0">{a.kind === 'upload' ? '☁' : '↗'}</span>
+                {a.kind === 'upload' ? (
+                  <button
+                    onClick={() => downloadFile(a.url, a.name)}
+                    title={`下載 ${a.name}`}
+                    className="opacity-0 group-hover:opacity-100 transition p-0.5 text-slate-400 hover:text-blue-600 flex-shrink-0"
+                  >
+                    <Download className="w-3 h-3" />
+                  </button>
+                ) : (
+                  <span className="text-[10px] text-slate-400 flex-shrink-0">↗</span>
+                )}
                 {!readOnly && (
                   <button
                     onClick={() => handleDelete(i)}

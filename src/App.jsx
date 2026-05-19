@@ -45,10 +45,32 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.38.0';
-const BUILD_ID = '20260515-1000';
+const APP_VERSION = 'v0.40.0';
+const BUILD_ID = '20260519-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.40.0',
+    date: '2026-05-19',
+    changes: [
+      '🎉 進度更新可設定「🔔 跟追日期」（選填欄位）',
+      '到期或逾期時，主頁頂端出現橘色提醒區，列出所有需要跟追的進度',
+      '提醒區可直接點擊產品名稱跳到詳細頁',
+      '主頁或詳細頁都可點「✓ 標記已跟追」消除提醒',
+      '進度卡片顯示跟追日期標籤（逾期=紅、未到期=黃、已跟追=綠）',
+    ],
+  },
+  {
+    version: 'v0.39.0',
+    date: '2026-05-19',
+    changes: [
+      '🎉 相關樣品支援上傳影片（最大 200MB）',
+      '手機「📸 拍照／錄影」按鈕可直接用相機錄影',
+      '「選照片／影片」可選任何圖片或影片檔案',
+      '樣品縮圖若是影片會顯示 ▶ 播放圖示，hover 自動播放預覽',
+      '所有樣品相關縮圖（樣品庫、展覽清單、加入展覽）都支援影片縮圖',
+    ],
+  },
   {
     version: 'v0.38.0',
     date: '2026-05-15',
@@ -1177,6 +1199,20 @@ export default function ProductRoadmap() {
     return Array.from(set).sort();
   }, [projects]);
 
+  // 計算所有到期的跟追項目（今天或之前）
+  const overdueFollowUps = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const result = [];
+    projects.forEach(p => {
+      (p.updates || []).forEach((u, idx) => {
+        if (u.followUpDate && u.followUpDate <= today && !u.followedUp) {
+          result.push({ project: p, update: u, updateIdx: idx });
+        }
+      });
+    });
+    return result.sort((a, b) => a.update.followUpDate.localeCompare(b.update.followUpDate));
+  }, [projects]);
+
   const filteredProjects = useMemo(() => {
     return projects.filter(p => {
       const matchSearch = !searchTerm ||
@@ -1606,6 +1642,49 @@ export default function ProductRoadmap() {
           </div>
         </div>
 
+        {/* 🔔 跟追提醒區（有到期項目時顯示） */}
+        {overdueFollowUps.length > 0 && (
+          <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-base">🔔</span>
+              <span className="text-sm font-medium text-orange-800">需要跟追的進度</span>
+              <span className="text-xs text-orange-600">（{overdueFollowUps.length} 筆）</span>
+            </div>
+            <div className="space-y-1.5">
+              {overdueFollowUps.map(({ project: p, update: u }, i) => (
+                <div
+                  key={i}
+                  className="bg-white border border-orange-200 rounded-lg px-3 py-2 flex items-baseline gap-2 flex-wrap"
+                >
+                  <span className="text-xs font-medium text-orange-700 flex-shrink-0">{u.followUpDate}</span>
+                  <button
+                    onClick={() => setSelectedProject(p)}
+                    className="text-sm text-slate-800 hover:text-orange-700 hover:underline font-medium truncate"
+                  >
+                    {p.name}
+                  </button>
+                  {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
+                  <span className="text-xs text-slate-600 flex-1 min-w-0 truncate">— {u.text}</span>
+                  {isAdmin && (
+                    <button
+                      onClick={() => {
+                        const idx = (p.updates || []).findIndex(x => x === u || (x.date === u.date && x.text === u.text));
+                        if (idx < 0) return;
+                        const newUpdates = [...(p.updates || [])];
+                        newUpdates[idx] = { ...u, followedUp: true };
+                        saveProjectToCloud({ ...p, updates: newUpdates });
+                      }}
+                      className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0"
+                    >
+                      ✓ 標記已跟追
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {filteredProjects.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
             <p className="text-slate-400 text-sm">沒有符合條件的專案</p>
@@ -1929,6 +2008,15 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
   const latest = updates[0];
   const history = updates.slice(1);
 
+  // 標記進度更新「已跟追」
+  const handleMarkFollowedUp = (update) => {
+    const idx = updates.findIndex(u => u === update || (u.date === update.date && u.text === update.text));
+    if (idx < 0) return;
+    const newUpdates = [...updates];
+    newUpdates[idx] = { ...update, followedUp: true };
+    onUpdateField('updates', newUpdates);
+  };
+
   const startEditField = (field, currentValue) => {
     setEditingField(field);
     setTempValue(currentValue || '');
@@ -2153,6 +2241,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     onCancelEdit={() => setEditingUpdateIdx(null)}
                     onSave={(u) => { onEditUpdate(0, u); setEditingUpdateIdx(null); }}
                     onDelete={() => onDeleteUpdate(0)}
+                    onMarkFollowedUp={isViewer ? null : handleMarkFollowedUp}
                   />
                 )}
 
@@ -2176,6 +2265,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     onCancelEdit={() => setEditingUpdateIdx(null)}
                     onSave={(updated) => { onEditUpdate(i + 1, updated); setEditingUpdateIdx(null); }}
                     onDelete={() => onDeleteUpdate(i + 1)}
+                    onMarkFollowedUp={isViewer ? null : handleMarkFollowedUp}
                   />
                 ))}
               </div>
@@ -2477,6 +2567,33 @@ async function getStorageUrl(path) {
   })();
   _storageUrlPending.set(path, promise);
   return promise;
+}
+
+// 樣品縮圖：自動判斷圖片/影片
+function SampleMediaThumb({ media, className, style }) {
+  if (!media) return <ImageIcon className="w-1/3 h-1/3 text-slate-300" />;
+  const isVid = media.isVideo || (media.type && media.type.startsWith('video/'));
+  if (isVid) {
+    return (
+      <div className="relative w-full h-full">
+        <video src={media.url} className={className || 'w-full h-full object-cover'} preload="metadata" muted playsInline />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="bg-slate-900/50 rounded-full w-8 h-8 flex items-center justify-center">
+            <span className="text-white text-xs">▶</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <StorageImage
+      src={media.url || media.dataUrl}
+      path={media.path}
+      alt={media.name || ''}
+      className={className || 'w-full h-full object-contain'}
+      style={style}
+    />
+  );
 }
 
 function StorageImage({ src, path, alt, className, onClick, style }) {
@@ -4036,17 +4153,7 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
                 className={`bg-white border rounded-lg p-3 flex gap-3 ${isOut ? 'opacity-60 border-rose-200' : 'border-amber-200 hover:border-amber-400 hover:bg-amber-50/30'} ${readOnly ? '' : 'cursor-pointer'} transition`}
               >
                 <div className="flex-shrink-0 w-16 h-16 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
-                  {mainImage ? (
-                    <StorageImage
-                      src={mainImage.url || mainImage.dataUrl}
-                      path={mainImage.path}
-                      alt={s.name}
-                      className="w-full h-full"
-                      style={{ objectFit: 'contain' }}
-                    />
-                  ) : (
-                    <ImageIcon className="w-5 h-5 text-slate-300" />
-                  )}
+                  <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline gap-1.5 flex-wrap mb-0.5">
@@ -4353,19 +4460,9 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                         key={s.id}
                         className={`bg-white border rounded-lg p-3 flex gap-3 ${isOut ? 'opacity-60 border-rose-200' : 'border-slate-200 hover:border-amber-400'} transition`}
                       >
-                        {/* 圖片 */}
+                        {/* 圖片/影片縮圖 */}
                         <div className="flex-shrink-0 w-20 h-20 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
-                          {mainImage ? (
-                            <StorageImage
-                              src={mainImage.url || mainImage.dataUrl}
-                              path={mainImage.path}
-                              alt={s.name}
-                              className="w-full h-full"
-                              style={{ objectFit: 'contain' }}
-                            />
-                          ) : (
-                            <ImageIcon className="w-6 h-6 text-slate-300" />
-                          )}
+                          <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                         </div>
                         {/* 資訊 */}
                         <div className="flex-1 min-w-0">
@@ -4556,11 +4653,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                 return (
                                   <div key={it.sampleId} className="flex gap-2 items-center bg-white border border-slate-200 rounded-lg p-2">
                                     <div className="flex-shrink-0 w-12 h-12 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
-                                      {mainImage ? (
-                                        <StorageImage src={mainImage.url || mainImage.dataUrl} path={mainImage.path} alt={sample._displayName || sample.name} className="w-full h-full" style={{ objectFit: 'contain' }} />
-                                      ) : (
-                                        <ImageIcon className="w-4 h-4 text-slate-300" />
-                                      )}
+                                      <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                                     </div>
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-baseline gap-1.5 flex-wrap">
@@ -4806,11 +4899,7 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose }
                   >
                     <input type="checkbox" checked={isSel} readOnly className="w-4 h-4 flex-shrink-0" />
                     <div className="flex-shrink-0 w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
-                      {mainImage ? (
-                        <StorageImage src={mainImage.url || mainImage.dataUrl} path={mainImage.path} alt={s._displayName || s.name} className="w-full h-full" style={{ objectFit: 'contain' }} />
-                      ) : (
-                        <ImageIcon className="w-4 h-4 text-slate-300" />
-                      )}
+                      <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline gap-1.5">
@@ -4874,18 +4963,20 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
   const isReadOnlyAuto = sample.autoSynced && !sample.isNew;
 
   const handleFiles = async (files) => {
-    const images = files.filter(f => f.type.startsWith('image/'));
-    if (images.length === 0) return;
+    const media = files.filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'));
+    if (media.length === 0) return;
     setUploading(true);
     try {
       const uploads = [];
-      for (const file of images) {
-        if (file.size > 10 * 1024 * 1024) {
-          alert(`「${file.name}」超過 10MB，跳過`);
+      for (const file of media) {
+        const isVideo = file.type.startsWith('video/');
+        const maxSize = isVideo ? 200 * 1024 * 1024 : 10 * 1024 * 1024; // 影片 200MB，圖片 10MB
+        if (file.size > maxSize) {
+          alert(`「${file.name}」超過 ${isVideo ? '200MB' : '10MB'}，跳過`);
           continue;
         }
         const res = await uploadFileToStorage(file);
-        uploads.push({ name: res.name, url: res.url, path: res.path, size: res.size, type: res.type });
+        uploads.push({ name: res.name, url: res.url, path: res.path, size: res.size, type: file.type, isVideo });
       }
       if (uploads.length > 0) {
         setData(prev => ({ ...prev, images: [...(prev.images || []), ...uploads] }));
@@ -5137,23 +5228,41 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
             </div>
             {(data.images || []).length > 0 && (
               <div className="grid grid-cols-4 gap-1.5 mb-1.5">
-                {data.images.map((img, i) => (
-                  <div key={i} className="relative aspect-square bg-white border border-slate-200 rounded overflow-hidden group">
-                    <StorageImage
-                      src={img.url || img.dataUrl}
-                      path={img.path}
-                      alt={img.name}
-                      className="w-full h-full"
-                      style={{ objectFit: 'contain' }}
-                    />
-                    <button
-                      onClick={() => removeImage(i)}
-                      className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 bg-white/90 rounded p-0.5 hover:bg-rose-50 text-rose-600 transition"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
+                {data.images.map((img, i) => {
+                  const isVid = img.isVideo || (img.type && img.type.startsWith('video/'));
+                  return (
+                    <div key={i} className="relative aspect-square bg-slate-900 border border-slate-200 rounded overflow-hidden group">
+                      {isVid ? (
+                        <video
+                          src={img.url}
+                          className="w-full h-full object-cover"
+                          preload="metadata"
+                          muted
+                          playsInline
+                          onMouseEnter={e => e.target.play()}
+                          onMouseLeave={e => { e.target.pause(); e.target.currentTime = 0; }}
+                        />
+                      ) : (
+                        <StorageImage
+                          src={img.url || img.dataUrl}
+                          path={img.path}
+                          alt={img.name}
+                          className="w-full h-full"
+                          style={{ objectFit: 'contain' }}
+                        />
+                      )}
+                      {isVid && (
+                        <div className="absolute bottom-1 left-1 text-[10px] bg-slate-900/70 text-white px-1 rounded">▶</div>
+                      )}
+                      <button
+                        onClick={() => removeImage(i)}
+                        className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 bg-white/90 rounded p-0.5 hover:bg-rose-50 text-rose-600 transition"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
             <div className="flex gap-1.5 flex-wrap">
@@ -5162,18 +5271,18 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                 disabled={uploading}
                 className="text-xs px-2 py-1 text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 inline-flex items-center gap-1"
               >
-                📸 拍照
+                📸 拍照／錄影
               </button>
               <button
                 onClick={() => fileRef.current?.click()}
                 disabled={uploading}
                 className="text-xs px-2 py-1 text-emerald-700 bg-emerald-50 border border-emerald-200 rounded hover:bg-emerald-100 inline-flex items-center gap-1"
               >
-                <Upload className="w-3 h-3" />選照片
+                <Upload className="w-3 h-3" />選照片／影片
               </button>
               {uploading && <span className="text-xs text-slate-500">上傳中...</span>}
-              <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={(e) => { handleFiles(Array.from(e.target.files || [])); e.target.value = ''; }} className="hidden" />
-              <input ref={fileRef} type="file" accept="image/*" multiple onChange={(e) => { handleFiles(Array.from(e.target.files || [])); e.target.value = ''; }} className="hidden" />
+              <input ref={cameraRef} type="file" accept="image/*,video/*" capture="environment" onChange={(e) => { handleFiles(Array.from(e.target.files || [])); e.target.value = ''; }} className="hidden" />
+              <input ref={fileRef} type="file" accept="image/*,video/*" multiple onChange={(e) => { handleFiles(Array.from(e.target.files || [])); e.target.value = ''; }} className="hidden" />
             </div>
           </div>
         </div>
@@ -6095,6 +6204,8 @@ function UpdateForm({ initial, onCancel, onSave }) {
   const [date, setDate] = useState(initial?.date || new Date().toISOString().split('T')[0]);
   const [text, setText] = useState(initial?.text || '');
   const [images, setImages] = useState(initial?.images || []);
+  const [followUpDate, setFollowUpDate] = useState(initial?.followUpDate || '');
+  const [followedUp, setFollowedUp] = useState(initial?.followedUp || false);
   const [uploading, setUploading] = useState(false);
   const [pasteHint, setPasteHint] = useState(false);
   const fileRef = useRef(null);
@@ -6162,7 +6273,7 @@ function UpdateForm({ initial, onCancel, onSave }) {
 
   const submit = () => {
     if (!text.trim() && images.length === 0) return;
-    onSave({ date, text: text.trim(), images });
+    onSave({ date, text: text.trim(), images, followUpDate: followUpDate || null, followedUp });
   };
 
   return (
@@ -6204,6 +6315,27 @@ function UpdateForm({ initial, onCancel, onSave }) {
           ))}
         </div>
       )}
+      {/* 跟追日期（選填） */}
+      <div className="flex items-center gap-2 mt-2 pt-2 border-t border-blue-100">
+        <span className="text-[11px] text-slate-500 flex-shrink-0">🔔 跟追日期</span>
+        <input
+          type="date"
+          value={followUpDate}
+          onChange={(e) => setFollowUpDate(e.target.value)}
+          className="text-xs px-2 py-1 border border-slate-200 rounded bg-white"
+          placeholder="選填"
+        />
+        {followUpDate && (
+          <button
+            onClick={() => setFollowUpDate('')}
+            className="text-[10px] text-slate-400 hover:text-rose-500"
+          >
+            清除
+          </button>
+        )}
+        <span className="text-[10px] text-slate-400">到期時主頁會提醒</span>
+      </div>
+
       <div className="flex items-center justify-between mt-2">
         <button
           onClick={() => fileRef.current?.click()}
@@ -6222,12 +6354,17 @@ function UpdateForm({ initial, onCancel, onSave }) {
   );
 }
 
-function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete }) {
+function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete, onMarkFollowedUp }) {
   const [previewImg, setPreviewImg] = useState(null);
 
   if (isEditing) {
     return <UpdateForm initial={update} onCancel={onCancelEdit} onSave={onSave} />;
   }
+
+  const today = new Date().toISOString().split('T')[0];
+  const hasFollowUp = update.followUpDate && !update.followedUp;
+  const isOverdue = hasFollowUp && update.followUpDate <= today;
+  const isDueSoon = hasFollowUp && update.followUpDate > today;
 
   const containerClass = isLatest
     ? 'bg-blue-50/40 border-l-2 border-l-blue-500 border-y border-r border-blue-100'
@@ -6237,13 +6374,38 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
     <>
       <div className={`rounded-lg p-3 ${containerClass} group`}>
         <div className="flex items-baseline justify-between gap-2 mb-1.5">
-          <div className="flex items-baseline gap-2 min-w-0">
+          <div className="flex items-baseline gap-2 min-w-0 flex-wrap">
             <span className={`text-xs font-medium tabular-nums flex-shrink-0 ${isLatest ? 'text-blue-700' : 'text-slate-500'}`}>
               {update.date}
             </span>
             {isLatest && <span className="text-xs text-blue-600 flex-shrink-0">最新</span>}
+            {/* 跟追日期標籤 */}
+            {isOverdue && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-rose-100 text-rose-700 border border-rose-300 rounded font-medium flex-shrink-0">
+                🔔 跟追逾期 {update.followUpDate}
+              </span>
+            )}
+            {isDueSoon && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded flex-shrink-0">
+                🔔 {update.followUpDate}
+              </span>
+            )}
+            {update.followedUp && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded flex-shrink-0">
+                ✓ 已跟追
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+            {isOverdue && onMarkFollowedUp && (
+              <button
+                onClick={() => onMarkFollowedUp(update)}
+                title="標記已跟追"
+                className="p-1 text-rose-500 hover:text-emerald-600 hover:bg-white rounded text-[10px] font-medium"
+              >
+                ✓
+              </button>
+            )}
             <button onClick={onStartEdit} className="p-1 text-slate-400 hover:text-slate-700 hover:bg-white rounded">
               <Edit2 className="w-3 h-3" />
             </button>

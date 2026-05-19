@@ -45,10 +45,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.43.0';
-const BUILD_ID = '20260519-2000';
+const APP_VERSION = 'v0.44.0';
+const BUILD_ID = '20260519-2200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.44.0',
+    date: '2026-05-19',
+    changes: [
+      '🎉 主頁新增「分組」功能',
+      '頂部按鈕循環切換：不分組 → 依分類碼 → 依分類+特徵',
+      '同一分類碼的產品自動歸在一起，不需要手動拖曳',
+      '每組可以折疊（點標題列），分組模式跨瀏覽器關閉後記憶',
+      '分組模式下拖曳排序停用（不分組模式下仍可拖曳）',
+    ],
+  },
   {
     version: 'v0.43.0',
     date: '2026-05-19',
@@ -1202,6 +1213,12 @@ export default function ProductRoadmap() {
   const [statusFilter, setStatusFilter] = useState('全部');
   const [tagFilter, setTagFilter] = useState('全部');
   const [phaseFilter, setPhaseFilter] = useState('全部');
+  // 分組模式：'none' | 'category' | 'category+feature'
+  const [groupMode, setGroupMode] = useState(() => {
+    try { return localStorage.getItem('comart_groupMode') || 'none'; } catch { return 'none'; }
+  });
+  // 已折疊的群組 key set
+  const [collapsedGroups, setCollapsedGroups] = useState(new Set());
   const [selectedProject, setSelectedProject] = useState(null);
   const [autoOpenCodeWizard, setAutoOpenCodeWizard] = useState(false);
   const [showNewModal, setShowNewModal] = useState(false);
@@ -1230,6 +1247,31 @@ export default function ProductRoadmap() {
   }, [projects]);
 
   // 計算所有到期的跟追項目（今天或之前）
+  // 分組模式切換
+  const cycleGroupMode = () => {
+    const modes = ['none', 'category', 'category+feature'];
+    const next = modes[(modes.indexOf(groupMode) + 1) % modes.length];
+    setGroupMode(next);
+    setCollapsedGroups(new Set()); // 切換時重置折疊
+    try { localStorage.setItem('comart_groupMode', next); } catch {}
+  };
+
+  const groupModeLabel = {
+    'none': '不分組',
+    'category': '依分類碼',
+    'category+feature': '依分類+特徵',
+  };
+
+  // 折疊切換
+  const toggleGroup = (key) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   const overdueFollowUps = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     const result = [];
@@ -1262,6 +1304,55 @@ export default function ProductRoadmap() {
       return (a.id || 0) - (b.id || 0);
     });
   }, [projects, searchTerm, statusFilter, tagFilter, phaseFilter]);
+
+  // 把 filteredProjects 按分組模式整理成 [{key, label, projects}]
+  const groupedProjects = useMemo(() => {
+    if (groupMode === 'none') {
+      return [{ key: '__all__', label: null, projects: filteredProjects }];
+    }
+
+    const groups = new Map(); // key → {key, label, projects}
+
+    filteredProjects.forEach(p => {
+      const parsed = p.code ? parseProductCode(p.code) : null;
+      let key, label;
+
+      if (groupMode === 'category') {
+        if (parsed) {
+          const catDef = categoryCodes.find(c => c.code === parsed.category);
+          key = parsed.category;
+          label = catDef ? `${catDef.code} · ${catDef.label}` : parsed.category;
+        } else {
+          key = '__nocode__';
+          label = '無料號';
+        }
+      } else { // category+feature
+        if (parsed) {
+          const catDef = categoryCodes.find(c => c.code === parsed.category);
+          const featDef = featureCodes.find(f => f.code === parsed.feature);
+          key = `${parsed.category}_${parsed.feature}`;
+          const catLabel = catDef ? `${catDef.code} · ${catDef.label}` : parsed.category;
+          const featLabel = featDef ? `${featDef.code} · ${featDef.label}` : parsed.feature;
+          label = `${catLabel}   /   ${featLabel}`;
+        } else {
+          key = '__nocode__';
+          label = '無料號';
+        }
+      }
+
+      if (!groups.has(key)) groups.set(key, { key, label, projects: [] });
+      groups.get(key).projects.push(p);
+    });
+
+    // 排序：有料號的依 key 字母排序，無料號的放最後
+    const sorted = [...groups.values()].sort((a, b) => {
+      if (a.key === '__nocode__') return 1;
+      if (b.key === '__nocode__') return -1;
+      return a.key.localeCompare(b.key);
+    });
+
+    return sorted;
+  }, [filteredProjects, groupMode, categoryCodes, featureCodes]);
 
   // 重新排序所有產品的 sortOrder（用 10/20/30 留間隔）
   const reorderProjects = async (newOrderList) => {
@@ -1581,6 +1672,19 @@ export default function ProductRoadmap() {
                 <button onClick={exportJSON} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 rounded-b-lg">JSON (備份)</button>
               </div>
             </div>
+            {/* 分組切換按鈕 */}
+            <button
+              onClick={cycleGroupMode}
+              title={`目前：${groupModeLabel[groupMode]}，點擊切換`}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border transition ${
+                groupMode !== 'none'
+                  ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                  : 'text-slate-500 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <span className="text-base leading-none">⊞</span>
+              <span className="hidden sm:inline text-xs">{groupModeLabel[groupMode]}</span>
+            </button>
             {isAdmin && (
               <button
                 onClick={() => setShowNewModal(true)}
@@ -1720,22 +1824,49 @@ export default function ProductRoadmap() {
             <p className="text-slate-400 text-sm">沒有符合條件的專案</p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {filteredProjects.map(p => (
-              <ProjectRow
-                key={p.id}
-                project={p}
-                onClick={() => setSelectedProject(p)}
-                draggable={isAdmin}
-                isDragging={dragProjectId === p.id}
-                isDropTarget={dropTargetId === p.id && dragProjectId !== p.id}
-                onDragStart={() => setDragProjectId(p.id)}
-                onDragOver={() => setDropTargetId(p.id)}
-                onDragLeave={() => setDropTargetId(prev => prev === p.id ? null : prev)}
-                onDrop={() => handleProjectDrop(p.id)}
-                onDragEnd={() => { setDragProjectId(null); setDropTargetId(null); }}
-              />
-            ))}
+          <div className="space-y-3">
+            {groupedProjects.map(group => {
+              const isCollapsed = collapsedGroups.has(group.key);
+              const showHeader = groupMode !== 'none' && group.label;
+              return (
+                <div key={group.key}>
+                  {/* 群組標題列 */}
+                  {showHeader && (
+                    <button
+                      onClick={() => toggleGroup(group.key)}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 mb-1.5 text-left hover:bg-slate-50 rounded-lg transition group"
+                    >
+                      <span className="text-slate-400 text-xs w-3 flex-shrink-0">{isCollapsed ? '▶' : '▼'}</span>
+                      <span className="text-sm font-semibold text-slate-700">{group.label}</span>
+                      <span className="text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">{group.projects.length}</span>
+                      {isCollapsed && (
+                        <span className="text-[10px] text-slate-400 ml-1 hidden group-hover:inline">點擊展開</span>
+                      )}
+                    </button>
+                  )}
+                  {/* 群組內產品卡片 */}
+                  {!isCollapsed && (
+                    <div className={`space-y-2 ${showHeader ? 'pl-5' : ''}`}>
+                      {group.projects.map(p => (
+                        <ProjectRow
+                          key={p.id}
+                          project={p}
+                          onClick={() => setSelectedProject(p)}
+                          draggable={isAdmin && groupMode === 'none'}
+                          isDragging={dragProjectId === p.id}
+                          isDropTarget={dropTargetId === p.id && dragProjectId !== p.id}
+                          onDragStart={() => setDragProjectId(p.id)}
+                          onDragOver={() => setDropTargetId(p.id)}
+                          onDragLeave={() => setDropTargetId(prev => prev === p.id ? null : prev)}
+                          onDrop={() => handleProjectDrop(p.id)}
+                          onDragEnd={() => { setDragProjectId(null); setDropTargetId(null); }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
         </>

@@ -45,10 +45,24 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.44.0';
-const BUILD_ID = '20260519-2200';
+const APP_VERSION = 'v0.45.0';
+const BUILD_ID = '20260520-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.45.0',
+    date: '2026-05-20',
+    changes: [
+      '🎉 產品分享連結：詳細頁「🔗 分享」按鈕，複製連結後可傳給工程/老闆',
+      '收到連結的人點開後直接跳到對應產品（以料號或 id 識別）',
+      '🎉 沒更新標記：產品卡片顯示「N天未更新」（≥14天黃色、≥30天紅色）',
+      '只對「設計中/進行中」狀態顯示，取消/暫停/設計完成不顯示',
+      '沒有任何進度紀錄的產品也會標示「尚無進度紀錄」',
+      '🎉 BOM 確認狀態：BOM 區塊加「✓ BOM 已確認 / ⚠ BOM 修改中」標記',
+      '點擊標記循環切換狀態，標題列收起時也看得到',
+      '業務報價前可快速確認 BOM 是否為最終版',
+    ],
+  },
   {
     version: 'v0.44.0',
     date: '2026-05-19',
@@ -1105,6 +1119,27 @@ export default function ProductRoadmap() {
     }
   }, [currentUser]);
 
+  // === URL hash 自動打開對應產品 ===
+  // 支援格式：#MGMS0001（料號）或 #id=12345（內部 id）
+  useEffect(() => {
+    if (!currentUser || projects.length === 0) return;
+    const hash = window.location.hash.slice(1); // 去掉 #
+    if (!hash) return;
+    let target = null;
+    if (hash.startsWith('id=')) {
+      const id = Number(hash.slice(3));
+      target = projects.find(p => p.id === id);
+    } else {
+      // 當成料號找
+      target = projects.find(p => p.code && p.code.toLowerCase() === hash.toLowerCase());
+    }
+    if (target) {
+      setSelectedProject(target);
+      // 清掉 hash 避免下次重新整理再觸發
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, [currentUser, projects]);
+
   // === 自動同步「已收到」的手板訂單到樣品庫 ===
   // 規則：
   // - 狀態「已收到」的手板 → 在樣品庫建立/更新對應記錄
@@ -2042,6 +2077,27 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
   const phaseColor = PHASE_COLORS[currentPhase];
   const isOverridden = !!project.phaseOverride;
 
+  // 計算距離上次更新的天數
+  const daysSinceUpdate = (() => {
+    if (!latest?.date) return null;
+    const last = new Date(latest.date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    last.setHours(0, 0, 0, 0);
+    return Math.floor((today - last) / 86400000);
+  })();
+
+  // 超過 14 天沒更新且還在進行中（非取消/暫停）的產品才顯示警示
+  const isStale = daysSinceUpdate !== null
+    && daysSinceUpdate >= 14
+    && project.status !== '取消'
+    && project.status !== '暫停'
+    && project.status !== '設計完成';
+
+  const staleColor = daysSinceUpdate >= 30
+    ? 'text-rose-600 bg-rose-50 border-rose-200'
+    : 'text-amber-600 bg-amber-50 border-amber-200';
+
   return (
     <div
       draggable={draggable}
@@ -2124,16 +2180,28 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
 
           {latest && (
             <div className="mt-3 pt-3 border-t border-slate-100">
-              <div className="flex items-baseline gap-2 mb-0.5">
+              <div className="flex items-baseline gap-2 mb-0.5 flex-wrap">
                 <span className="text-xs text-blue-600 font-medium tabular-nums flex-shrink-0">
                   {latest.date}
                 </span>
                 <span className="text-xs text-slate-400">最新進度</span>
+                {isStale && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium flex-shrink-0 ${staleColor}`}>
+                    {daysSinceUpdate}天未更新
+                  </span>
+                )}
               </div>
               <p className="text-sm text-slate-700 line-clamp-2 leading-relaxed">{latest.text}</p>
               {project.updates.length > 1 && (
                 <p className="text-xs text-slate-400 mt-1.5">+ {project.updates.length - 1} 筆歷史紀錄</p>
               )}
+            </div>
+          )}
+          {!latest && project.status !== '取消' && project.status !== '暫停' && (
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              <span className="text-[10px] px-1.5 py-0.5 rounded border text-slate-400 bg-slate-50 border-slate-200">
+                尚無進度紀錄
+              </span>
             </div>
           )}
         </div>
@@ -2282,6 +2350,31 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
+            {/* 分享連結按鈕 */}
+            <button
+              onClick={() => {
+                const base = window.location.origin + window.location.pathname;
+                const hash = project.code ? `#${project.code}` : `#id=${project.id}`;
+                const url = base + hash;
+                navigator.clipboard.writeText(url).then(() => {
+                  // 臨時顯示「已複製」
+                  const btn = document.getElementById('share-btn-' + project.id);
+                  if (btn) {
+                    const orig = btn.innerHTML;
+                    btn.innerHTML = '✓ 已複製';
+                    setTimeout(() => { btn.innerHTML = orig; }, 1500);
+                  }
+                }).catch(() => {
+                  prompt('複製此連結：', url);
+                });
+              }}
+              id={`share-btn-${project.id}`}
+              title="複製此產品的分享連結（可傳給工程/老闆，點連結直接開此產品）"
+              className="p-1.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-700 inline-flex items-center gap-1 text-xs px-2"
+            >
+              <span>🔗</span>
+              <span className="hidden sm:inline">分享</span>
+            </button>
             {!isViewer && onDuplicate && (
               <button
                 onClick={() => {
@@ -3985,6 +4078,13 @@ function DesignVersionCard({ d, type, isLatest, onUpdateVersion, onEdit, onDelet
               📋 BOM
             </span>
           )}
+          {/* BOM 確認狀態（永遠顯示在標題列，收起也看得到） */}
+          {bomVisible && d.bomConfirmed === 'confirmed' && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded">✓ 已確認</span>
+          )}
+          {bomVisible && d.bomConfirmed === 'revising' && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded">⚠ 修改中</span>
+          )}
           {/* 收起時顯示摘要 */}
           {!expanded && (
             <span className="text-[10px] text-slate-400 truncate">
@@ -4033,8 +4133,28 @@ function DesignVersionCard({ d, type, isLatest, onUpdateVersion, onEdit, onDelet
           {/* BOM 區塊 */}
           {bomVisible && (
             <div className="mt-2 pt-2 border-t border-slate-100">
-              <div className="flex items-center justify-between gap-1 mb-1">
-                <span className="text-[10px] text-slate-500 font-medium">📋 BOM 檔案</span>
+              <div className="flex items-center justify-between gap-1 mb-1 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-slate-500 font-medium">📋 BOM 檔案</span>
+                  {/* BOM 確認狀態標記 */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const next = d.bomConfirmed === 'confirmed' ? 'revising' : d.bomConfirmed === 'revising' ? null : 'confirmed';
+                      onUpdateVersion({ ...d, bomConfirmed: next });
+                    }}
+                    title="點擊切換 BOM 確認狀態"
+                    className={`text-[10px] px-1.5 py-0.5 rounded border font-medium transition ${
+                      d.bomConfirmed === 'confirmed'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : d.bomConfirmed === 'revising'
+                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                        : 'bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    {d.bomConfirmed === 'confirmed' ? '✓ BOM 已確認' : d.bomConfirmed === 'revising' ? '⚠ BOM 修改中' : '─ 未標記'}
+                  </button>
+                </div>
                 {!hasBom && (
                   <button
                     onClick={() => onUpdateVersion({ ...d, bomEnabled: false })}

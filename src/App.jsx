@@ -45,10 +45,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.45.0';
-const BUILD_ID = '20260520-1000';
+const APP_VERSION = 'v0.46.0';
+const BUILD_ID = '20260520-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.46.0',
+    date: '2026-05-20',
+    changes: [
+      '🎉 主頁新增「⚠ 未更新產品」提醒區（≥14天標黃、≥30天標紅）',
+      '提醒區有「📋 複製提醒訊息」按鈕，一鍵產生含連結的文字貼到 WeChat/Teams',
+      '🔧 BOM 確認標記改為「每個附件各自標記」（支援多個 BOM 檔案各自狀態）',
+      '版本標題列的確認狀態從所有附件推算（全確認→✓綠、任一修改中→⚠紅）',
+    ],
+  },
   {
     version: 'v0.45.0',
     date: '2026-05-20',
@@ -1307,6 +1317,26 @@ export default function ProductRoadmap() {
     });
   };
 
+  // 計算未更新超過 14 天的產品（進行中的才算）
+  const staleProjects = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return projects.filter(p => {
+      if (['取消', '暫停', '設計完成'].includes(p.status)) return false;
+      const latest = p.updates?.[0];
+      if (!latest?.date) return true; // 沒有任何進度也算
+      const last = new Date(latest.date);
+      last.setHours(0, 0, 0, 0);
+      return Math.floor((today - last) / 86400000) >= 14;
+    }).map(p => {
+      const latest = p.updates?.[0];
+      const last = latest?.date ? new Date(latest.date) : null;
+      const today2 = new Date(); today2.setHours(0, 0, 0, 0);
+      const days = last ? Math.floor((today2 - new Date(latest.date)) / 86400000) : null;
+      return { project: p, days };
+    }).sort((a, b) => (b.days || 999) - (a.days || 999));
+  }, [projects]);
+
   const overdueFollowUps = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     const result = [];
@@ -1811,6 +1841,54 @@ export default function ProductRoadmap() {
           </div>
         </div>
 
+        {/* ⚠ 未更新產品提醒區 */}
+        {staleProjects.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3">
+            <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="text-base">⚠</span>
+                <span className="text-sm font-medium text-amber-800">這些產品已久未更新進度</span>
+                <span className="text-xs text-amber-600">（{staleProjects.length} 個）</span>
+              </div>
+              {/* 一鍵複製提醒訊息 */}
+              <button
+                onClick={() => {
+                  const base = window.location.origin + window.location.pathname;
+                  const lines = staleProjects.map(({ project: p, days }) =>
+                    `${days >= 30 ? '🔴' : '🟡'} ${p.name}${p.code ? ` (${p.code})` : ''} — ${days ? `已 ${days} 天未更新` : '尚無進度紀錄'}\n   ${base}#${p.code || 'id=' + p.id}`
+                  );
+                  const msg = `[進度更新請求]\n以下產品請相關同事至系統更新最新進度：\n\n${lines.join('\n\n')}`;
+                  navigator.clipboard.writeText(msg)
+                    .then(() => alert('已複製！可貼到 WeChat 或 Teams'))
+                    .catch(() => prompt('複製此訊息：', msg));
+                }}
+                className="text-xs px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded hover:bg-amber-100 inline-flex items-center gap-1 flex-shrink-0"
+              >
+                📋 複製提醒訊息（貼到 WeChat）
+              </button>
+            </div>
+            <div className="space-y-1">
+              {staleProjects.map(({ project: p, days }, i) => (
+                <div key={i} className="bg-white border border-amber-200 rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium flex-shrink-0 ${days >= 30 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                    {days ? `${days}天` : '無紀錄'}
+                  </span>
+                  <button
+                    onClick={() => setSelectedProject(p)}
+                    className="text-sm text-slate-800 hover:text-amber-700 hover:underline font-medium"
+                  >
+                    {p.name}
+                  </button>
+                  {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
+                  <span className={`text-xs px-1.5 py-0.5 rounded border ml-auto flex-shrink-0 ${STATUS_COLORS[p.status]?.badge || 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+                    {p.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 🔔 跟追提醒區（有到期項目時顯示） */}
         {overdueFollowUps.length > 0 && (
           <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3">
@@ -1821,15 +1899,9 @@ export default function ProductRoadmap() {
             </div>
             <div className="space-y-1.5">
               {overdueFollowUps.map(({ project: p, update: u }, i) => (
-                <div
-                  key={i}
-                  className="bg-white border border-orange-200 rounded-lg px-3 py-2 flex items-baseline gap-2 flex-wrap"
-                >
+                <div key={i} className="bg-white border border-orange-200 rounded-lg px-3 py-2 flex items-baseline gap-2 flex-wrap">
                   <span className="text-xs font-medium text-orange-700 flex-shrink-0">{u.followUpDate}</span>
-                  <button
-                    onClick={() => setSelectedProject(p)}
-                    className="text-sm text-slate-800 hover:text-orange-700 hover:underline font-medium truncate"
-                  >
+                  <button onClick={() => setSelectedProject(p)} className="text-sm text-slate-800 hover:text-orange-700 hover:underline font-medium truncate">
                     {p.name}
                   </button>
                   {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
@@ -3749,7 +3821,7 @@ function FilePreviewModal({ file, onClose }) {
   );
 }
 
-function AttachmentList({ attachments, onChange, readOnly }) {
+function AttachmentList({ attachments, onChange, readOnly, showBomStatus = false }) {
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
@@ -3957,6 +4029,27 @@ function AttachmentList({ attachments, onChange, readOnly }) {
                   {a.name}
                 </button>
                 {a.size && <span className="text-[10px] text-slate-400 flex-shrink-0">{formatFileSize(a.size)}</span>}
+                {/* BOM 確認狀態（只在 showBomStatus 且是 upload 時顯示） */}
+                {showBomStatus && a.kind === 'upload' && (
+                  <button
+                    onClick={() => {
+                      const next = a.bomConfirmed === 'confirmed' ? 'revising' : a.bomConfirmed === 'revising' ? undefined : 'confirmed';
+                      const newList = [...list];
+                      newList[i] = { ...a, bomConfirmed: next };
+                      onChange(newList);
+                    }}
+                    title="點擊切換此 BOM 檔案的確認狀態"
+                    className={`text-[10px] px-1.5 py-0.5 rounded border font-medium flex-shrink-0 transition ${
+                      a.bomConfirmed === 'confirmed'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : a.bomConfirmed === 'revising'
+                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                        : 'bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300 opacity-0 group-hover:opacity-100'
+                    }`}
+                  >
+                    {a.bomConfirmed === 'confirmed' ? '✓ 已確認' : a.bomConfirmed === 'revising' ? '⚠ 修改中' : '─'}
+                  </button>
+                )}
                 {a.kind === 'upload' ? (
                   <button
                     onClick={() => {
@@ -4078,13 +4171,15 @@ function DesignVersionCard({ d, type, isLatest, onUpdateVersion, onEdit, onDelet
               📋 BOM
             </span>
           )}
-          {/* BOM 確認狀態（永遠顯示在標題列，收起也看得到） */}
-          {bomVisible && d.bomConfirmed === 'confirmed' && (
-            <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded">✓ 已確認</span>
-          )}
-          {bomVisible && d.bomConfirmed === 'revising' && (
-            <span className="text-[10px] px-1.5 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded">⚠ 修改中</span>
-          )}
+          {/* BOM 確認狀態 — 從附件推算：全部已確認→綠、任一修改中→紅、其他→不顯示 */}
+          {hasBom && (() => {
+            const statuses = (d.bomAttachments || []).filter(a => a.kind === 'upload').map(a => a.bomConfirmed);
+            const allConfirmed = statuses.length > 0 && statuses.every(s => s === 'confirmed');
+            const anyRevising = statuses.some(s => s === 'revising');
+            if (allConfirmed) return <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded">✓ 已確認</span>;
+            if (anyRevising) return <span className="text-[10px] px-1.5 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded">⚠ 修改中</span>;
+            return null;
+          })()}
           {/* 收起時顯示摘要 */}
           {!expanded && (
             <span className="text-[10px] text-slate-400 truncate">
@@ -4136,24 +4231,7 @@ function DesignVersionCard({ d, type, isLatest, onUpdateVersion, onEdit, onDelet
               <div className="flex items-center justify-between gap-1 mb-1 flex-wrap">
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] text-slate-500 font-medium">📋 BOM 檔案</span>
-                  {/* BOM 確認狀態標記 */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const next = d.bomConfirmed === 'confirmed' ? 'revising' : d.bomConfirmed === 'revising' ? null : 'confirmed';
-                      onUpdateVersion({ ...d, bomConfirmed: next });
-                    }}
-                    title="點擊切換 BOM 確認狀態"
-                    className={`text-[10px] px-1.5 py-0.5 rounded border font-medium transition ${
-                      d.bomConfirmed === 'confirmed'
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        : d.bomConfirmed === 'revising'
-                        ? 'bg-rose-50 text-rose-700 border-rose-200'
-                        : 'bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    {d.bomConfirmed === 'confirmed' ? '✓ BOM 已確認' : d.bomConfirmed === 'revising' ? '⚠ BOM 修改中' : '─ 未標記'}
-                  </button>
+                  <span className="text-[10px] text-slate-400">（hover 每個檔案可標記確認狀態）</span>
                 </div>
                 {!hasBom && (
                   <button
@@ -4168,6 +4246,7 @@ function DesignVersionCard({ d, type, isLatest, onUpdateVersion, onEdit, onDelet
               <AttachmentList
                 attachments={d.bomAttachments || []}
                 onChange={(newAtt) => onUpdateVersion({ ...d, bomAttachments: newAtt })}
+                showBomStatus={true}
               />
             </div>
           )}

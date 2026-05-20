@@ -35,6 +35,7 @@ const FEATURE_COL = 'code_features';
 const SAMPLES_COL = 'samples';
 const WITHDRAWALS_COL = 'sample_withdrawals';
 const EXHIBITIONS_COL = 'exhibitions';
+const TRACKING_COL = 'tracking_overrides'; // 手動追蹤調整
 const STORAGE_FOLDER = 'roadmap';
 
 // === 簡易密碼設定 ===
@@ -45,10 +46,23 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.46.0';
-const BUILD_ID = '20260520-1400';
+const APP_VERSION = 'v0.47.0';
+const BUILD_ID = '20260520-1700';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.47.0',
+    date: '2026-05-20',
+    changes: [
+      '🎉 提醒移到獨立頁面（頂部 🔔 按鈕），主頁不再被遮擋',
+      '🔔 按鈕顯示紅色徽章計數（未更新 + 跟追到期的總數）',
+      '提醒頁面分三個分頁：⚠ 需更新進度、🔔 跟追到期、⚙ 管理清單',
+      '🎉 追蹤清單可靈活管理：手動加入特定產品、手動排除不需要追蹤的',
+      '排除後可在「管理清單」分頁恢復追蹤，設定同步到雲端',
+      '🎉 進度紀錄加「誰寫的」欄位，顯示在日期旁邊',
+      '進度紀錄可附加圖片（支援拖曳、Ctrl+V 貼上）',
+    ],
+  },
   {
     version: 'v0.46.0',
     date: '2026-05-20',
@@ -1115,12 +1129,32 @@ export default function ProductRoadmap() {
     const colRef = collection(db, EXHIBITIONS_COL);
     const unsub = onSnapshot(colRef, (snap) => {
       const items = snap.docs.map(d => ({ ...d.data(), _docId: d.id }));
-      // 依日期倒序（最近的展覽在前）
       items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       setExhibitions(items);
     });
     return () => unsub();
   }, [currentUser]);
+
+  // === 訂閱追蹤調整（手動加入/排除）===
+  useEffect(() => {
+    if (!currentUser) return;
+    const colRef = collection(db, TRACKING_COL);
+    const unsub = onSnapshot(colRef, (snap) => {
+      const overrides = {};
+      snap.docs.forEach(d => { overrides[d.id] = d.data().mode; }); // 'include' | 'exclude'
+      setTrackingOverrides(overrides);
+    });
+    return () => unsub();
+  }, [currentUser]);
+
+  const setTrackingOverride = async (projectId, mode) => {
+    const id = String(projectId);
+    if (mode === null) {
+      await deleteDoc(doc(db, TRACKING_COL, id));
+    } else {
+      await setDoc(doc(db, TRACKING_COL, id), { mode, updatedAt: Date.now() });
+    }
+  };
 
   // 業務登入自動打開樣品庫
   useEffect(() => {
@@ -1269,6 +1303,9 @@ export default function ProductRoadmap() {
   const [showNewModal, setShowNewModal] = useState(false);
   const [showPrototypeOverview, setShowPrototypeOverview] = useState(false);
   const [showSampleLibrary, setShowSampleLibrary] = useState(false);
+  const [showReminders, setShowReminders] = useState(false);
+  // trackingOverrides: { [projectId]: 'include' | 'exclude' }
+  const [trackingOverrides, setTrackingOverrides] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showTagManager, setShowTagManager] = useState(false);
@@ -1317,25 +1354,33 @@ export default function ProductRoadmap() {
     });
   };
 
-  // 計算未更新超過 14 天的產品（進行中的才算）
+  // 計算追蹤清單（未更新≥14天 + 手動加入，排除手動排除）
   const staleProjects = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
     return projects.filter(p => {
+      const override = trackingOverrides[String(p.id)];
+      if (override === 'exclude') return false; // 手動排除
+      if (override === 'include') return true;  // 手動加入
+
+      // 預設邏輯：進行中且≥14天未更新
       if (['取消', '暫停', '設計完成'].includes(p.status)) return false;
       const latest = p.updates?.[0];
-      if (!latest?.date) return true; // 沒有任何進度也算
+      if (!latest?.date) return true;
       const last = new Date(latest.date);
       last.setHours(0, 0, 0, 0);
       return Math.floor((today - last) / 86400000) >= 14;
     }).map(p => {
       const latest = p.updates?.[0];
-      const last = latest?.date ? new Date(latest.date) : null;
       const today2 = new Date(); today2.setHours(0, 0, 0, 0);
-      const days = last ? Math.floor((today2 - new Date(latest.date)) / 86400000) : null;
-      return { project: p, days };
+      const days = latest?.date
+        ? Math.floor((today2 - new Date(latest.date)) / 86400000)
+        : null;
+      const override = trackingOverrides[String(p.id)];
+      return { project: p, days, override };
     }).sort((a, b) => (b.days || 999) - (a.days || 999));
-  }, [projects]);
+  }, [projects, trackingOverrides]);
 
   const overdueFollowUps = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
@@ -1720,6 +1765,20 @@ export default function ProductRoadmap() {
             <button onClick={() => fileInputRef.current?.click()} title="匯入 JSON" className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
               <Upload className="w-4 h-4" />
             </button>
+            {/* 🔔 提醒按鈕 + 計數徽章 */}
+            <button
+              onClick={() => setShowReminders(true)}
+              title="提醒：未更新產品 + 跟追到期"
+              className="relative p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700 rounded-lg inline-flex items-center gap-1"
+            >
+              <span>🔔</span>
+              <span className="hidden sm:inline text-xs">提醒</span>
+              {(staleProjects.length + overdueFollowUps.length) > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-0.5">
+                  {staleProjects.length + overdueFollowUps.length}
+                </span>
+              )}
+            </button>
             <button
               onClick={() => setShowSampleLibrary(true)}
               title="樣品庫（含手板）"
@@ -1841,91 +1900,6 @@ export default function ProductRoadmap() {
           </div>
         </div>
 
-        {/* ⚠ 未更新產品提醒區 */}
-        {staleProjects.length > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3">
-            <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-              <div className="flex items-center gap-2">
-                <span className="text-base">⚠</span>
-                <span className="text-sm font-medium text-amber-800">這些產品已久未更新進度</span>
-                <span className="text-xs text-amber-600">（{staleProjects.length} 個）</span>
-              </div>
-              {/* 一鍵複製提醒訊息 */}
-              <button
-                onClick={() => {
-                  const base = window.location.origin + window.location.pathname;
-                  const lines = staleProjects.map(({ project: p, days }) =>
-                    `${days >= 30 ? '🔴' : '🟡'} ${p.name}${p.code ? ` (${p.code})` : ''} — ${days ? `已 ${days} 天未更新` : '尚無進度紀錄'}\n   ${base}#${p.code || 'id=' + p.id}`
-                  );
-                  const msg = `[進度更新請求]\n以下產品請相關同事至系統更新最新進度：\n\n${lines.join('\n\n')}`;
-                  navigator.clipboard.writeText(msg)
-                    .then(() => alert('已複製！可貼到 WeChat 或 Teams'))
-                    .catch(() => prompt('複製此訊息：', msg));
-                }}
-                className="text-xs px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded hover:bg-amber-100 inline-flex items-center gap-1 flex-shrink-0"
-              >
-                📋 複製提醒訊息（貼到 WeChat）
-              </button>
-            </div>
-            <div className="space-y-1">
-              {staleProjects.map(({ project: p, days }, i) => (
-                <div key={i} className="bg-white border border-amber-200 rounded-lg px-3 py-2 flex items-center gap-2 flex-wrap">
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium flex-shrink-0 ${days >= 30 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                    {days ? `${days}天` : '無紀錄'}
-                  </span>
-                  <button
-                    onClick={() => setSelectedProject(p)}
-                    className="text-sm text-slate-800 hover:text-amber-700 hover:underline font-medium"
-                  >
-                    {p.name}
-                  </button>
-                  {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
-                  <span className={`text-xs px-1.5 py-0.5 rounded border ml-auto flex-shrink-0 ${STATUS_COLORS[p.status]?.badge || 'bg-slate-50 text-slate-500 border-slate-200'}`}>
-                    {p.status}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 🔔 跟追提醒區（有到期項目時顯示） */}
-        {overdueFollowUps.length > 0 && (
-          <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-base">🔔</span>
-              <span className="text-sm font-medium text-orange-800">需要跟追的進度</span>
-              <span className="text-xs text-orange-600">（{overdueFollowUps.length} 筆）</span>
-            </div>
-            <div className="space-y-1.5">
-              {overdueFollowUps.map(({ project: p, update: u }, i) => (
-                <div key={i} className="bg-white border border-orange-200 rounded-lg px-3 py-2 flex items-baseline gap-2 flex-wrap">
-                  <span className="text-xs font-medium text-orange-700 flex-shrink-0">{u.followUpDate}</span>
-                  <button onClick={() => setSelectedProject(p)} className="text-sm text-slate-800 hover:text-orange-700 hover:underline font-medium truncate">
-                    {p.name}
-                  </button>
-                  {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
-                  <span className="text-xs text-slate-600 flex-1 min-w-0 truncate">— {u.text}</span>
-                  {isAdmin && (
-                    <button
-                      onClick={() => {
-                        const idx = (p.updates || []).findIndex(x => x === u || (x.date === u.date && x.text === u.text));
-                        if (idx < 0) return;
-                        const newUpdates = [...(p.updates || [])];
-                        newUpdates[idx] = { ...u, followedUp: true };
-                        saveProjectToCloud({ ...p, updates: newUpdates });
-                      }}
-                      className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0"
-                    >
-                      ✓ 標記已跟追
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {filteredProjects.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
             <p className="text-slate-400 text-sm">沒有符合條件的專案</p>
@@ -2025,6 +1999,26 @@ export default function ProductRoadmap() {
               setShowPrototypeOverview(false);
             }
           }}
+        />
+      )}
+
+      {showReminders && (
+        <RemindersModal
+          staleProjects={staleProjects}
+          overdueFollowUps={overdueFollowUps}
+          projects={projects}
+          trackingOverrides={trackingOverrides}
+          onSetOverride={setTrackingOverride}
+          onJumpToProject={(p) => setSelectedProject(p)}
+          onMarkFollowedUp={(p, u) => {
+            const idx = (p.updates || []).findIndex(x => x.date === u.date && x.text === u.text);
+            if (idx < 0) return;
+            const newUpdates = [...(p.updates || [])];
+            newUpdates[idx] = { ...u, followedUp: true };
+            saveProjectToCloud({ ...p, updates: newUpdates });
+          }}
+          onClose={() => setShowReminders(false)}
+          isAdmin={isAdmin}
         />
       )}
 
@@ -2551,6 +2545,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
               <UpdateForm
                 onCancel={() => setShowAddUpdate(false)}
                 onSave={(u) => { onAddUpdate(u); setShowAddUpdate(false); }}
+                currentUser={currentUser}
               />
             )}
 
@@ -2568,6 +2563,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     onSave={(u) => { onEditUpdate(0, u); setEditingUpdateIdx(null); }}
                     onDelete={() => onDeleteUpdate(0)}
                     onMarkFollowedUp={isViewer ? null : handleMarkFollowedUp}
+                    currentUser={currentUser}
                   />
                 )}
 
@@ -2592,6 +2588,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     onSave={(updated) => { onEditUpdate(i + 1, updated); setEditingUpdateIdx(null); }}
                     onDelete={() => onDeleteUpdate(i + 1)}
                     onMarkFollowedUp={isViewer ? null : handleMarkFollowedUp}
+                    currentUser={currentUser}
                   />
                 ))}
               </div>
@@ -5804,6 +5801,194 @@ function WithdrawalModal({ sample, currentUser, onSave, onClose }) {
   );
 }
 
+// ============= 提醒頁面 Modal =============
+function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOverrides, onSetOverride, onJumpToProject, onMarkFollowedUp, onClose, isAdmin }) {
+  const [tab, setTab] = useState('stale'); // 'stale' | 'followup' | 'manage'
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // 所有「未被加入追蹤」的產品（用於手動追加）
+  const trackingIds = new Set(staleProjects.map(({ project: p }) => String(p.id)));
+  const notTracked = projects.filter(p => {
+    if (trackingOverrides[String(p.id)] === 'exclude') return false;
+    if (trackingIds.has(String(p.id))) return false;
+    const matchSearch = !searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || (p.code || '').toLowerCase().includes(searchTerm.toLowerCase());
+    return matchSearch;
+  });
+
+  const copyToWeChat = () => {
+    const base = window.location.origin + window.location.pathname;
+    const lines = staleProjects.map(({ project: p, days }) =>
+      `${(days || 0) >= 30 ? '🔴' : '🟡'} ${p.name}${p.code ? ` (${p.code})` : ''} — ${days ? `已 ${days} 天未更新` : '尚無進度紀錄'}\n   ${base}#${p.code || 'id=' + p.id}`
+    );
+    const msg = `[進度更新請求]\n以下產品請相關同事至系統更新最新進度：\n\n${lines.join('\n\n')}`;
+    navigator.clipboard.writeText(msg)
+      .then(() => alert('已複製！可貼到 WeChat 或 Teams'))
+      .catch(() => prompt('複製此訊息：', msg));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl max-w-2xl w-full p-4 sm:p-5 my-auto max-h-[95vh] flex flex-col">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-base font-medium flex items-center gap-2">
+              <span>🔔</span>提醒
+              <span className="text-xs text-slate-400 font-normal">
+                ({staleProjects.length} 個未更新 · {overdueFollowUps.length} 個跟追到期)
+              </span>
+            </h3>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        {/* 分頁 */}
+        <div className="flex gap-1 mb-3 border-b border-slate-100">
+          <button onClick={() => setTab('stale')} className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'stale' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+            ⚠ 需更新進度 ({staleProjects.length})
+          </button>
+          <button onClick={() => setTab('followup')} className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'followup' ? 'border-orange-500 text-orange-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+            🔔 跟追到期 ({overdueFollowUps.length})
+          </button>
+          <button onClick={() => setTab('manage')} className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'manage' ? 'border-blue-500 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+            ⚙ 管理清單
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto -mx-1 px-1">
+
+          {/* 需更新進度分頁 */}
+          {tab === 'stale' && (
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <p className="text-xs text-slate-500">設計中的產品超過 14 天未更新進度，或手動加入的產品</p>
+                {staleProjects.length > 0 && (
+                  <button onClick={copyToWeChat} className="text-xs px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded hover:bg-amber-50 inline-flex items-center gap-1 flex-shrink-0">
+                    📋 複製傳 WeChat
+                  </button>
+                )}
+              </div>
+              {staleProjects.length === 0 ? (
+                <p className="text-center text-sm text-slate-400 py-8">目前沒有需要追蹤的產品 🎉</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {staleProjects.map(({ project: p, days, override }, i) => (
+                    <div key={i} className="bg-white border border-slate-200 rounded-lg px-3 py-2.5 flex items-center gap-2 flex-wrap">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium flex-shrink-0 ${
+                        override === 'include' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                        (days || 0) >= 30 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+                      }`}>
+                        {override === 'include' ? '手動追蹤' : days ? `${days}天` : '無紀錄'}
+                      </span>
+                      <button onClick={() => { onJumpToProject(p); onClose(); }} className="text-sm text-slate-800 hover:text-blue-700 hover:underline font-medium flex-1 min-w-0 truncate text-left">
+                        {p.name}
+                      </button>
+                      {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
+                      <span className="text-xs text-slate-400">{p.status}</span>
+                      {isAdmin && (
+                        <button
+                          onClick={() => onSetOverride(p.id, 'exclude')}
+                          title="從追蹤清單移除"
+                          className="text-[10px] px-1.5 py-0.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded border border-transparent hover:border-rose-200 flex-shrink-0"
+                        >
+                          移除
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 跟追到期分頁 */}
+          {tab === 'followup' && (
+            <div>
+              {overdueFollowUps.length === 0 ? (
+                <p className="text-center text-sm text-slate-400 py-8">沒有跟追到期的項目 🎉</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {overdueFollowUps.map(({ project: p, update: u }, i) => (
+                    <div key={i} className="bg-white border border-orange-200 bg-orange-50/30 rounded-lg px-3 py-2.5 flex items-baseline gap-2 flex-wrap">
+                      <span className="text-xs font-medium text-orange-700 flex-shrink-0">{u.followUpDate}</span>
+                      <button onClick={() => { onJumpToProject(p); onClose(); }} className="text-sm text-slate-800 hover:underline font-medium">
+                        {p.name}
+                      </button>
+                      {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
+                      <span className="text-xs text-slate-600 flex-1 truncate">— {u.text}</span>
+                      {isAdmin && (
+                        <button onClick={() => onMarkFollowedUp(p, u)} className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0">
+                          ✓ 已跟追
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 管理清單分頁 */}
+          {tab === 'manage' && (
+            <div>
+              <p className="text-xs text-slate-500 mb-3">手動加入不在清單的產品，或查看已排除的產品</p>
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="搜尋產品名稱或料號..."
+                className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded mb-2"
+              />
+
+              {/* 已手動排除的產品 */}
+              {Object.entries(trackingOverrides).filter(([, v]) => v === 'exclude').length > 0 && (
+                <div className="mb-3">
+                  <p className="text-xs text-slate-500 mb-1">已手動排除（不在追蹤清單）：</p>
+                  <div className="space-y-1">
+                    {Object.entries(trackingOverrides).filter(([, v]) => v === 'exclude').map(([id]) => {
+                      const p = projects.find(p => String(p.id) === id);
+                      if (!p) return null;
+                      return (
+                        <div key={id} className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded border border-slate-200">
+                          <span className="text-xs text-slate-500 flex-1">{p.name} {p.code && <span className="font-mono text-slate-400">{p.code}</span>}</span>
+                          <button onClick={() => onSetOverride(p.id, null)} className="text-xs text-blue-600 hover:underline">恢復追蹤</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 可手動加入的產品 */}
+              <p className="text-xs text-slate-500 mb-1">手動加入追蹤（目前不在清單的產品）：</p>
+              {notTracked.length === 0 ? (
+                <p className="text-xs text-slate-400 py-2">沒有可加入的產品</p>
+              ) : (
+                <div className="space-y-1">
+                  {notTracked.map(p => (
+                    <div key={p.id} className="flex items-center gap-2 px-3 py-2 bg-white rounded border border-slate-200 hover:border-slate-300">
+                      <span className="text-sm text-slate-800 flex-1 truncate">{p.name}</span>
+                      {p.code && <span className="text-xs font-mono text-slate-400">{p.code}</span>}
+                      <span className="text-xs text-slate-400">{p.status}</span>
+                      <button
+                        onClick={() => onSetOverride(p.id, 'include')}
+                        className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 flex-shrink-0"
+                      >
+                        + 加入追蹤
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PrototypeOverviewModal({ projects, onClose, onJumpToProject }) {
   const [statusFilter, setStatusFilter] = useState('全部');
   const [locationFilter, setLocationFilter] = useState('全部');
@@ -6624,9 +6809,10 @@ function formatMoney(n) {
 }
 
 
-function UpdateForm({ initial, onCancel, onSave }) {
+function UpdateForm({ initial, onCancel, onSave, currentUser }) {
   const [date, setDate] = useState(initial?.date || new Date().toISOString().split('T')[0]);
   const [text, setText] = useState(initial?.text || '');
+  const [author, setAuthor] = useState(initial?.author || currentUser?.name || '');
   const [images, setImages] = useState(initial?.images || []);
   const [followUpDate, setFollowUpDate] = useState(initial?.followUpDate || '');
   const [followedUp, setFollowedUp] = useState(initial?.followedUp || false);
@@ -6697,7 +6883,7 @@ function UpdateForm({ initial, onCancel, onSave }) {
 
   const submit = () => {
     if (!text.trim() && images.length === 0) return;
-    onSave({ date, text: text.trim(), images, followUpDate: followUpDate || null, followedUp });
+    onSave({ date, text: text.trim(), images, author: author.trim(), followUpDate: followUpDate || null, followedUp });
   };
 
   return (
@@ -6714,7 +6900,14 @@ function UpdateForm({ initial, onCancel, onSave }) {
           onChange={(e) => setDate(e.target.value)}
           className="text-xs px-2 py-1 border border-slate-200 rounded bg-white"
         />
-        {pasteHint && <span className="text-[10px] text-slate-400">· Ctrl+V 可貼上圖片</span>}
+        <input
+          type="text"
+          value={author}
+          onChange={(e) => setAuthor(e.target.value)}
+          placeholder="誰寫的（選填）"
+          className="text-xs px-2 py-1 border border-slate-200 rounded bg-white w-28"
+        />
+        {pasteHint && <span className="text-[10px] text-slate-400">· Ctrl+V 貼圖</span>}
       </div>
       <textarea
         value={text}
@@ -6778,11 +6971,11 @@ function UpdateForm({ initial, onCancel, onSave }) {
   );
 }
 
-function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete, onMarkFollowedUp }) {
+function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete, onMarkFollowedUp, currentUser }) {
   const [previewImg, setPreviewImg] = useState(null);
 
   if (isEditing) {
-    return <UpdateForm initial={update} onCancel={onCancelEdit} onSave={onSave} />;
+    return <UpdateForm initial={update} onCancel={onCancelEdit} onSave={onSave} currentUser={currentUser} />;
   }
 
   const today = new Date().toISOString().split('T')[0];
@@ -6803,6 +6996,11 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
               {update.date}
             </span>
             {isLatest && <span className="text-xs text-blue-600 flex-shrink-0">最新</span>}
+            {update.author && (
+              <span className="text-xs text-slate-500 flex-shrink-0 bg-slate-100 px-1.5 py-0.5 rounded">
+                {update.author}
+              </span>
+            )}
             {/* 跟追日期標籤 */}
             {isOverdue && (
               <span className="text-[10px] px-1.5 py-0.5 bg-rose-100 text-rose-700 border border-rose-300 rounded font-medium flex-shrink-0">

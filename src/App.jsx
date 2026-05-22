@@ -46,10 +46,33 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.47.0';
-const BUILD_ID = '20260520-1700';
+const APP_VERSION = 'v0.49.0';
+const BUILD_ID = '20260522-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.49.0',
+    date: '2026-05-22',
+    changes: [
+      '🎉 進度紀錄新增「📧 從郵件帶入」按鈕',
+      '點擊後系統自動搜尋 Outlook 中與此產品相關的最新郵件',
+      'AI 自動閱讀郵件內容，提取最關鍵的進度結論（一句話）',
+      '列出 2-3 筆讓你選擇，確認後一鍵加入進度紀錄',
+      '不需要複製貼上，不需要切換視窗',
+    ],
+  },
+  {
+    version: 'v0.48.0',
+    date: '2026-05-20',
+    changes: [
+      '🎉 進度紀錄附件全面升級：支援所有檔案類型',
+      '圖片、影片、Excel、PDF、Word、ZIP、任意格式都可上傳',
+      '可貼連結（Google Drive、SharePoint、OneDrive 等）',
+      '支援拖曳上傳、Ctrl+V 貼上圖片',
+      '顯示時可預覽圖片/PDF、下載其他格式',
+      '舊版純圖片進度紀錄自動相容顯示',
+    ],
+  },
   {
     version: 'v0.47.0',
     date: '2026-05-20',
@@ -2292,6 +2315,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
     if (onWizardClose) onWizardClose();
   };
   const [showAddUpdate, setShowAddUpdate] = useState(false);
+  const [showEmailImport, setShowEmailImport] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [editingUpdateIdx, setEditingUpdateIdx] = useState(null);
   const [editingField, setEditingField] = useState(null);
@@ -2532,13 +2556,22 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           <section>
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide">進度紀錄</h3>
-              <button
-                onClick={() => setShowAddUpdate(true)}
-                className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
-              >
-                <Plus className="w-3 h-3" />
-                新增更新
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setShowEmailImport(true)}
+                  title="從 Outlook 郵件自動帶入進度"
+                  className="flex items-center gap-1 text-xs text-slate-500 hover:text-blue-700 hover:bg-blue-50 px-2 py-1 rounded"
+                >
+                  <span>📧</span>從郵件帶入
+                </button>
+                <button
+                  onClick={() => setShowAddUpdate(true)}
+                  className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  <Plus className="w-3 h-3" />
+                  新增更新
+                </button>
+              </div>
             </div>
 
             {showAddUpdate && (
@@ -2546,6 +2579,14 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                 onCancel={() => setShowAddUpdate(false)}
                 onSave={(u) => { onAddUpdate(u); setShowAddUpdate(false); }}
                 currentUser={currentUser}
+              />
+            )}
+
+            {showEmailImport && (
+              <EmailImportModal
+                project={project}
+                onImport={(u) => { onAddUpdate(u); }}
+                onClose={() => setShowEmailImport(false)}
               />
             )}
 
@@ -5989,6 +6030,187 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
   );
 }
 
+// ============= 從郵件帶入進度 Modal =============
+function EmailImportModal({ project, onImport, onClose }) {
+  const [status, setStatus] = useState('idle'); // idle | searching | done | error
+  const [results, setResults] = useState([]); // [{date, author, summary, raw}]
+  const [selected, setSelected] = useState(null);
+  const [log, setLog] = useState('');
+
+  const searchAndSummarize = async () => {
+    setStatus('searching');
+    setLog('正在搜尋 Outlook 郵件...');
+    setResults([]);
+
+    const productName = project.name || '';
+    const productCode = project.code || '';
+    const searchKeyword = productCode || productName;
+
+    const systemPrompt = `你是 COMART 產品進度助手。
+你的任務：
+1. 用 Microsoft 365 MCP 搜尋 Outlook 郵件（關鍵字：「${searchKeyword}」，最近 30 天）
+2. 讀取最新的 2-3 封郵件
+3. 從每封郵件提取「對產品開發最關鍵的進度結論」（一句話，中文，30字以內）
+4. 回傳 JSON 陣列，格式如下：
+[
+  {
+    "date": "2026-05-22",
+    "author": "寄件人名字",
+    "summary": "提取的一句話結論"
+  }
+]
+只回傳 JSON，不要其他文字。
+如果找不到相關郵件，回傳空陣列 []。`;
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: `請搜尋與「${searchKeyword}」相關的最新 Outlook 郵件，提取進度結論。` }],
+          mcp_servers: [
+            {
+              type: 'url',
+              url: 'https://microsoft365.mcp.claude.com/mcp',
+              name: 'microsoft365-mcp',
+            }
+          ]
+        })
+      });
+
+      const data = await response.json();
+
+      // 找到 text 回應
+      const textBlock = data.content?.find(b => b.type === 'text');
+      const rawText = textBlock?.text || '[]';
+
+      // 解析 JSON
+      const clean = rawText.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(clean);
+
+      if (parsed.length === 0) {
+        setLog('沒有找到相關郵件。');
+        setStatus('done');
+        return;
+      }
+
+      setResults(parsed);
+      setSelected(0);
+      setLog(`找到 ${parsed.length} 筆進度，請選擇要加入的：`);
+      setStatus('done');
+    } catch (e) {
+      console.error('郵件搜尋失敗：', e);
+      setLog('搜尋失敗：' + e.message);
+      setStatus('error');
+    }
+  };
+
+  const handleImport = () => {
+    if (selected === null || !results[selected]) return;
+    const item = results[selected];
+    onImport({
+      date: item.date || new Date().toISOString().split('T')[0],
+      author: item.author || '',
+      text: item.summary || '',
+      attachments: [],
+      images: [],
+      fromEmail: true,
+    });
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/70 z-[60] flex items-center justify-center p-3">
+      <div className="bg-white rounded-xl max-w-lg w-full p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-base font-medium flex items-center gap-2">
+              <span>📧</span>從 Outlook 郵件帶入進度
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">搜尋「{project.code || project.name}」的最新郵件，AI 自動提取結論</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        {status === 'idle' && (
+          <div className="text-center py-6">
+            <p className="text-slate-500 text-sm mb-4">點下方按鈕，系統會自動搜尋 Outlook 並整理最新進度</p>
+            <button
+              onClick={searchAndSummarize}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+            >
+              <span>📧</span>開始搜尋 Outlook 郵件
+            </button>
+          </div>
+        )}
+
+        {status === 'searching' && (
+          <div className="text-center py-8">
+            <Loader className="w-8 h-8 animate-spin text-blue-500 mx-auto mb-3" />
+            <p className="text-slate-600 text-sm">{log}</p>
+            <p className="text-slate-400 text-xs mt-1">AI 正在搜尋並閱讀郵件，請稍候...</p>
+          </div>
+        )}
+
+        {status === 'done' && results.length === 0 && (
+          <div className="text-center py-6">
+            <p className="text-slate-500 text-sm">{log}</p>
+            <button onClick={() => setStatus('idle')} className="mt-3 text-xs text-blue-600 hover:underline">重新搜尋</button>
+          </div>
+        )}
+
+        {status === 'done' && results.length > 0 && (
+          <div>
+            <p className="text-xs text-slate-500 mb-2">{log}</p>
+            <div className="space-y-2 mb-4">
+              {results.map((item, i) => (
+                <div
+                  key={i}
+                  onClick={() => setSelected(i)}
+                  className={`p-3 rounded-lg border cursor-pointer transition ${selected === i ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
+                >
+                  <div className="flex items-baseline gap-2 mb-1">
+                    <span className="text-xs font-medium text-blue-700">{item.date}</span>
+                    {item.author && <span className="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{item.author}</span>}
+                    {selected === i && <span className="text-[10px] text-blue-600 ml-auto">✓ 已選</span>}
+                  </div>
+                  <p className="text-sm text-slate-800">{item.summary}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-between items-center">
+              <button onClick={() => setStatus('idle')} className="text-xs text-slate-500 hover:underline">重新搜尋</button>
+              <div className="flex gap-2">
+                <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+                <button
+                  onClick={handleImport}
+                  disabled={selected === null}
+                  className="text-sm px-4 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40"
+                >
+                  加入進度紀錄
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <div className="text-center py-6">
+            <p className="text-rose-600 text-sm mb-2">{log}</p>
+            <p className="text-xs text-slate-400 mb-3">可能原因：Microsoft 365 連線問題，或該產品在 Outlook 沒有相關郵件</p>
+            <button onClick={() => setStatus('idle')} className="text-xs text-blue-600 hover:underline">重試</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PrototypeOverviewModal({ projects, onClose, onJumpToProject }) {
   const [statusFilter, setStatusFilter] = useState('全部');
   const [locationFilter, setLocationFilter] = useState('全部');
@@ -6813,86 +7035,21 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
   const [date, setDate] = useState(initial?.date || new Date().toISOString().split('T')[0]);
   const [text, setText] = useState(initial?.text || '');
   const [author, setAuthor] = useState(initial?.author || currentUser?.name || '');
-  const [images, setImages] = useState(initial?.images || []);
+  const [attachments, setAttachments] = useState(initial?.attachments || initial?.images?.map(img => ({ ...img, kind: 'upload' })) || []);
   const [followUpDate, setFollowUpDate] = useState(initial?.followUpDate || '');
   const [followedUp, setFollowedUp] = useState(initial?.followedUp || false);
-  const [uploading, setUploading] = useState(false);
-  const [pasteHint, setPasteHint] = useState(false);
-  const fileRef = useRef(null);
-
-  const uploadImageFile = async (file) => {
-    if (file.size > 10 * 1024 * 1024) {
-      alert(`「${file.name}」超過 10MB，跳過`);
-      return;
-    }
-    const result = await uploadFileToStorage(file);
-    setImages(prev => [...prev, { name: result.name, url: result.url, path: result.path }]);
-  };
-
-  // 監聽 paste（hover 時生效）
-  useEffect(() => {
-    const handlePaste = async (e) => {
-      if (!pasteHint || uploading) return;
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      const files = [];
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.startsWith('image/')) {
-          const f = items[i].getAsFile();
-          if (f) {
-            const renamed = new File([f], `貼上圖片_${Date.now()}.${f.type.split('/')[1] || 'png'}`, { type: f.type });
-            files.push(renamed);
-          }
-        }
-      }
-      if (files.length > 0) {
-        e.preventDefault();
-        setUploading(true);
-        try {
-          for (const file of files) await uploadImageFile(file);
-        } catch (err) {
-          alert('上傳失敗：' + err.message);
-        }
-        setUploading(false);
-      }
-    };
-    window.addEventListener('paste', handlePaste);
-    return () => window.removeEventListener('paste', handlePaste);
-  }, [pasteHint, uploading]);
-
-  const handleFileChange = async (e) => {
-    const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'));
-    e.target.value = '';
-    if (files.length === 0) return;
-    setUploading(true);
-    try {
-      for (const file of files) await uploadImageFile(file);
-    } catch (err) {
-      alert('上傳失敗：' + err.message);
-    }
-    setUploading(false);
-  };
-
-  const handleRemoveImg = async (idx) => {
-    const img = images[idx];
-    if (img.path) {
-      await deleteFileFromStorage(img.path);
-    }
-    setImages(prev => prev.filter((_, i) => i !== idx));
-  };
 
   const submit = () => {
-    if (!text.trim() && images.length === 0) return;
-    onSave({ date, text: text.trim(), images, author: author.trim(), followUpDate: followUpDate || null, followedUp });
+    if (!text.trim() && attachments.length === 0) return;
+    // 儲存時同時保留 attachments（新格式）和 images（舊格式相容）
+    const images = attachments.filter(a => a.kind === 'upload' && isImageFile(a.name, a.type));
+    onSave({ date, text: text.trim(), attachments, images, author: author.trim(), followUpDate: followUpDate || null, followedUp });
   };
 
   return (
-    <div
-      className="border border-blue-200 bg-blue-50/40 rounded-lg p-3 mb-2"
-      onMouseEnter={() => setPasteHint(true)}
-      onMouseLeave={() => setPasteHint(false)}
-    >
-      <div className="flex items-center gap-2 mb-2">
+    <div className="border border-blue-200 bg-blue-50/40 rounded-lg p-3 mb-2">
+      {/* 頂部：日期 + 作者 */}
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
         <Calendar className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
         <input
           type="date"
@@ -6907,62 +7064,42 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
           placeholder="誰寫的（選填）"
           className="text-xs px-2 py-1 border border-slate-200 rounded bg-white w-28"
         />
-        {pasteHint && <span className="text-[10px] text-slate-400">· Ctrl+V 貼圖</span>}
       </div>
+
+      {/* 內文 */}
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={3}
         autoFocus
         placeholder="本週工程更新..."
-        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none bg-white"
+        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none bg-white mb-2"
       />
-      {images.length > 0 && (
-        <div className="flex gap-2 flex-wrap mt-2">
-          {images.map((img, i) => (
-            <div key={i} className="relative group">
-              <StorageImage src={img.url || img.dataUrl} path={img.path} alt={img.name} className="w-16 h-16 object-cover rounded border border-slate-200" />
-              <button
-                onClick={() => handleRemoveImg(i)}
-                className="absolute -top-1 -right-1 bg-rose-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      {/* 跟追日期（選填） */}
-      <div className="flex items-center gap-2 mt-2 pt-2 border-t border-blue-100">
+
+      {/* 附件（圖片/影片/Excel/PDF/任意檔案 + 連結） */}
+      <div className="bg-white rounded border border-slate-200 px-2 pt-1 pb-2 mb-2">
+        <p className="text-[10px] text-slate-400 mb-1">📎 附件（圖片、影片、Excel、PDF 等，或貼連結）</p>
+        <AttachmentList
+          attachments={attachments}
+          onChange={setAttachments}
+          readOnly={false}
+        />
+      </div>
+
+      {/* 跟追日期 */}
+      <div className="flex items-center gap-2 pt-2 border-t border-blue-100">
         <span className="text-[11px] text-slate-500 flex-shrink-0">🔔 跟追日期</span>
         <input
           type="date"
           value={followUpDate}
           onChange={(e) => setFollowUpDate(e.target.value)}
           className="text-xs px-2 py-1 border border-slate-200 rounded bg-white"
-          placeholder="選填"
         />
         {followUpDate && (
-          <button
-            onClick={() => setFollowUpDate('')}
-            className="text-[10px] text-slate-400 hover:text-rose-500"
-          >
-            清除
-          </button>
+          <button onClick={() => setFollowUpDate('')} className="text-[10px] text-slate-400 hover:text-rose-500">清除</button>
         )}
         <span className="text-[10px] text-slate-400">到期時主頁會提醒</span>
-      </div>
-
-      <div className="flex items-center justify-between mt-2">
-        <button
-          onClick={() => fileRef.current?.click()}
-          className="flex items-center gap-1 text-xs text-slate-600 hover:text-slate-900 px-2 py-1 hover:bg-white rounded"
-        >
-          <ImageIcon className="w-3.5 h-3.5" />
-          附加圖片
-        </button>
-        <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleFileChange} className="hidden" />
-        <div className="flex gap-2">
+        <div className="ml-auto flex gap-2">
           <button onClick={onCancel} className="text-xs px-3 py-1 hover:bg-white rounded">取消</button>
           <button onClick={submit} className="text-xs px-3 py-1 bg-slate-900 text-white rounded">儲存</button>
         </div>
@@ -7039,24 +7176,18 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
         <p className={`text-sm leading-relaxed whitespace-pre-wrap ${isLatest ? 'text-slate-900' : 'text-slate-700'}`}>
           {update.text}
         </p>
-        {update.images && update.images.length > 0 && (
-          <div className="flex gap-2 flex-wrap mt-2">
-            {update.images.map((img, i) => (
-              <button
-                key={i}
-                onClick={() => setPreviewImg(img)}
-                className="block"
-              >
-                <StorageImage
-                  src={img.url || img.dataUrl}
-                  path={img.path}
-                  alt={img.name}
-                  className="w-16 h-16 object-cover rounded border border-slate-200 hover:opacity-90"
-                />
-              </button>
-            ))}
-          </div>
-        )}
+        {/* 附件：優先用新格式 attachments，舊格式 images 轉換相容 */}
+        {(() => {
+          const atts = update.attachments?.length > 0
+            ? update.attachments
+            : (update.images || []).map(img => ({ ...img, kind: 'upload' }));
+          if (atts.length === 0) return null;
+          return (
+            <div className="mt-2">
+              <AttachmentList attachments={atts} onChange={null} readOnly={true} />
+            </div>
+          );
+        })()}
       </div>
       {previewImg && (
         <div

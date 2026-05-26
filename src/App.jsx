@@ -46,10 +46,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.49.0';
-const BUILD_ID = '20260522-1200';
+const APP_VERSION = 'v0.50.0';
+const BUILD_ID = '20260526-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.50.0',
+    date: '2026-05-26',
+    changes: [
+      '🎉 從產品新增樣品時，自動帶入產品主圖（可自行替換或刪除）',
+      '照片區顯示提示「已帶入產品圖，可刪除或替換」',
+      '🎉 樣品庫改為列表式（一橫一橫往下），更方便瀏覽大量樣品',
+      '列表顯示：縮圖、名稱/料號、類型、剩餘/總數、位置、材質、操作',
+      '奇偶列交替底色，庫存為零的樣品半透明',
+    ],
+  },
   {
     version: 'v0.49.0',
     date: '2026-05-22',
@@ -4580,7 +4591,8 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
   };
 
   const startAdd = () => {
-    // 預填此產品的資訊
+    // 預填此產品的資訊，包含產品主圖
+    const productMainImage = (project.productImages || [])[0];
     setEditingSample({
       isNew: true,
       type: '手板',
@@ -4591,6 +4603,8 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
       relatedProjectCode: project.code || '',
       supplier: project.supplier || '',
       initialQuantity: 1,
+      // 自動帶入產品主圖（可在編輯 modal 裡自行替換或刪除）
+      images: productMainImage ? [productMainImage] : [],
     });
   };
 
@@ -4912,90 +4926,94 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
               {filtered.length === 0 ? (
                 <p className="text-center text-sm text-slate-400 py-8">沒有符合條件的樣品</p>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {filtered.map(s => {
+                <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  {/* 標題列 */}
+                  <div className="grid gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold text-slate-500 uppercase tracking-wide"
+                    style={{gridTemplateColumns:'44px 1fr 56px 80px 110px 80px auto'}}>
+                    <span></span>
+                    <span>名稱</span>
+                    <span>類型</span>
+                    <span>剩餘/總數</span>
+                    <span>位置</span>
+                    <span>材質</span>
+                    <span>操作</span>
+                  </div>
+                  {/* 樣品列 */}
+                  {filtered.map((s, idx) => {
                     const mainImage = (s.images || [])[0];
                     const remaining = s._remaining;
                     const isOut = remaining === 0;
                     return (
                       <div
                         key={s.id}
-                        className={`bg-white border rounded-lg p-3 flex gap-3 ${isOut ? 'opacity-60 border-rose-200' : 'border-slate-200 hover:border-amber-400'} transition`}
+                        className={`grid gap-2 px-3 py-2 items-center border-b border-slate-100 last:border-0 transition ${
+                          isOut ? 'opacity-50 bg-white' : idx % 2 === 0 ? 'bg-white hover:bg-amber-50/30' : 'bg-slate-50/60 hover:bg-amber-50/30'
+                        }`}
+                        style={{gridTemplateColumns:'44px 1fr 56px 80px 110px 80px auto'}}
                       >
-                        {/* 圖片/影片縮圖 */}
-                        <div className="flex-shrink-0 w-20 h-20 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
+                        {/* 縮圖 */}
+                        <div className="w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center flex-shrink-0">
                           <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                         </div>
-                        {/* 資訊 */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-baseline justify-between gap-2 mb-1">
-                            <div className="flex items-baseline gap-1.5 flex-wrap min-w-0">
-                              <span className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</span>
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
-                            </div>
-                          </div>
-                          <div className="flex items-baseline gap-3 mb-1 flex-wrap text-sm">
-                            <span className="font-medium">
-                              剩餘 <span className={`text-base ${isOut ? 'text-rose-600' : remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}`}>{remaining}</span>
-                              <span className="text-slate-400 text-xs"> / {s.initialQuantity || 0}</span>
-                            </span>
-                            {s.location && (
-                              <span className="text-emerald-700 text-xs">📍 {s.location}</span>
-                            )}
-                          </div>
-                          <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-2 gap-y-0.5">
+
+                        {/* 名稱 + 料號 */}
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5">
                             {s._displayCode && (
-                              <button
-                                onClick={() => onJumpToProject(s.relatedProjectId)}
-                                className="text-blue-600 hover:underline"
-                              >
+                              <button onClick={() => onJumpToProject(s.relatedProjectId)} className="text-[10px] text-blue-600 hover:underline font-mono">
                                 {s._displayCode}
                               </button>
                             )}
-                            {s.material && <span>{s.material}</span>}
-                            {s.idVersion && <span className="text-blue-600">ID {s.idVersion}</span>}
-                            {s.threeDVersion && <span className="text-purple-600">3D {s.threeDVersion}</span>}
-                            {s.source && <span className="text-slate-400">· {s.source}</span>}
+                            {s.idVersion && <span className="text-[10px] text-blue-500">ID {s.idVersion}</span>}
+                            {s.threeDVersion && <span className="text-[10px] text-purple-500">3D {s.threeDVersion}</span>}
                           </div>
-                          {s.orderNote && (
-                            <p className="text-[11px] text-amber-600 mt-1 line-clamp-1">📋 {s.orderNote}</p>
+                        </div>
+
+                        {/* 類型 */}
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border text-center ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>
+                          {s.type}
+                        </span>
+
+                        {/* 剩餘/總數 */}
+                        <span className="text-sm font-semibold tabular-nums">
+                          <span className={isOut ? 'text-rose-600' : remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}>{remaining}</span>
+                          <span className="text-slate-400 text-xs font-normal"> / {s.initialQuantity || 0}</span>
+                        </span>
+
+                        {/* 位置 */}
+                        <span className="text-xs text-emerald-700 truncate">
+                          {s.location ? `📍 ${s.location}` : <span className="text-slate-300">—</span>}
+                        </span>
+
+                        {/* 材質 */}
+                        <span className="text-xs text-slate-600 truncate">{s.material || <span className="text-slate-300">—</span>}</span>
+
+                        {/* 操作按鈕 */}
+                        <div className="flex gap-1 items-center flex-shrink-0">
+                          {canEdit && remaining > 0 && (
+                            <button
+                              onClick={() => setWithdrawingSample(s)}
+                              className="text-[11px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100"
+                            >
+                              領用
+                            </button>
                           )}
-                          {s.notes && <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">{s.notes}</p>}
-                          {/* 操作按鈕 */}
-                          <div className="flex gap-1 mt-2 flex-wrap">
-                            {canEdit && remaining > 0 && (
-                              <button
-                                onClick={() => setWithdrawingSample(s)}
-                                className="text-xs px-2 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100"
-                              >
-                                📝 領用
-                              </button>
-                            )}
-                            {canEdit && (
-                              <button
-                                onClick={() => setEditingSample(s)}
-                                className="text-xs px-2 py-1 text-slate-500 hover:bg-slate-100 rounded"
-                              >
-                                <Edit2 className="w-3 h-3" />
-                              </button>
-                            )}
-                            {s.relatedProjectId && (
-                              <button
-                                onClick={() => onJumpToProject(s.relatedProjectId)}
-                                className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded"
-                              >
-                                看產品 →
-                              </button>
-                            )}
-                            {canEdit && !s.autoSynced && (
-                              <button
-                                onClick={() => handleDeleteSample(s)}
-                                className="text-xs px-2 py-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 rounded"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            )}
-                          </div>
+                          {canEdit && (
+                            <button onClick={() => setEditingSample(s)} className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded">
+                              <Edit2 className="w-3 h-3" />
+                            </button>
+                          )}
+                          {s.relatedProjectId && (
+                            <button onClick={() => onJumpToProject(s.relatedProjectId)} className="p-1 text-blue-400 hover:text-blue-700 hover:bg-blue-50 rounded" title="看產品">
+                              <ChevronRight className="w-3 h-3" />
+                            </button>
+                          )}
+                          {canEdit && !s.autoSynced && (
+                            <button onClick={() => handleDeleteSample(s)} className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded">
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -5686,7 +5704,9 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="block text-xs text-slate-600">照片</label>
-              <span className="text-[10px] text-slate-400">{pasteHint && '· Ctrl+V 貼上'}</span>
+              <span className="text-[10px] text-slate-400">
+                {data.images?.length > 0 && sample.isNew ? '已帶入產品圖，可刪除或替換' : pasteHint ? '· Ctrl+V 貼上' : ''}
+              </span>
             </div>
             {(data.images || []).length > 0 && (
               <div className="grid grid-cols-4 gap-1.5 mb-1.5">

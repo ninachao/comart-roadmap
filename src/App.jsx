@@ -46,8 +46,8 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.55.0';
-const BUILD_ID = '20260526-2300';
+const APP_VERSION = 'v0.56.0';
+const BUILD_ID = '20260526-2350';
 
 const VERSION_HISTORY = [
   {
@@ -5127,106 +5127,104 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
               {filtered.length === 0 ? (
                 <p className="text-center text-sm text-slate-400 py-8">沒有符合條件的樣品</p>
               ) : (
-                <div className="border border-slate-200 rounded-lg overflow-hidden overflow-x-auto">
-                  {/* 標題列 */}
-                  <div className="grid gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold text-slate-500 uppercase tracking-wide min-w-[600px]"
-                    style={{gridTemplateColumns:'44px minmax(160px,1fr) 60px 76px 110px 76px 100px'}}>
+                <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  {/* 桌面：表格標題列（sm 以上顯示） */}
+                  <div className="hidden sm:grid gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold text-slate-500 uppercase tracking-wide"
+                    style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(80px,120px) 90px'}}>
                     <span></span>
                     <span>名稱</span>
                     <span>類型</span>
                     <span>剩餘/總數</span>
                     <span>位置</span>
-                    <span>材質</span>
                     <span>操作</span>
                   </div>
-                  {/* 樣品列 */}
+
                   {filtered.map((s, idx) => {
                     const mainImage = (s.images || [])[0];
                     const remaining = s._remaining;
                     const isOut = remaining === 0;
-                    return (
+                    const rowBg = isOut ? 'opacity-50 bg-white' : idx % 2 === 0 ? 'bg-white hover:bg-amber-50/30' : 'bg-slate-50/60 hover:bg-amber-50/30';
+
+                    const thumbEl = (
                       <div
-                        key={s.id}
-                        className={`grid gap-2 px-3 py-2 items-center border-b border-slate-100 last:border-0 transition min-w-[600px] ${
-                          isOut ? 'opacity-50 bg-white' : idx % 2 === 0 ? 'bg-white hover:bg-amber-50/30' : 'bg-slate-50/60 hover:bg-amber-50/30'
-                        }`}
-                        style={{gridTemplateColumns:'44px minmax(160px,1fr) 60px 76px 110px 76px 100px'}}
+                        className="w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center flex-shrink-0 cursor-zoom-in hover:border-amber-400 hover:shadow-md transition relative"
+                        onClick={() => { const imgs = s.images || []; if (imgs.length > 0) setViewingGallery({ images: imgs, index: 0 }); }}
+                        title={`點擊放大（共 ${(s.images || []).length} 張）`}
                       >
-                        {/* 縮圖 — 點擊放大，hover 顯示放大提示 */}
-                        <div
-                          className="w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center flex-shrink-0 cursor-zoom-in hover:border-amber-400 hover:shadow-md transition group/thumb relative"
-                          onClick={() => {
-                            const imgs = s.images || [];
-                            if (imgs.length > 0) setViewingGallery({ images: imgs, index: 0 });
-                          }}
-                          title={`點擊放大（共 ${(s.images || []).length} 張）`}
-                        >
-                          <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
-                          {(s.images || []).length > 1 && (
-                            <span className="absolute bottom-0 right-0 text-[9px] bg-slate-800/70 text-white px-0.5 rounded-tl">
-                              {(s.images || []).length}
-                            </span>
-                          )}
-                        </div>
+                        <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
+                        {(s.images || []).length > 1 && (
+                          <span className="absolute bottom-0 right-0 text-[9px] bg-slate-800/70 text-white px-0.5 rounded-tl">{(s.images || []).length}</span>
+                        )}
+                      </div>
+                    );
 
-                        {/* 名稱 + 料號 */}
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            {s._displayCode && (
-                              <button onClick={() => onJumpToProject(s.relatedProjectId)} className="text-[10px] text-blue-600 hover:underline font-mono">
-                                {s._displayCode}
-                              </button>
-                            )}
-                            {s.idVersion && <span className="text-[10px] text-blue-500">ID {s.idVersion}</span>}
-                            {s.threeDVersion && <span className="text-[10px] text-purple-500">3D {s.threeDVersion}</span>}
+                    const actionBtns = (
+                      <div className="flex gap-1 items-center">
+                        {canEdit && remaining > 0 && (
+                          <button onClick={() => setWithdrawingSample(s)} className="text-[11px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 whitespace-nowrap">領用</button>
+                        )}
+                        {canEdit && (
+                          <button onClick={() => setEditingSample(s)} className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded"><Edit2 className="w-3 h-3" /></button>
+                        )}
+                        {s.relatedProjectId && (
+                          <button onClick={() => onJumpToProject(s.relatedProjectId)} className="p-1 text-blue-400 hover:text-blue-700 hover:bg-blue-50 rounded" title="看產品"><ChevronRight className="w-3 h-3" /></button>
+                        )}
+                        {canEdit && (
+                          <button onClick={() => handleDeleteSample(s)} className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded"><Trash2 className="w-3 h-3" /></button>
+                        )}
+                      </div>
+                    );
+
+                    return (
+                      <div key={s.id} className={`border-b border-slate-100 last:border-0 transition ${rowBg}`}>
+                        {/* 桌面列（sm 以上） */}
+                        <div className="hidden sm:grid gap-2 px-3 py-2 items-center"
+                          style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(80px,120px) 90px'}}>
+                          {thumbEl}
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</p>
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              {s._displayCode && <button onClick={() => onJumpToProject(s.relatedProjectId)} className="text-[10px] text-blue-600 hover:underline font-mono">{s._displayCode}</button>}
+                              {s.idVersion && <span className="text-[10px] text-blue-500">ID {s.idVersion}</span>}
+                              {s.threeDVersion && <span className="text-[10px] text-purple-500">3D {s.threeDVersion}</span>}
+                            </div>
                           </div>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded border text-center ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
+                          <span className="text-sm font-semibold tabular-nums">
+                            <span className={isOut ? 'text-rose-600' : remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}>{remaining}</span>
+                            <span className="text-slate-400 text-xs font-normal"> / {s._effectiveTotal ?? s.initialQuantity ?? 0}</span>
+                          </span>
+                          <span className="text-xs text-emerald-700 truncate">{s.location ? `📍 ${s.location}` : <span className="text-slate-300">—</span>}</span>
+                          {actionBtns}
                         </div>
 
-                        {/* 類型 */}
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded border text-center ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>
-                          {s.type}
-                        </span>
-
-                        {/* 剩餘/總數 */}
-                        <span className="text-sm font-semibold tabular-nums">
-                          <span className={isOut ? 'text-rose-600' : remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}>{remaining}</span>
-                          <span className="text-slate-400 text-xs font-normal"> / {s._effectiveTotal ?? s.initialQuantity ?? 0}</span>
-                        </span>
-
-                        {/* 位置 */}
-                        <span className="text-xs text-emerald-700 truncate">
-                          {s.location ? `📍 ${s.location}` : <span className="text-slate-300">—</span>}
-                        </span>
-
-                        {/* 材質 */}
-                        <span className="text-xs text-slate-600 truncate">{s.material || <span className="text-slate-300">—</span>}</span>
-
-                        {/* 操作按鈕 */}
-                        <div className="flex gap-1 items-center">
-                          {canEdit && remaining > 0 && (
-                            <button
-                              onClick={() => setWithdrawingSample(s)}
-                              className="text-[11px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 whitespace-nowrap"
-                            >
-                              領用
-                            </button>
-                          )}
-                          {canEdit && (
-                            <button onClick={() => setEditingSample(s)} className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded">
-                              <Edit2 className="w-3 h-3" />
-                            </button>
-                          )}
-                          {s.relatedProjectId && (
-                            <button onClick={() => onJumpToProject(s.relatedProjectId)} className="p-1 text-blue-400 hover:text-blue-700 hover:bg-blue-50 rounded" title="看產品">
-                              <ChevronRight className="w-3 h-3" />
-                            </button>
-                          )}
-                          {canEdit && (
-                            <button onClick={() => handleDeleteSample(s)} className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded">
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          )}
+                        {/* 手機卡片式（sm 以下） */}
+                        <div className="sm:hidden flex gap-2.5 p-3 items-start">
+                          {thumbEl}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-1 mb-0.5">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</p>
+                                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                  {s._displayCode && <button onClick={() => onJumpToProject(s.relatedProjectId)} className="text-[10px] text-blue-600 hover:underline font-mono">{s._displayCode}</button>}
+                                  {s.idVersion && <span className="text-[10px] text-blue-500">ID {s.idVersion}</span>}
+                                  {s.threeDVersion && <span className="text-[10px] text-purple-500">3D {s.threeDVersion}</span>}
+                                </div>
+                              </div>
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0 ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-2 mt-1">
+                              <div className="flex items-center gap-2 text-xs text-slate-500 flex-wrap">
+                                <span className="font-semibold">
+                                  <span className={isOut ? 'text-rose-600' : remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}>{remaining}</span>
+                                  <span className="text-slate-400 font-normal"> / {s._effectiveTotal ?? s.initialQuantity ?? 0}</span>
+                                </span>
+                                {s.location && <span className="text-emerald-700">📍 {s.location}</span>}
+                                {s.material && <span>{s.material}</span>}
+                              </div>
+                              {actionBtns}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     );

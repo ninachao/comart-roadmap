@@ -4663,19 +4663,20 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
                         >
                           <Edit2 className="w-3 h-3" />
                         </button>
-                        {!s.autoSynced && (
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              if (!confirm(`確定刪除「${s.name}」嗎？`)) return;
-                              await deleteDoc(doc(db, SAMPLES_COL, s.id));
-                            }}
-                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-white rounded"
-                            title="刪除"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        )}
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            const msg = s.autoSynced
+                              ? `「${s.name}」是由手板訂單自動同步的樣品。\n確定刪除嗎？（手板訂單本身不受影響）`
+                              : `確定刪除「${s.name}」嗎？`;
+                            if (!confirm(msg)) return;
+                            await deleteDoc(doc(db, SAMPLES_COL, s.id));
+                          }}
+                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-white rounded"
+                          title="刪除"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
                       </div>
                     )}
                   </div>
@@ -4815,11 +4816,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   };
 
   const handleDeleteSample = async (sample) => {
-    if (sample.autoSynced) {
-      alert('此樣品由「手板訂單」自動同步，請到對應產品專案編輯，不能在此直接刪除。');
-      return;
-    }
-    if (!confirm(`確定刪除「${sample.name}」嗎？相關領用紀錄會保留作為歷史。`)) return;
+    const msg = sample.autoSynced
+      ? `「${sample.name}」是由手板訂單自動同步的樣品。\n確定要刪除嗎？（手板訂單本身不受影響）`
+      : `確定刪除「${sample.name}」嗎？相關領用紀錄會保留作為歷史。`;
+    if (!confirm(msg)) return;
     await deleteDoc(doc(db, SAMPLES_COL, sample.id));
   };
 
@@ -5061,7 +5061,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                               <ChevronRight className="w-3 h-3" />
                             </button>
                           )}
-                          {canEdit && !s.autoSynced && (
+                          {canEdit && (
                             <button onClick={() => handleDeleteSample(s)} className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded">
                               <Trash2 className="w-3 h-3" />
                             </button>

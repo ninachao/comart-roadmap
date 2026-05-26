@@ -46,8 +46,8 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.51.0';
-const BUILD_ID = '20260526-1400';
+const APP_VERSION = 'v0.51.2';
+const BUILD_ID = '20260526-1600';
 
 const VERSION_HISTORY = [
   {
@@ -2705,6 +2705,13 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             materialCode={project.materialCodeNumber || ''}
             onChange={(v) => onUpdateField('materialCodeStatus', v)}
             onCodeChange={(v) => onUpdateField('materialCodeNumber', v)}
+          />
+
+          {/* 開發費用摘要 */}
+          <DevCostSection
+            project={project}
+            isViewer={isViewer}
+            onUpdateField={onUpdateField}
           />
 
           <section>
@@ -7097,6 +7104,182 @@ function TrialRunForm({ data, availableRounds, onChange, onCancel, onSave }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ============= 開發費用摘要 =============
+function DevCostSection({ project, isViewer, onUpdateField }) {
+  const [adding, setAdding] = useState(false);
+  const [newItem, setNewItem] = useState({ label: '', amount: '', currency: 'TWD', note: '' });
+
+  // 從手板訂單加總
+  const protoTotal = useMemo(() => {
+    return (project.prototypeOrders || []).reduce((sum, o) => {
+      if ((o.currency || 'TWD') !== 'TWD') return sum; // 非 TWD 暫不換算
+      return sum + (Number(o.quantity || 0) * Number(o.unitPrice || 0));
+    }, 0);
+  }, [project.prototypeOrders]);
+
+  // 從手板樣品的訂單欄位加總（RelatedSamplesSection 新增的手板）
+  const sampleProtoTotal = useMemo(() => {
+    return 0; // 樣品的費用存在 samples collection，這裡先不加總
+  }, []);
+
+  // 從模具訂單加總
+  const mouldTotal = useMemo(() => {
+    return (project.mouldOrders || []).reduce((sum, o) => {
+      if ((o.currency || 'TWD') !== 'TWD') return sum;
+      return sum + (Number(o.quantity || 0) * Number(o.unitPrice || 0));
+    }, 0);
+  }, [project.mouldOrders]);
+
+  // 手動輸入的其他費用
+  const extraItems = project.devCostItems || [];
+
+  const extraTotal = extraItems.reduce((sum, item) => {
+    if ((item.currency || 'TWD') !== 'TWD') return sum;
+    return sum + Number(item.amount || 0);
+  }, 0);
+
+  const grandTotal = protoTotal + mouldTotal + extraTotal;
+
+  const handleAddItem = () => {
+    if (!newItem.label.trim() || !newItem.amount) return;
+    const updated = [...extraItems, { ...newItem, id: `cost_${Date.now()}`, amount: Number(newItem.amount) }];
+    onUpdateField('devCostItems', updated);
+    setNewItem({ label: '', amount: '', currency: 'TWD', note: '' });
+    setAdding(false);
+  };
+
+  const handleDeleteItem = (id) => {
+    onUpdateField('devCostItems', extraItems.filter(i => i.id !== id));
+  };
+
+  const hasAnyNonTWD = [
+    ...(project.prototypeOrders || []),
+    ...(project.mouldOrders || []),
+    ...extraItems,
+  ].some(o => o.currency && o.currency !== 'TWD');
+
+  return (
+    <section>
+      <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide mb-2">💰 開發費用</h3>
+      <div className="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
+
+        {/* 手板費用列 */}
+        {(project.prototypeOrders || []).length > 0 && (
+          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100">
+            <span className="text-xs text-slate-600">手板費用（{project.prototypeOrders.length} 筆訂單）</span>
+            <span className="text-sm font-medium tabular-nums text-slate-800">
+              {protoTotal.toLocaleString()} TWD
+            </span>
+          </div>
+        )}
+
+        {/* 模具費用列 */}
+        {(project.mouldOrders || []).length > 0 && (
+          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100">
+            <span className="text-xs text-slate-600">模具費用（{project.mouldOrders.length} 筆訂單）</span>
+            <span className="text-sm font-medium tabular-nums text-slate-800">
+              {mouldTotal.toLocaleString()} TWD
+            </span>
+          </div>
+        )}
+
+        {/* 其他費用 */}
+        {extraItems.map(item => (
+          <div key={item.id} className="flex items-center justify-between px-3 py-2 border-b border-slate-100 group">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-xs text-slate-600 truncate">{item.label}</span>
+              {item.note && <span className="text-[10px] text-slate-400 truncate">· {item.note}</span>}
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="text-sm font-medium tabular-nums text-slate-800">
+                {Number(item.amount).toLocaleString()} {item.currency}
+              </span>
+              {!isViewer && (
+                <button
+                  onClick={() => handleDeleteItem(item.id)}
+                  className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-300 hover:text-rose-600 transition"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {/* 新增其他費用 */}
+        {!isViewer && adding && (
+          <div className="px-3 py-2 border-b border-slate-100 bg-white space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="text"
+                value={newItem.label}
+                onChange={e => setNewItem(p => ({ ...p, label: e.target.value }))}
+                placeholder="費用名稱（設計費、試模費...）"
+                className="px-2 py-1 text-xs border border-slate-200 rounded col-span-2"
+                autoFocus
+              />
+              <div className="flex gap-1">
+                <input
+                  type="number"
+                  min="0"
+                  value={newItem.amount}
+                  onChange={e => setNewItem(p => ({ ...p, amount: e.target.value }))}
+                  placeholder="金額"
+                  className="flex-1 px-2 py-1 text-xs border border-slate-200 rounded"
+                />
+                <select
+                  value={newItem.currency}
+                  onChange={e => setNewItem(p => ({ ...p, currency: e.target.value }))}
+                  className="px-1 py-1 text-xs border border-slate-200 rounded bg-white"
+                >
+                  <option value="TWD">TWD</option>
+                  <option value="USD">USD</option>
+                  <option value="CNY">CNY</option>
+                  <option value="VND">VND</option>
+                </select>
+              </div>
+              <input
+                type="text"
+                value={newItem.note}
+                onChange={e => setNewItem(p => ({ ...p, note: e.target.value }))}
+                placeholder="備註（選填）"
+                className="px-2 py-1 text-xs border border-slate-200 rounded"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setAdding(false)} className="text-xs px-2 py-1 hover:bg-slate-100 rounded">取消</button>
+              <button onClick={handleAddItem} className="text-xs px-3 py-1 bg-slate-900 text-white rounded">新增</button>
+            </div>
+          </div>
+        )}
+
+        {/* 加入其他費用按鈕 */}
+        {!isViewer && !adding && (
+          <button
+            onClick={() => setAdding(true)}
+            className="w-full px-3 py-1.5 text-[11px] text-blue-600 hover:bg-blue-50 flex items-center gap-1 border-b border-slate-100"
+          >
+            <Plus className="w-3 h-3" />加入其他費用（設計費、試模費、雜費等）
+          </button>
+        )}
+
+        {/* 總計 */}
+        <div className="flex items-center justify-between px-3 py-2.5 bg-slate-100">
+          <span className="text-xs font-semibold text-slate-700">開發費用總計</span>
+          <div className="text-right">
+            <span className="text-base font-bold text-slate-900 tabular-nums">
+              {grandTotal.toLocaleString()} TWD
+            </span>
+            {hasAnyNonTWD && (
+              <p className="text-[10px] text-slate-400">（非 TWD 費用未計入）</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 

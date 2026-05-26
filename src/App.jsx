@@ -4653,32 +4653,46 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
                       <span className="text-sm font-medium text-slate-900">{s.name}</span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
                     </div>
-                    {/* 操作按鈕 */}
-                    {!readOnly && (
-                      <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setEditingSample(s); }}
-                          className="p-1 text-slate-400 hover:text-slate-700 hover:bg-white rounded"
-                          title="編輯"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            const msg = s.autoSynced
-                              ? `「${s.name}」是由手板訂單自動同步的樣品。\n確定刪除嗎？（手板訂單本身不受影響）`
-                              : `確定刪除「${s.name}」嗎？`;
-                            if (!confirm(msg)) return;
-                            await deleteDoc(doc(db, SAMPLES_COL, s.id));
-                          }}
-                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-white rounded"
-                          title="刪除"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    )}
+                    <div className="flex items-start gap-2 flex-shrink-0">
+                      {/* 價格顯示（有單價才顯示） */}
+                      {s.unitPrice && (
+                        <div className="text-right">
+                          <div className="text-sm font-bold text-slate-800 tabular-nums">
+                            {(Number(s.unitPrice) * Number(s.initialQuantity || 1)).toLocaleString()}
+                            <span className="text-xs font-normal text-slate-400 ml-1">{s.currency || 'TWD'}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 tabular-nums">
+                            {s.initialQuantity || 1} × {Number(s.unitPrice).toLocaleString()}
+                          </div>
+                        </div>
+                      )}
+                      {/* 操作按鈕 */}
+                      {!readOnly && (
+                        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setEditingSample(s); }}
+                            className="p-1 text-slate-400 hover:text-slate-700 hover:bg-white rounded"
+                            title="編輯"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const msg = s.autoSynced
+                                ? `「${s.name}」是由手板訂單自動同步的樣品。\n確定刪除嗎？（手板訂單本身不受影響）`
+                                : `確定刪除「${s.name}」嗎？`;
+                              if (!confirm(msg)) return;
+                              await deleteDoc(doc(db, SAMPLES_COL, s.id));
+                            }}
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-white rounded"
+                            title="刪除"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-baseline gap-3 mb-0.5 text-xs">
                     <span className="font-medium">
@@ -5488,6 +5502,7 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
     unitPrice: sample.unitPrice || '',
     currency: sample.currency || 'TWD',
     supplier: sample.supplier || '',
+    partNo: sample.partNo || '',
     orderNote: sample.orderNote || '',
     ...sample,
   });
@@ -5790,6 +5805,16 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                       : '—'}
                   </div>
                 </div>
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-500 mb-0.5">手板料號</label>
+                <input
+                  type="text"
+                  value={data.partNo}
+                  onChange={(e) => setData(prev => ({ ...prev, partNo: e.target.value }))}
+                  placeholder="PT-XXXX"
+                  className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
+                />
               </div>
               <div>
                 <label className="block text-[10px] text-slate-500 mb-0.5">供應商</label>
@@ -7112,36 +7137,47 @@ function DevCostSection({ project, isViewer, onUpdateField }) {
   const [adding, setAdding] = useState(false);
   const [newItem, setNewItem] = useState({ label: '', amount: '', currency: 'TWD', note: '' });
 
-  // 從手板訂單加總
-  const protoTotal = useMemo(() => {
-    return (project.prototypeOrders || []).reduce((sum, o) => {
-      if ((o.currency || 'TWD') !== 'TWD') return sum; // 非 TWD 暫不換算
-      return sum + (Number(o.quantity || 0) * Number(o.unitPrice || 0));
-    }, 0);
-  }, [project.prototypeOrders]);
-
-  // 從手板樣品的訂單欄位加總（RelatedSamplesSection 新增的手板）
-  const sampleProtoTotal = useMemo(() => {
-    return 0; // 樣品的費用存在 samples collection，這裡先不加總
-  }, []);
-
-  // 從模具訂單加總
-  const mouldTotal = useMemo(() => {
-    return (project.mouldOrders || []).reduce((sum, o) => {
-      if ((o.currency || 'TWD') !== 'TWD') return sum;
-      return sum + (Number(o.quantity || 0) * Number(o.unitPrice || 0));
-    }, 0);
-  }, [project.mouldOrders]);
-
-  // 手動輸入的其他費用
   const extraItems = project.devCostItems || [];
 
-  const extraTotal = extraItems.reduce((sum, item) => {
-    if ((item.currency || 'TWD') !== 'TWD') return sum;
-    return sum + Number(item.amount || 0);
-  }, 0);
+  // 把所有費用按幣別分組加總
+  const totalsByCurrency = useMemo(() => {
+    const map = {};
 
-  const grandTotal = protoTotal + mouldTotal + extraTotal;
+    // 手板訂單
+    (project.prototypeOrders || []).forEach(o => {
+      const cur = o.currency || 'TWD';
+      const amt = Number(o.quantity || 0) * Number(o.unitPrice || 0);
+      if (amt === 0) return;
+      if (!map[cur]) map[cur] = { proto: 0, mould: 0, extra: 0 };
+      map[cur].proto += amt;
+    });
+
+    // 模具訂單
+    (project.mouldOrders || []).forEach(o => {
+      const cur = o.currency || 'TWD';
+      const amt = Number(o.quantity || 0) * Number(o.unitPrice || 0);
+      if (amt === 0) return;
+      if (!map[cur]) map[cur] = { proto: 0, mould: 0, extra: 0 };
+      map[cur].mould += amt;
+    });
+
+    // 其他費用
+    extraItems.forEach(item => {
+      const cur = item.currency || 'TWD';
+      const amt = Number(item.amount || 0);
+      if (amt === 0) return;
+      if (!map[cur]) map[cur] = { proto: 0, mould: 0, extra: 0 };
+      map[cur].extra += amt;
+    });
+
+    return map;
+  }, [project.prototypeOrders, project.mouldOrders, extraItems]);
+
+  // 各幣別總計
+  const grandTotals = Object.entries(totalsByCurrency).map(([cur, v]) => ({
+    currency: cur,
+    total: v.proto + v.mould + v.extra,
+  }));
 
   const handleAddItem = () => {
     if (!newItem.label.trim() || !newItem.amount) return;
@@ -7155,36 +7191,50 @@ function DevCostSection({ project, isViewer, onUpdateField }) {
     onUpdateField('devCostItems', extraItems.filter(i => i.id !== id));
   };
 
-  const hasAnyNonTWD = [
-    ...(project.prototypeOrders || []),
-    ...(project.mouldOrders || []),
-    ...extraItems,
-  ].some(o => o.currency && o.currency !== 'TWD');
+  const hasProto = (project.prototypeOrders || []).some(o => Number(o.quantity || 0) * Number(o.unitPrice || 0) > 0);
+  const hasMould = (project.mouldOrders || []).some(o => Number(o.quantity || 0) * Number(o.unitPrice || 0) > 0);
+  const hasAny = hasProto || hasMould || extraItems.length > 0;
+
+  // 各幣別手板/模具明細
+  const protoByCur = {};
+  (project.prototypeOrders || []).forEach(o => {
+    const cur = o.currency || 'TWD';
+    const amt = Number(o.quantity || 0) * Number(o.unitPrice || 0);
+    if (!amt) return;
+    protoByCur[cur] = (protoByCur[cur] || 0) + amt;
+  });
+  const mouldByCur = {};
+  (project.mouldOrders || []).forEach(o => {
+    const cur = o.currency || 'TWD';
+    const amt = Number(o.quantity || 0) * Number(o.unitPrice || 0);
+    if (!amt) return;
+    mouldByCur[cur] = (mouldByCur[cur] || 0) + amt;
+  });
 
   return (
     <section>
       <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide mb-2">💰 開發費用</h3>
       <div className="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
 
-        {/* 手板費用列 */}
-        {(project.prototypeOrders || []).length > 0 && (
-          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100">
-            <span className="text-xs text-slate-600">手板費用（{project.prototypeOrders.length} 筆訂單）</span>
+        {/* 手板費用（按幣別） */}
+        {Object.entries(protoByCur).map(([cur, amt]) => (
+          <div key={`proto-${cur}`} className="flex items-center justify-between px-3 py-2 border-b border-slate-100">
+            <span className="text-xs text-slate-600">手板費用（{(project.prototypeOrders || []).filter(o => (o.currency || 'TWD') === cur).length} 筆）</span>
             <span className="text-sm font-medium tabular-nums text-slate-800">
-              {protoTotal.toLocaleString()} TWD
+              {amt.toLocaleString()} <span className="text-xs text-slate-400">{cur}</span>
             </span>
           </div>
-        )}
+        ))}
 
-        {/* 模具費用列 */}
-        {(project.mouldOrders || []).length > 0 && (
-          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100">
-            <span className="text-xs text-slate-600">模具費用（{project.mouldOrders.length} 筆訂單）</span>
+        {/* 模具費用（按幣別） */}
+        {Object.entries(mouldByCur).map(([cur, amt]) => (
+          <div key={`mould-${cur}`} className="flex items-center justify-between px-3 py-2 border-b border-slate-100">
+            <span className="text-xs text-slate-600">模具費用（{(project.mouldOrders || []).filter(o => (o.currency || 'TWD') === cur).length} 筆）</span>
             <span className="text-sm font-medium tabular-nums text-slate-800">
-              {mouldTotal.toLocaleString()} TWD
+              {amt.toLocaleString()} <span className="text-xs text-slate-400">{cur}</span>
             </span>
           </div>
-        )}
+        ))}
 
         {/* 其他費用 */}
         {extraItems.map(item => (
@@ -7195,13 +7245,10 @@ function DevCostSection({ project, isViewer, onUpdateField }) {
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <span className="text-sm font-medium tabular-nums text-slate-800">
-                {Number(item.amount).toLocaleString()} {item.currency}
+                {Number(item.amount).toLocaleString()} <span className="text-xs text-slate-400">{item.currency}</span>
               </span>
               {!isViewer && (
-                <button
-                  onClick={() => handleDeleteItem(item.id)}
-                  className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-300 hover:text-rose-600 transition"
-                >
+                <button onClick={() => handleDeleteItem(item.id)} className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-300 hover:text-rose-600 transition">
                   <X className="w-3 h-3" />
                 </button>
               )}
@@ -7209,7 +7256,7 @@ function DevCostSection({ project, isViewer, onUpdateField }) {
           </div>
         ))}
 
-        {/* 新增其他費用 */}
+        {/* 新增其他費用表單 */}
         {!isViewer && adding && (
           <div className="px-3 py-2 border-b border-slate-100 bg-white space-y-2">
             <div className="grid grid-cols-2 gap-2">
@@ -7258,25 +7305,32 @@ function DevCostSection({ project, isViewer, onUpdateField }) {
 
         {/* 加入其他費用按鈕 */}
         {!isViewer && !adding && (
-          <button
-            onClick={() => setAdding(true)}
-            className="w-full px-3 py-1.5 text-[11px] text-blue-600 hover:bg-blue-50 flex items-center gap-1 border-b border-slate-100"
-          >
+          <button onClick={() => setAdding(true)} className="w-full px-3 py-1.5 text-[11px] text-blue-600 hover:bg-blue-50 flex items-center gap-1 border-b border-slate-100">
             <Plus className="w-3 h-3" />加入其他費用（設計費、試模費、雜費等）
           </button>
         )}
 
-        {/* 總計 */}
-        <div className="flex items-center justify-between px-3 py-2.5 bg-slate-100">
-          <span className="text-xs font-semibold text-slate-700">開發費用總計</span>
-          <div className="text-right">
-            <span className="text-base font-bold text-slate-900 tabular-nums">
-              {grandTotal.toLocaleString()} TWD
-            </span>
-            {hasAnyNonTWD && (
-              <p className="text-[10px] text-slate-400">（非 TWD 費用未計入）</p>
-            )}
+        {/* 總計（按幣別分開） */}
+        <div className="px-3 py-2.5 bg-slate-100">
+          <div className="flex items-baseline justify-between mb-1">
+            <span className="text-xs font-semibold text-slate-700">開發費用總計</span>
+            {!hasAny && <span className="text-sm text-slate-400">尚無費用紀錄</span>}
           </div>
+          {grandTotals.length > 0 ? (
+            <div className="space-y-0.5 text-right">
+              {grandTotals.map(({ currency, total }) => (
+                <div key={currency} className="flex items-baseline justify-end gap-1.5">
+                  <span className="text-base font-bold text-slate-900 tabular-nums">{total.toLocaleString()}</span>
+                  <span className="text-xs text-slate-500">{currency}</span>
+                </div>
+              ))}
+              {grandTotals.length > 1 && (
+                <p className="text-[10px] text-slate-400 mt-1">多幣別費用分開計算，未做匯率換算</p>
+              )}
+            </div>
+          ) : (
+            <p className="text-[10px] text-slate-400">新增手板/模具訂單或其他費用後自動計算</p>
+          )}
         </div>
       </div>
     </section>

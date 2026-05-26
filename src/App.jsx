@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Search, Plus, X, Edit2, Trash2, Download, Upload, ChevronDown, ChevronRight, Image as ImageIcon, Calendar, Tag, AlertCircle, Filter, MessageSquare, Info, LogOut, Lock, Eye, EyeOff, FileText, Loader } from 'lucide-react';
+import { Search, Plus, X, Edit2, Trash2, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Image as ImageIcon, Calendar, Tag, AlertCircle, Filter, MessageSquare, Info, LogOut, Lock, Eye, EyeOff, FileText, Loader } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -46,19 +46,29 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.51.2';
-const BUILD_ID = '20260526-1600';
+const APP_VERSION = 'v0.53.0';
+const BUILD_ID = '20260526-2000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.52.0',
+    date: '2026-05-26',
+    changes: [
+      '🎉 相關樣品（含手板）卡片右側加價格顯示（單價×數量，有填才顯示）',
+      '🎉 手板樣品表單加「手板料號」欄位',
+      '🔧 開發費用改支援多幣別：各幣別分開加總顯示，不強制換算',
+      '🔧 樣品刪除限制放開：autoSynced 的樣品也可以刪（刪前會提醒）',
+    ],
+  },
   {
     version: 'v0.51.0',
     date: '2026-05-26',
     changes: [
-      '🔧 手板訂單卡片顯示顯眼總價（大字右側，下方小字顯示數量×單價）',
-      '🔧 模具訂單卡片同樣改法',
-      '🎉 相關樣品（含手板）新增時：手板訂單欄位升級，可填訂單號、下單日、單價、幣別、供應商，自動算總價',
-      '🔧 相關樣品卡片加刪除按鈕（hover 顯示，autoSynced 的不能刪）',
-      '🔧 樣品庫列表欄位對齊修正（固定欄寬 + overflow-x-auto 避免跑版）',
+      '🎉 手板訂單卡片加顯眼總價（大字右側）',
+      '🎉 模具訂單卡片同樣改法',
+      '🎉 手板樣品新增時：訂單號、下單日、單價、幣別、供應商欄位，自動算總價',
+      '🔧 相關樣品卡片加刪除按鈕（hover 顯示）',
+      '🔧 樣品庫列表欄位對齊修正',
     ],
   },
   {
@@ -1842,18 +1852,6 @@ export default function ProductRoadmap() {
               </div>
             </div>
             {/* 分組切換按鈕 */}
-            <button
-              onClick={cycleGroupMode}
-              title={`目前：${groupModeLabel[groupMode]}，點擊切換`}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border transition ${
-                groupMode !== 'none'
-                  ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-                  : 'text-slate-500 border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              <span className="text-base leading-none">⊞</span>
-              <span className="hidden sm:inline text-xs">{groupModeLabel[groupMode]}</span>
-            </button>
             {isAdmin && (
               <button
                 onClick={() => setShowNewModal(true)}
@@ -1923,14 +1921,14 @@ export default function ProductRoadmap() {
             )}
           </div>
 
-          <div className="flex gap-1 overflow-x-auto pb-1">
+          <div className="flex items-center gap-1 overflow-x-auto pb-1">
             {['全部', ...STATUS_OPTIONS].map(s => {
               const active = statusFilter === s;
               return (
                 <button
                   key={s}
                   onClick={() => setStatusFilter(s)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg whitespace-nowrap transition ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg whitespace-nowrap transition flex-shrink-0 ${
                     active
                       ? 'bg-slate-900 text-white'
                       : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
@@ -1942,6 +1940,20 @@ export default function ProductRoadmap() {
                 </button>
               );
             })}
+            <div className="ml-auto flex-shrink-0 pl-2 border-l border-slate-200">
+              <button
+                onClick={cycleGroupMode}
+                title={`目前：${groupModeLabel[groupMode]}，點擊切換`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border transition whitespace-nowrap ${
+                  groupMode !== 'none'
+                    ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                    : 'text-slate-500 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span className="text-base leading-none">⊞</span>
+                <span className="text-xs">{groupModeLabel[groupMode]}</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -2959,6 +2971,70 @@ async function getStorageUrl(path) {
   })();
   _storageUrlPending.set(path, promise);
   return promise;
+}
+
+// 樣品圖片 Gallery Modal（支援多圖、左右切換）
+function SampleImageGalleryModal({ images, initialIndex = 0, onClose }) {
+  const [current, setCurrent] = useState(initialIndex);
+  if (!images || images.length === 0) return null;
+  const img = images[current];
+  const isVid = img?.isVideo || (img?.type && img.type.startsWith('video/'));
+  return (
+    <div className="fixed inset-0 bg-slate-900/90 z-[70] flex flex-col items-center justify-center" onClick={onClose}>
+      {/* 關閉 */}
+      <button onClick={onClose} className="absolute top-4 right-4 p-2 text-white/70 hover:text-white bg-slate-800/50 rounded-full">
+        <X className="w-5 h-5" />
+      </button>
+      {/* 圖片計數 */}
+      {images.length > 1 && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 text-white/70 text-sm">
+          {current + 1} / {images.length}
+        </div>
+      )}
+      {/* 主圖 */}
+      <div className="flex items-center justify-center w-full h-full px-16" onClick={e => e.stopPropagation()}>
+        {isVid ? (
+          <video src={img.url} controls autoPlay className="max-w-full max-h-[80vh] rounded-lg" />
+        ) : (
+          <StorageImage
+            src={img.url || img.dataUrl}
+            path={img.path}
+            alt={img.name}
+            className="max-w-full max-h-[80vh] rounded-lg object-contain"
+          />
+        )}
+      </div>
+      {/* 左右切換 */}
+      {images.length > 1 && (
+        <>
+          <button
+            onClick={(e) => { e.stopPropagation(); setCurrent(p => (p - 1 + images.length) % images.length); }}
+            className="absolute left-4 top-1/2 -translate-y-1/2 p-2 text-white/70 hover:text-white bg-slate-800/50 rounded-full"
+          >
+            <ChevronLeft className="w-6 h-6" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setCurrent(p => (p + 1) % images.length); }}
+            className="absolute right-4 top-1/2 -translate-y-1/2 p-2 text-white/70 hover:text-white bg-slate-800/50 rounded-full"
+          >
+            <ChevronRight className="w-6 h-6" />
+          </button>
+          {/* 縮圖列 */}
+          <div className="absolute bottom-4 flex gap-2 px-4" onClick={e => e.stopPropagation()}>
+            {images.map((img, i) => (
+              <button
+                key={i}
+                onClick={() => setCurrent(i)}
+                className={`w-12 h-12 rounded border-2 overflow-hidden flex-shrink-0 transition ${i === current ? 'border-white' : 'border-transparent opacity-60 hover:opacity-90'}`}
+              >
+                <SampleMediaThumb media={img} className="w-full h-full object-cover" />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 // 樣品縮圖：自動判斷圖片/影片
@@ -4752,7 +4828,7 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
 
 // ============= 樣品庫 Modal =============
 // 統合所有樣品（手板、量產樣、外購品、不知名、其他）+ 領用紀錄
-const SAMPLE_TYPES = ['手板', '量產樣', '外購品', '不知名', '其他'];
+const SAMPLE_TYPES = ['手板', 'T1', 'T2', 'T3', 'T4', '量產樣', '外購品', '不知名', '其他'];
 const SAMPLE_STATUS = ['已收到', '已下單', '生產中', '已取消'];
 const SAMPLE_STATUS_COLORS = {
   '已收到': 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -4762,6 +4838,10 @@ const SAMPLE_STATUS_COLORS = {
 };
 const SAMPLE_TYPE_COLORS = {
   '手板': 'bg-amber-50 text-amber-700 border-amber-200',
+  'T1': 'bg-orange-50 text-orange-700 border-orange-200',
+  'T2': 'bg-yellow-50 text-yellow-700 border-yellow-200',
+  'T3': 'bg-lime-50 text-lime-700 border-lime-200',
+  'T4': 'bg-teal-50 text-teal-700 border-teal-200',
   '量產樣': 'bg-emerald-50 text-emerald-700 border-emerald-200',
   '外購品': 'bg-blue-50 text-blue-700 border-blue-200',
   '不知名': 'bg-slate-50 text-slate-600 border-slate-200',
@@ -4784,6 +4864,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [searchTerm, setSearchTerm] = useState('');
   const [editingSample, setEditingSample] = useState(null);
   const [withdrawingSample, setWithdrawingSample] = useState(null);
+  const [viewingGallery, setViewingGallery] = useState(null); // {images, index}
   // 展覽相關
   const [editingExhibition, setEditingExhibition] = useState(null); // 編輯/新增展覽
   const [openExhibitionId, setOpenExhibitionId] = useState(null);    // 展開的展覽
@@ -5017,9 +5098,21 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                         }`}
                         style={{gridTemplateColumns:'44px minmax(160px,1fr) 60px 76px 110px 76px 100px'}}
                       >
-                        {/* 縮圖 */}
-                        <div className="w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center flex-shrink-0">
+                        {/* 縮圖 — 點擊放大，hover 顯示放大提示 */}
+                        <div
+                          className="w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center flex-shrink-0 cursor-zoom-in hover:border-amber-400 hover:shadow-md transition group/thumb relative"
+                          onClick={() => {
+                            const imgs = s.images || [];
+                            if (imgs.length > 0) setViewingGallery({ images: imgs, index: 0 });
+                          }}
+                          title={`點擊放大（共 ${(s.images || []).length} 張）`}
+                        >
                           <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
+                          {(s.images || []).length > 1 && (
+                            <span className="absolute bottom-0 right-0 text-[9px] bg-slate-800/70 text-white px-0.5 rounded-tl">
+                              {(s.images || []).length}
+                            </span>
+                          )}
                         </div>
 
                         {/* 名稱 + 料號 */}
@@ -5097,25 +5190,74 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             ) : (
               <div className="space-y-1.5">
                 {withdrawals.map(w => (
-                  <div key={w.id} className={`bg-white border rounded-lg p-3 ${w.returned ? 'opacity-60 border-slate-200' : 'border-amber-200 bg-amber-50/30'}`}>
-                    <div className="flex items-baseline justify-between gap-2">
-                      <div className="flex items-baseline gap-2 flex-wrap min-w-0">
-                        <span className="text-sm font-medium text-slate-900">{w.personName}</span>
-                        <span className="text-xs text-slate-600">領 {w.quantity} 個</span>
-                        <span className="text-xs text-slate-500 truncate">「{w.sampleName}」</span>
-                        {w.returned && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded">已歸還</span>}
+                  <div key={w.id} className={`bg-white border rounded-lg p-3 group ${w.returned || w.noReturn ? 'opacity-60 border-slate-200' : 'border-amber-200 bg-amber-50/30'}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
+                          <span className="text-sm font-medium text-slate-900">{w.personName}</span>
+                          <span className="text-xs text-slate-600">領 {w.quantity} 個</span>
+                          <span className="text-xs text-slate-500 truncate">「{w.sampleName}」</span>
+                          {w.returned && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded">已歸還</span>}
+                          {w.noReturn && <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded">{w.noReturnReason || '不歸還'}</span>}
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                          <span>{w.date}</span>
+                          {w.purpose && <span>· 用途：{w.purpose}</span>}
+                        </div>
                       </div>
-                      <span className="text-xs text-slate-400 flex-shrink-0">{w.date}</span>
-                    </div>
-                    {w.purpose && <p className="text-xs text-slate-600 mt-1">用途：{w.purpose}</p>}
-                    {canEdit && (
-                      <div className="mt-2 flex gap-2">
+                      {canEdit && (
                         <button
-                          onClick={() => handleToggleReturn(w)}
-                          className={`text-xs px-2 py-1 rounded ${w.returned ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'}`}
+                          onClick={async () => {
+                            if (!confirm(`確定刪除這筆領用紀錄嗎？（${w.personName} 領 ${w.quantity} 個）`)) return;
+                            await deleteDoc(doc(db, WITHDRAWALS_COL, w.id));
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-rose-600 transition flex-shrink-0"
+                          title="刪除此筆紀錄"
                         >
-                          {w.returned ? '取消歸還' : '標記已歸還'}
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
+                      )}
+                    </div>
+                    {canEdit && (
+                      <div className="mt-2 flex gap-2 flex-wrap">
+                        {!w.noReturn && (
+                          <button
+                            onClick={() => handleToggleReturn(w)}
+                            className={`text-xs px-2 py-1 rounded ${w.returned ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'}`}
+                          >
+                            {w.returned ? '取消歸還' : '標記已歸還'}
+                          </button>
+                        )}
+                        {!w.returned && !w.noReturn && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                const reason = prompt('說明不歸還原因（如：送客戶、展覽留存、損壞）：') ;
+                                if (reason === null) return;
+                                const updated = { ...w, noReturn: true, noReturnReason: reason || '不歸還' };
+                                const cleaned = {};
+                                Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && k !== '_docId') cleaned[k] = updated[k]; });
+                                setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
+                              }}
+                              className="text-xs px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100"
+                            >
+                              不歸還（送客戶等）
+                            </button>
+                          </div>
+                        )}
+                        {w.noReturn && (
+                          <button
+                            onClick={() => {
+                              const updated = { ...w, noReturn: false, noReturnReason: '' };
+                              const cleaned = {};
+                              Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && k !== '_docId') cleaned[k] = updated[k]; });
+                              setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
+                            }}
+                            className="text-xs px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200"
+                          >
+                            取消不歸還
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -5306,6 +5448,14 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             currentUser={currentUser}
             onSave={handleSaveWithdrawal}
             onClose={() => setWithdrawingSample(null)}
+          />
+        )}
+
+        {viewingGallery && (
+          <SampleImageGalleryModal
+            images={viewingGallery.images}
+            initialIndex={viewingGallery.index}
+            onClose={() => setViewingGallery(null)}
           />
         )}
       </div>
@@ -5600,13 +5750,29 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-slate-600 mb-1">類型</label>
-            <select
-              value={data.type}
-              onChange={(e) => setData(prev => ({ ...prev, type: e.target.value }))}
-              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
-            >
-              {SAMPLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
+            <div className="flex gap-1">
+              <select
+                value={SAMPLE_TYPES.includes(data.type) ? data.type : '自訂'}
+                onChange={(e) => {
+                  if (e.target.value !== '自訂') setData(prev => ({ ...prev, type: e.target.value }));
+                  else setData(prev => ({ ...prev, type: '' }));
+                }}
+                className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
+              >
+                {SAMPLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                <option value="自訂">自訂輸入...</option>
+              </select>
+              {!SAMPLE_TYPES.includes(data.type) && (
+                <input
+                  type="text"
+                  value={data.type}
+                  onChange={(e) => setData(prev => ({ ...prev, type: e.target.value }))}
+                  placeholder="自訂類型"
+                  autoFocus
+                  className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded"
+                />
+              )}
+            </div>
           </div>
 
           <div>

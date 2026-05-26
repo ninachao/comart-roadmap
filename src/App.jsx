@@ -46,8 +46,8 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.53.0';
-const BUILD_ID = '20260526-2000';
+const APP_VERSION = 'v0.55.0';
+const BUILD_ID = '20260526-2300';
 
 const VERSION_HISTORY = [
   {
@@ -1358,6 +1358,7 @@ export default function ProductRoadmap() {
   const [showNewModal, setShowNewModal] = useState(false);
   const [showPrototypeOverview, setShowPrototypeOverview] = useState(false);
   const [showSampleLibrary, setShowSampleLibrary] = useState(false);
+  const [returnToSampleLibrary, setReturnToSampleLibrary] = useState(false); // 從樣品庫跳來的，可返回
   const [showReminders, setShowReminders] = useState(false);
   // trackingOverrides: { [projectId]: 'include' | 'exclude' }
   const [trackingOverrides, setTrackingOverrides] = useState({});
@@ -2016,7 +2017,7 @@ export default function ProductRoadmap() {
           project={selectedProject}
           allTags={allTags}
           isViewer={isViewer}
-          onClose={() => setSelectedProject(null)}
+          onClose={() => { setSelectedProject(null); setReturnToSampleLibrary(false); }}
           onAddUpdate={(u) => handleAddUpdate(selectedProject.id, u)}
           onEditUpdate={(idx, u) => handleEditUpdate(selectedProject.id, idx, u)}
           onDeleteUpdate={(idx) => handleDeleteUpdate(selectedProject.id, idx)}
@@ -2032,6 +2033,12 @@ export default function ProductRoadmap() {
           samples={samples}
           withdrawals={withdrawals}
           currentUser={currentUser}
+          returnToSampleLibrary={returnToSampleLibrary}
+          onReturnToSampleLibrary={() => {
+            setSelectedProject(null);
+            setReturnToSampleLibrary(false);
+            setShowSampleLibrary(true);
+          }}
         />
       )}
 
@@ -2092,6 +2099,7 @@ export default function ProductRoadmap() {
             const target = projects.find(p => p.id === id);
             if (target) {
               setSelectedProject(target);
+              setReturnToSampleLibrary(true); // 記錄從樣品庫來的
               setShowSampleLibrary(false);
             }
           }}
@@ -2334,7 +2342,7 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
   );
 }
 
-function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, samples = [], withdrawals = [], currentUser }) {
+function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, samples = [], withdrawals = [], currentUser, returnToSampleLibrary = false, onReturnToSampleLibrary }) {
   const [showWizard, setShowWizard] = useState(false);
 
   // 收到自動打開請求時，跳出精靈
@@ -2474,6 +2482,17 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
+            {/* 返回樣品庫按鈕（從樣品庫跳來才顯示） */}
+            {returnToSampleLibrary && onReturnToSampleLibrary && (
+              <button
+                onClick={onReturnToSampleLibrary}
+                className="p-1.5 hover:bg-amber-50 rounded text-amber-600 hover:text-amber-700 inline-flex items-center gap-1 text-xs px-2 border border-amber-200"
+                title="返回樣品庫"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">樣品庫</span>
+              </button>
+            )}
             {/* 分享連結按鈕 */}
             <button
               onClick={() => {
@@ -2974,6 +2993,215 @@ async function getStorageUrl(path) {
 }
 
 // 樣品圖片 Gallery Modal（支援多圖、左右切換）
+// 圖片裁剪 Modal（純 Canvas 實作，不依賴外部套件）
+function ImageCropModal({ imageUrl, onSave, onClose }) {
+  const canvasRef = useRef(null);
+  const imgRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragType, setDragType] = useState(null); // 'move' | 'nw'|'ne'|'sw'|'se'
+  const [crop, setCrop] = useState({ x: 20, y: 20, w: 60, h: 60 }); // % 百分比
+  const [saving, setSaving] = useState(false);
+  const startRef = useRef(null);
+  const cropRef = useRef(crop);
+  cropRef.current = crop;
+
+  const HANDLE = 8; // handle size px
+
+  const draw = () => {
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    if (!canvas || !img) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.drawImage(img, 0, 0, W, H);
+
+    const { x, y, w, h } = cropRef.current;
+    const cx = x / 100 * W, cy = y / 100 * H;
+    const cw = w / 100 * W, ch = h / 100 * H;
+
+    // 遮罩
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, W, cy);
+    ctx.fillRect(0, cy + ch, W, H - cy - ch);
+    ctx.fillRect(0, cy, cx, ch);
+    ctx.fillRect(cx + cw, cy, W - cx - cw, ch);
+
+    // 框線
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(cx, cy, cw, ch);
+    ctx.setLineDash([]);
+
+    // 三等分線
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 3; i++) {
+      ctx.beginPath(); ctx.moveTo(cx + cw * i / 3, cy); ctx.lineTo(cx + cw * i / 3, cy + ch); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy + ch * i / 3); ctx.lineTo(cx + cw, cy + ch * i / 3); ctx.stroke();
+    }
+
+    // 四個角的 handle
+    ctx.fillStyle = '#fff';
+    const handles = [[cx, cy], [cx + cw, cy], [cx, cy + ch], [cx + cw, cy + ch]];
+    handles.forEach(([hx, hy]) => {
+      ctx.fillRect(hx - HANDLE / 2, hy - HANDLE / 2, HANDLE, HANDLE);
+    });
+  };
+
+  useEffect(() => {
+    const img = new window.Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      imgRef.current = img;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      // 設定 canvas 尺寸（等比例，最大 600px）
+      const maxW = 600, maxH = 420;
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+      if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
+      canvas.width = w; canvas.height = h;
+      draw();
+    };
+    img.src = imageUrl;
+  }, [imageUrl]);
+
+  useEffect(() => { draw(); }, [crop]);
+
+  const getPos = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+  };
+
+  const getHitType = (pos, canvas) => {
+    const W = canvas.width, H = canvas.height;
+    const { x, y, w, h } = cropRef.current;
+    const cx = x / 100 * W, cy = y / 100 * H, cw = w / 100 * W, ch = h / 100 * H;
+    const D = HANDLE * 1.5;
+    const corners = [
+      { type: 'nw', px: cx, py: cy },
+      { type: 'ne', px: cx + cw, py: cy },
+      { type: 'sw', px: cx, py: cy + ch },
+      { type: 'se', px: cx + cw, py: cy + ch },
+    ];
+    for (const c of corners) {
+      if (Math.abs(pos.x - c.px) < D && Math.abs(pos.y - c.py) < D) return c.type;
+    }
+    if (pos.x >= cx && pos.x <= cx + cw && pos.y >= cy && pos.y <= cy + ch) return 'move';
+    return null;
+  };
+
+  const onMouseDown = (e) => {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const pos = getPos(e, canvas);
+    const type = getHitType(pos, canvas);
+    if (!type) return;
+    setDragType(type);
+    setIsDragging(true);
+    startRef.current = { pos, crop: { ...cropRef.current } };
+  };
+
+  const onMouseMove = (e) => {
+    if (!isDragging) return;
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const pos = getPos(e, canvas);
+    const W = canvas.width, H = canvas.height;
+    const dx = (pos.x - startRef.current.pos.x) / W * 100;
+    const dy = (pos.y - startRef.current.pos.y) / H * 100;
+    const s = startRef.current.crop;
+    const MIN = 5;
+
+    let { x, y, w, h } = s;
+    if (dragType === 'move') {
+      x = Math.max(0, Math.min(100 - w, s.x + dx));
+      y = Math.max(0, Math.min(100 - h, s.y + dy));
+    } else if (dragType === 'se') {
+      w = Math.max(MIN, Math.min(100 - s.x, s.w + dx));
+      h = Math.max(MIN, Math.min(100 - s.y, s.h + dy));
+    } else if (dragType === 'nw') {
+      const nx = Math.max(0, Math.min(s.x + s.w - MIN, s.x + dx));
+      const ny = Math.max(0, Math.min(s.y + s.h - MIN, s.y + dy));
+      w = s.w - (nx - s.x); h = s.h - (ny - s.y); x = nx; y = ny;
+    } else if (dragType === 'ne') {
+      const ny = Math.max(0, Math.min(s.y + s.h - MIN, s.y + dy));
+      w = Math.max(MIN, Math.min(100 - s.x, s.w + dx));
+      h = s.h - (ny - s.y); y = ny;
+    } else if (dragType === 'sw') {
+      const nx = Math.max(0, Math.min(s.x + s.w - MIN, s.x + dx));
+      w = s.w - (nx - s.x); x = nx;
+      h = Math.max(MIN, Math.min(100 - s.y, s.h + dy));
+    }
+    setCrop({ x, y, w, h });
+  };
+
+  const onMouseUp = () => { setIsDragging(false); setDragType(null); };
+
+  const handleSave = async () => {
+    const img = imgRef.current;
+    if (!img) return;
+    setSaving(true);
+    const { x, y, w, h } = crop;
+    const sx = x / 100 * img.naturalWidth;
+    const sy = y / 100 * img.naturalHeight;
+    const sw = w / 100 * img.naturalWidth;
+    const sh = h / 100 * img.naturalHeight;
+    const out = document.createElement('canvas');
+    out.width = sw; out.height = sh;
+    out.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+    out.toBlob(async (blob) => {
+      const file = new File([blob], `crop_${Date.now()}.jpg`, { type: 'image/jpeg' });
+      const compressed = await compressImageFile(file);
+      const res = await uploadFileToStorage(compressed);
+      onSave({ name: res.name, url: res.url, path: res.path, size: res.size, type: 'image/jpeg' });
+      setSaving(false);
+    }, 'image/jpeg', 0.88);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/80 z-[80] flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl max-w-2xl w-full p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium">裁剪圖片</h3>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded"><X className="w-4 h-4 text-slate-500" /></button>
+        </div>
+        <p className="text-xs text-slate-400 mb-2">拖曳框框移動位置，拖曳四個角調整大小</p>
+        <div className="flex justify-center mb-3 touch-none">
+          <canvas
+            ref={canvasRef}
+            className="max-w-full rounded cursor-crosshair select-none"
+            style={{ maxHeight: '420px' }}
+            onMouseDown={onMouseDown}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseUp}
+            onTouchStart={onMouseDown}
+            onTouchMove={onMouseMove}
+            onTouchEnd={onMouseUp}
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="text-sm px-4 py-1.5 bg-slate-900 text-white rounded disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {saving ? <><Loader className="w-3.5 h-3.5 animate-spin" />上傳中...</> : '✂ 裁剪並儲存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SampleImageGalleryModal({ images, initialIndex = 0, onClose }) {
   const [current, setCurrent] = useState(initialIndex);
   if (!images || images.length === 0) return null;
@@ -3130,233 +3358,6 @@ function StorageImage({ src, path, alt, className, onClick, style }) {
   );
 }
 
-function ImageCropModal({ file, onConfirm, onCancel }) {
-  const [imgSrc, setImgSrc] = useState(null);
-  const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
-  const [crop, setCrop] = useState(null); // { x, y, w, h } 顯示座標
-  const [dragging, setDragging] = useState(null); // 'new', 'move', 'tl', 'tr', 'bl', 'br'
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0, crop: null });
-  const containerRef = useRef(null);
-  const imgRef = useRef(null);
-
-  useEffect(() => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => setImgSrc(e.target.result);
-    reader.readAsDataURL(file);
-  }, [file]);
-
-  const handleImgLoad = (e) => {
-    const img = e.target;
-    setImgSize({ w: img.naturalWidth, h: img.naturalHeight });
-    // 預設裁切框 = 整張圖
-    const rect = img.getBoundingClientRect();
-    setCrop({ x: 0, y: 0, w: rect.width, h: rect.height });
-  };
-
-  const getRelativePos = (e) => {
-    const rect = imgRef.current?.getBoundingClientRect();
-    if (!rect) return { x: 0, y: 0 };
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    return { x: clientX - rect.left, y: clientY - rect.top };
-  };
-
-  const handleMouseDown = (e, mode) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const pos = getRelativePos(e);
-    setDragging(mode);
-    setDragStart({ ...pos, crop: { ...crop } });
-  };
-
-  const handleNewBoxStart = (e) => {
-    if (!imgRef.current) return;
-    const pos = getRelativePos(e);
-    setDragging('new');
-    setDragStart({ ...pos, crop: { x: pos.x, y: pos.y, w: 0, h: 0 } });
-    setCrop({ x: pos.x, y: pos.y, w: 0, h: 0 });
-  };
-
-  const handleMouseMove = (e) => {
-    if (!dragging) return;
-    e.preventDefault();
-    const pos = getRelativePos(e);
-    const rect = imgRef.current.getBoundingClientRect();
-    const maxW = rect.width;
-    const maxH = rect.height;
-
-    if (dragging === 'new') {
-      const x = Math.min(dragStart.x, pos.x);
-      const y = Math.min(dragStart.y, pos.y);
-      const w = Math.abs(pos.x - dragStart.x);
-      const h = Math.abs(pos.y - dragStart.y);
-      setCrop({ x, y, w, h });
-    } else if (dragging === 'move') {
-      const dx = pos.x - dragStart.x;
-      const dy = pos.y - dragStart.y;
-      const newX = Math.max(0, Math.min(maxW - dragStart.crop.w, dragStart.crop.x + dx));
-      const newY = Math.max(0, Math.min(maxH - dragStart.crop.h, dragStart.crop.y + dy));
-      setCrop({ ...crop, x: newX, y: newY });
-    } else {
-      // resize
-      const c = { ...dragStart.crop };
-      let nx = c.x, ny = c.y, nw = c.w, nh = c.h;
-      if (dragging.includes('l')) {
-        const dx = pos.x - c.x;
-        nx = Math.max(0, Math.min(c.x + c.w - 20, c.x + dx));
-        nw = c.w - (nx - c.x);
-      }
-      if (dragging.includes('r')) {
-        nw = Math.max(20, Math.min(maxW - c.x, pos.x - c.x));
-      }
-      if (dragging.includes('t')) {
-        const dy = pos.y - c.y;
-        ny = Math.max(0, Math.min(c.y + c.h - 20, c.y + dy));
-        nh = c.h - (ny - c.y);
-      }
-      if (dragging.includes('b')) {
-        nh = Math.max(20, Math.min(maxH - c.y, pos.y - c.y));
-      }
-      setCrop({ x: nx, y: ny, w: nw, h: nh });
-    }
-  };
-
-  const handleMouseUp = () => setDragging(null);
-
-  // 確認時：依 crop 比例對 naturalSize 取出 canvas 區域
-  const handleConfirm = async () => {
-    if (!imgRef.current || !crop || crop.w < 5 || crop.h < 5) {
-      // 區域太小或沒選 → 直接傳原圖
-      onConfirm(file);
-      return;
-    }
-    const img = imgRef.current;
-    const displayW = img.getBoundingClientRect().width;
-    const displayH = img.getBoundingClientRect().height;
-    const ratioX = imgSize.w / displayW;
-    const ratioY = imgSize.h / displayH;
-
-    const sx = crop.x * ratioX;
-    const sy = crop.y * ratioY;
-    const sw = crop.w * ratioX;
-    const sh = crop.h * ratioY;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = sw;
-    canvas.height = sh;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-
-    canvas.toBlob((blob) => {
-      const cropped = new File([blob], file.name, { type: file.type || 'image/jpeg' });
-      onConfirm(cropped);
-    }, file.type || 'image/jpeg', 0.95);
-  };
-
-  const handleSelectAll = () => {
-    if (!imgRef.current) return;
-    const rect = imgRef.current.getBoundingClientRect();
-    setCrop({ x: 0, y: 0, w: rect.width, h: rect.height });
-  };
-
-  return (
-    <div
-      className="fixed inset-0 bg-slate-900/80 z-[70] flex items-center justify-center p-2 sm:p-4"
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onTouchMove={handleMouseMove}
-      onTouchEnd={handleMouseUp}
-    >
-      <div className="bg-white rounded-xl max-w-3xl w-full p-4 max-h-[95vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-2">
-          <div>
-            <h3 className="text-sm font-medium">選取要上傳的區域</h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">在圖上拖曳框選；拖動框內可移動；拖角落可縮放。不裁切就點「上傳整張」。</p>
-          </div>
-          <button onClick={onCancel} className="p-1.5 hover:bg-slate-100 rounded">
-            <X className="w-5 h-5 text-slate-500" />
-          </button>
-        </div>
-
-        <div ref={containerRef} className="flex-1 overflow-auto bg-slate-100 rounded relative flex items-center justify-center min-h-[300px]">
-          {imgSrc && (
-            <div className="relative inline-block" style={{ touchAction: 'none' }}>
-              <img
-                ref={imgRef}
-                src={imgSrc}
-                alt="預覽"
-                onLoad={handleImgLoad}
-                onMouseDown={handleNewBoxStart}
-                onTouchStart={handleNewBoxStart}
-                draggable={false}
-                className="max-w-full max-h-[60vh] block select-none cursor-crosshair"
-              />
-              {crop && crop.w > 0 && crop.h > 0 && (
-                <>
-                  {/* 暗化外圍 */}
-                  <div className="absolute inset-0 pointer-events-none" style={{
-                    boxShadow: `0 0 0 9999px rgba(0,0,0,0.5)`,
-                    clipPath: `polygon(
-                      0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%,
-                      ${crop.x}px ${crop.y}px,
-                      ${crop.x}px ${crop.y + crop.h}px,
-                      ${crop.x + crop.w}px ${crop.y + crop.h}px,
-                      ${crop.x + crop.w}px ${crop.y}px,
-                      ${crop.x}px ${crop.y}px
-                    )`,
-                  }} />
-                  {/* 裁切框 */}
-                  <div
-                    onMouseDown={(e) => handleMouseDown(e, 'move')}
-                    onTouchStart={(e) => handleMouseDown(e, 'move')}
-                    className="absolute border-2 border-blue-400 cursor-move"
-                    style={{ left: crop.x, top: crop.y, width: crop.w, height: crop.h }}
-                  >
-                    {/* 4 個角落把手 */}
-                    {['tl','tr','bl','br'].map(p => (
-                      <div
-                        key={p}
-                        onMouseDown={(e) => handleMouseDown(e, p)}
-                        onTouchStart={(e) => handleMouseDown(e, p)}
-                        className="absolute w-3 h-3 bg-blue-500 border-2 border-white rounded-sm"
-                        style={{
-                          left: p.includes('l') ? -7 : 'auto',
-                          right: p.includes('r') ? -7 : 'auto',
-                          top: p.includes('t') ? -7 : 'auto',
-                          bottom: p.includes('b') ? -7 : 'auto',
-                          cursor: (p === 'tl' || p === 'br') ? 'nwse-resize' : 'nesw-resize',
-                        }}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between gap-2 mt-3">
-          <button
-            onClick={handleSelectAll}
-            className="text-xs text-slate-600 hover:bg-slate-100 px-3 py-1.5 rounded"
-          >全選</button>
-          <div className="flex gap-2">
-            <button onClick={onCancel} className="text-xs px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
-            <button
-              onClick={() => onConfirm(file)}
-              className="text-xs px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded"
-            >上傳整張</button>
-            <button
-              onClick={handleConfirm}
-              className="text-sm px-4 py-1.5 bg-slate-900 text-white rounded hover:bg-slate-800 font-medium"
-            >裁切並上傳</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function ProductImagesSection({ images, onChange }) {
   const [previewIdx, setPreviewIdx] = useState(null);
@@ -3839,6 +3840,39 @@ async function downloadFile(url, filename, fileSize = 0, onStatusChange) {
   } finally {
     if (onStatusChange) onStatusChange(null);
   }
+}
+
+// 圖片壓縮：長邊最大 1600px，JPEG quality 0.82
+async function compressImageFile(file) {
+  if (!file.type.startsWith('image/') || file.type === 'image/gif') return file;
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 1600;
+      let { width, height } = img;
+      if (width <= MAX && height <= MAX && file.size < 500 * 1024) {
+        URL.revokeObjectURL(url);
+        resolve(file); // 小圖不壓縮
+        return;
+      }
+      if (width > height) {
+        if (width > MAX) { height = Math.round(height * MAX / width); width = MAX; }
+      } else {
+        if (height > MAX) { width = Math.round(width * MAX / height); height = MAX; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => {
+        const compressed = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+        resolve(compressed);
+      }, 'image/jpeg', 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
 }
 
 async function uploadFileToStorage(file, onProgress) {
@@ -4663,7 +4697,10 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
   // Filter 出此產品的樣品
   const relatedSamples = useMemo(() => {
     return samples.filter(s => s.relatedProjectId === project.id)
-      .map(s => ({ ...s, _remaining: computeRemaining(s, withdrawals) }))
+      .map(s => {
+        const { remaining, effectiveTotal } = computeRemaining(s, withdrawals);
+        return { ...s, _remaining: remaining, _effectiveTotal: effectiveTotal };
+      })
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   }, [samples, withdrawals, project.id]);
 
@@ -4773,7 +4810,7 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
                   <div className="flex items-baseline gap-3 mb-0.5 text-xs">
                     <span className="font-medium">
                       剩餘 <span className={`${isOut ? 'text-rose-600' : s._remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}`}>{s._remaining}</span>
-                      <span className="text-slate-400"> / {s.initialQuantity || 0}</span>
+                      <span className="text-slate-400"> / {s._effectiveTotal ?? s.initialQuantity ?? 0}</span>
                     </span>
                     {s.location && <span className="text-emerald-700">📍 {s.location}</span>}
                   </div>
@@ -4849,12 +4886,28 @@ const SAMPLE_TYPE_COLORS = {
 };
 
 // 計算某樣品的剩餘數量
+// 計算樣品的可用庫存
+// 邏輯：
+//   不歸還的領用 → 永久消耗，從「總數」和「剩餘」都扣
+//   已歸還的領用 → 不影響剩餘（已回來了）
+//   在外未歸還的領用 → 影響剩餘（但總數不變）
 function computeRemaining(sample, withdrawalsList) {
-  const initial = Number(sample.initialQuantity || 0);
-  const totalOut = withdrawalsList
-    .filter(w => w.sampleId === sample.id && !w.returned)
+  const sampleWithdrawals = withdrawalsList.filter(w => w.sampleId === sample.id);
+
+  // 不歸還的：永久消耗，從總數扣
+  const noReturnQty = sampleWithdrawals
+    .filter(w => w.noReturn)
     .reduce((sum, w) => sum + Number(w.quantity || 0), 0);
-  return Math.max(0, initial - totalOut);
+
+  // 在外未歸還（且非「不歸還」）：暫時佔用，影響剩餘
+  const outQty = sampleWithdrawals
+    .filter(w => !w.returned && !w.noReturn)
+    .reduce((sum, w) => sum + Number(w.quantity || 0), 0);
+
+  const effectiveTotal = Math.max(0, Number(sample.initialQuantity || 0) - noReturnQty);
+  const remaining = Math.max(0, effectiveTotal - outQty);
+
+  return { remaining, effectiveTotal };
 }
 
 function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, currentUser, canEdit, onClose, onJumpToProject }) {
@@ -4878,10 +4931,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       const relatedProj = s.relatedProjectId
         ? projects.find(p => String(p.id) === String(s.relatedProjectId))
         : null;
+      const { remaining, effectiveTotal } = computeRemaining(s, withdrawals);
       return {
         ...s,
-        _remaining: computeRemaining(s, withdrawals),
-        // 有關聯產品 → 用產品即時資料；沒有 → 用樣品自己存的
+        _remaining: remaining,
+        _effectiveTotal: effectiveTotal,
         _displayName: relatedProj ? relatedProj.name : s.name,
         _displayCode: relatedProj ? (relatedProj.code || '') : (s.relatedProjectCode || ''),
         _projectExists: !!relatedProj,
@@ -5137,7 +5191,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                         {/* 剩餘/總數 */}
                         <span className="text-sm font-semibold tabular-nums">
                           <span className={isOut ? 'text-rose-600' : remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}>{remaining}</span>
-                          <span className="text-slate-400 text-xs font-normal"> / {s.initialQuantity || 0}</span>
+                          <span className="text-slate-400 text-xs font-normal"> / {s._effectiveTotal ?? s.initialQuantity ?? 0}</span>
                         </span>
 
                         {/* 位置 */}
@@ -5658,6 +5712,8 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
   });
   const [uploading, setUploading] = useState(false);
   const [pasteHint, setPasteHint] = useState(false);
+  const [cropTarget, setCropTarget] = useState(null); // { imgIndex, url }
+  const [viewingIdx, setViewingIdx] = useState(null); // 放大預覽 index
   const fileRef = useRef(null);
   const cameraRef = useRef(null);
   const dragCounter = useRef(0);
@@ -5671,13 +5727,15 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
     setUploading(true);
     try {
       const uploads = [];
-      for (const file of media) {
+      for (let file of media) {
         const isVideo = file.type.startsWith('video/');
-        const maxSize = isVideo ? 200 * 1024 * 1024 : 10 * 1024 * 1024; // 影片 200MB，圖片 10MB
+        const maxSize = isVideo ? 200 * 1024 * 1024 : 10 * 1024 * 1024;
         if (file.size > maxSize) {
           alert(`「${file.name}」超過 ${isVideo ? '200MB' : '10MB'}，跳過`);
           continue;
         }
+        // 圖片上傳前先壓縮（長邊最大 1600px）
+        if (!isVideo) file = await compressImageFile(file);
         const res = await uploadFileToStorage(file);
         uploads.push({ name: res.name, url: res.url, path: res.path, size: res.size, type: file.type, isVideo });
       }
@@ -6032,33 +6090,40 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                   return (
                     <div key={i} className="relative aspect-square bg-slate-900 border border-slate-200 rounded overflow-hidden group">
                       {isVid ? (
-                        <video
-                          src={img.url}
-                          className="w-full h-full object-cover"
-                          preload="metadata"
-                          muted
-                          playsInline
-                          onMouseEnter={e => e.target.play()}
-                          onMouseLeave={e => { e.target.pause(); e.target.currentTime = 0; }}
-                        />
+                        <video src={img.url} className="w-full h-full object-cover" preload="metadata" muted playsInline onMouseEnter={e => e.target.play()} onMouseLeave={e => { e.target.pause(); e.target.currentTime = 0; }} />
                       ) : (
-                        <StorageImage
-                          src={img.url || img.dataUrl}
-                          path={img.path}
-                          alt={img.name}
-                          className="w-full h-full"
-                          style={{ objectFit: 'contain' }}
-                        />
+                        <StorageImage src={img.url || img.dataUrl} path={img.path} alt={img.name} className="w-full h-full" style={{ objectFit: 'contain' }} />
                       )}
-                      {isVid && (
-                        <div className="absolute bottom-1 left-1 text-[10px] bg-slate-900/70 text-white px-1 rounded">▶</div>
-                      )}
-                      <button
-                        onClick={() => removeImage(i)}
-                        className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 bg-white/90 rounded p-0.5 hover:bg-rose-50 text-rose-600 transition"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
+                      {isVid && <div className="absolute bottom-1 left-1 text-[10px] bg-slate-900/70 text-white px-1 rounded">▶</div>}
+                      {/* 操作按鈕 */}
+                      <div className="absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/30 transition flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100">
+                        {/* 放大 */}
+                        <button
+                          onClick={() => setViewingIdx(i)}
+                          className="p-1 bg-white/90 rounded text-slate-700 hover:bg-white"
+                          title="放大"
+                        >
+                          <Search className="w-3 h-3" />
+                        </button>
+                        {/* 裁剪（只有圖片） */}
+                        {!isVid && (
+                          <button
+                            onClick={() => setCropTarget({ imgIndex: i, url: img.url })}
+                            className="p-1 bg-white/90 rounded text-slate-700 hover:bg-white"
+                            title="裁剪"
+                          >
+                            <span className="text-[10px] font-bold">✂</span>
+                          </button>
+                        )}
+                        {/* 刪除 */}
+                        <button
+                          onClick={() => removeImage(i)}
+                          className="p-1 bg-white/90 rounded text-rose-600 hover:bg-white"
+                          title="刪除"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -6091,6 +6156,31 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
           <button onClick={submit} className="text-sm px-4 py-1.5 bg-slate-900 text-white rounded hover:bg-slate-800">儲存</button>
         </div>
       </div>
+
+      {/* 放大預覽 */}
+      {viewingIdx !== null && (
+        <SampleImageGalleryModal
+          images={data.images || []}
+          initialIndex={viewingIdx}
+          onClose={() => setViewingIdx(null)}
+        />
+      )}
+
+      {/* 裁剪 Modal */}
+      {cropTarget && (
+        <ImageCropModal
+          imageUrl={cropTarget.url}
+          onSave={(newImg) => {
+            setData(prev => {
+              const imgs = [...(prev.images || [])];
+              imgs[cropTarget.imgIndex] = newImg;
+              return { ...prev, images: imgs };
+            });
+            setCropTarget(null);
+          }}
+          onClose={() => setCropTarget(null)}
+        />
+      )}
     </div>
   );
 }

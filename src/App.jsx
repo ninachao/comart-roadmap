@@ -46,8 +46,8 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.56.0';
-const BUILD_ID = '20260526-2350';
+const APP_VERSION = 'v0.56.1';
+const BUILD_ID = '20260527-0010';
 
 const VERSION_HISTORY = [
   {
@@ -2269,7 +2269,7 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
               src={mainImage.url || mainImage.dataUrl}
               path={mainImage.path}
               alt={project.name}
-              className="w-full h-full object-contain"
+              className="w-full h-full object-cover"
               style={mainImage.fit === 'cover' ? { objectFit: 'cover' } : undefined}
             />
           ) : (
@@ -3286,7 +3286,7 @@ function SampleMediaThumb({ media, className, style }) {
       src={media.url || media.dataUrl}
       path={media.path}
       alt={media.name || ''}
-      className={className || 'w-full h-full object-contain'}
+      className={className || 'w-full h-full object-cover'}
       style={style}
     />
   );
@@ -4758,7 +4758,7 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
                 className={`bg-white border rounded-lg p-3 flex gap-3 group ${isOut ? 'opacity-60 border-rose-200' : 'border-amber-200 hover:border-amber-400 hover:bg-amber-50/30'} transition`}
               >
                 <div className="flex-shrink-0 w-16 h-16 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
-                  <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
+                  <SampleMediaThumb media={mainImage} className="w-full h-full object-cover" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-1 mb-0.5">
@@ -5151,7 +5151,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                         onClick={() => { const imgs = s.images || []; if (imgs.length > 0) setViewingGallery({ images: imgs, index: 0 }); }}
                         title={`點擊放大（共 ${(s.images || []).length} 張）`}
                       >
-                        <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
+                        <SampleMediaThumb media={mainImage} className="w-full h-full object-cover" />
                         {(s.images || []).length > 1 && (
                           <span className="absolute bottom-0 right-0 text-[9px] bg-slate-800/70 text-white px-0.5 rounded-tl">{(s.images || []).length}</span>
                         )}
@@ -5393,7 +5393,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                 return (
                                   <div key={it.sampleId} className="flex gap-2 items-center bg-white border border-slate-200 rounded-lg p-2">
                                     <div className="flex-shrink-0 w-12 h-12 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
-                                      <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
+                                      <SampleMediaThumb media={mainImage} className="w-full h-full object-cover" />
                                     </div>
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-baseline gap-1.5 flex-wrap">
@@ -5647,7 +5647,7 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose }
                   >
                     <input type="checkbox" checked={isSel} readOnly className="w-4 h-4 flex-shrink-0" />
                     <div className="flex-shrink-0 w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
-                      <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
+                      <SampleMediaThumb media={mainImage} className="w-full h-full object-cover" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline gap-1.5">
@@ -6086,11 +6086,11 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                 {data.images.map((img, i) => {
                   const isVid = img.isVideo || (img.type && img.type.startsWith('video/'));
                   return (
-                    <div key={i} className="relative aspect-square bg-slate-900 border border-slate-200 rounded overflow-hidden group">
+                    <div key={i} className="relative aspect-square bg-slate-100 border border-slate-200 rounded overflow-hidden group">
                       {isVid ? (
                         <video src={img.url} className="w-full h-full object-cover" preload="metadata" muted playsInline onMouseEnter={e => e.target.play()} onMouseLeave={e => { e.target.pause(); e.target.currentTime = 0; }} />
                       ) : (
-                        <StorageImage src={img.url || img.dataUrl} path={img.path} alt={img.name} className="w-full h-full" style={{ objectFit: 'contain' }} />
+                        <StorageImage src={img.url || img.dataUrl} path={img.path} alt={img.name} className="w-full h-full" style={{ objectFit: 'cover' }} />
                       )}
                       {isVid && <div className="absolute bottom-1 left-1 text-[10px] bg-slate-900/70 text-white px-1 rounded">▶</div>}
                       {/* 操作按鈕 */}

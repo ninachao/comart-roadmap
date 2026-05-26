@@ -46,10 +46,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.50.0';
-const BUILD_ID = '20260526-1000';
+const APP_VERSION = 'v0.51.0';
+const BUILD_ID = '20260526-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.51.0',
+    date: '2026-05-26',
+    changes: [
+      '🔧 手板訂單卡片顯示顯眼總價（大字右側，下方小字顯示數量×單價）',
+      '🔧 模具訂單卡片同樣改法',
+      '🎉 相關樣品（含手板）新增時：手板訂單欄位升級，可填訂單號、下單日、單價、幣別、供應商，自動算總價',
+      '🔧 相關樣品卡片加刪除按鈕（hover 顯示，autoSynced 的不能刪）',
+      '🔧 樣品庫列表欄位對齊修正（固定欄寬 + overflow-x-auto 避免跑版）',
+    ],
+  },
   {
     version: 'v0.50.0',
     date: '2026-05-26',
@@ -2696,6 +2707,12 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             onCodeChange={(v) => onUpdateField('materialCodeNumber', v)}
           />
 
+          {/* 開發費用摘要 */}
+          <DevCostSection
+            project={project}
+            isViewer={isViewer}
+            onUpdateField={onUpdateField}
+          />
 
           <section>
             <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide mb-2">備註 / 特色</h3>
@@ -4625,16 +4642,42 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
             return (
               <div
                 key={s.id}
-                onClick={() => !readOnly && setEditingSample(s)}
-                className={`bg-white border rounded-lg p-3 flex gap-3 ${isOut ? 'opacity-60 border-rose-200' : 'border-amber-200 hover:border-amber-400 hover:bg-amber-50/30'} ${readOnly ? '' : 'cursor-pointer'} transition`}
+                className={`bg-white border rounded-lg p-3 flex gap-3 group ${isOut ? 'opacity-60 border-rose-200' : 'border-amber-200 hover:border-amber-400 hover:bg-amber-50/30'} transition`}
               >
                 <div className="flex-shrink-0 w-16 h-16 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
                   <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline gap-1.5 flex-wrap mb-0.5">
-                    <span className="text-sm font-medium text-slate-900">{s.name}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
+                  <div className="flex items-start justify-between gap-1 mb-0.5">
+                    <div className="flex items-baseline gap-1.5 flex-wrap min-w-0">
+                      <span className="text-sm font-medium text-slate-900">{s.name}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
+                    </div>
+                    {/* 操作按鈕 */}
+                    {!readOnly && (
+                      <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setEditingSample(s); }}
+                          className="p-1 text-slate-400 hover:text-slate-700 hover:bg-white rounded"
+                          title="編輯"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                        {!s.autoSynced && (
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (!confirm(`確定刪除「${s.name}」嗎？`)) return;
+                              await deleteDoc(doc(db, SAMPLES_COL, s.id));
+                            }}
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-white rounded"
+                            title="刪除"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-baseline gap-3 mb-0.5 text-xs">
                     <span className="font-medium">
@@ -4651,6 +4694,15 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
                   </div>
                   {s.orderNote && (
                     <p className="text-[11px] text-amber-600 mt-0.5 line-clamp-1">📋 {s.orderNote}</p>
+                  )}
+                  {/* 手動點編輯提示 */}
+                  {!readOnly && (
+                    <button
+                      onClick={() => setEditingSample(s)}
+                      className="text-[10px] text-slate-400 hover:text-slate-600 mt-1"
+                    >
+                      點此編輯
+                    </button>
                   )}
                 </div>
               </div>
@@ -4926,10 +4978,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
               {filtered.length === 0 ? (
                 <p className="text-center text-sm text-slate-400 py-8">沒有符合條件的樣品</p>
               ) : (
-                <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <div className="border border-slate-200 rounded-lg overflow-hidden overflow-x-auto">
                   {/* 標題列 */}
-                  <div className="grid gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold text-slate-500 uppercase tracking-wide"
-                    style={{gridTemplateColumns:'44px 1fr 56px 80px 110px 80px auto'}}>
+                  <div className="grid gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold text-slate-500 uppercase tracking-wide min-w-[600px]"
+                    style={{gridTemplateColumns:'44px minmax(160px,1fr) 60px 76px 110px 76px 100px'}}>
                     <span></span>
                     <span>名稱</span>
                     <span>類型</span>
@@ -4946,10 +4998,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                     return (
                       <div
                         key={s.id}
-                        className={`grid gap-2 px-3 py-2 items-center border-b border-slate-100 last:border-0 transition ${
+                        className={`grid gap-2 px-3 py-2 items-center border-b border-slate-100 last:border-0 transition min-w-[600px] ${
                           isOut ? 'opacity-50 bg-white' : idx % 2 === 0 ? 'bg-white hover:bg-amber-50/30' : 'bg-slate-50/60 hover:bg-amber-50/30'
                         }`}
-                        style={{gridTemplateColumns:'44px 1fr 56px 80px 110px 80px auto'}}
+                        style={{gridTemplateColumns:'44px minmax(160px,1fr) 60px 76px 110px 76px 100px'}}
                       >
                         {/* 縮圖 */}
                         <div className="w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center flex-shrink-0">
@@ -4990,11 +5042,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                         <span className="text-xs text-slate-600 truncate">{s.material || <span className="text-slate-300">—</span>}</span>
 
                         {/* 操作按鈕 */}
-                        <div className="flex gap-1 items-center flex-shrink-0">
+                        <div className="flex gap-1 items-center">
                           {canEdit && remaining > 0 && (
                             <button
                               onClick={() => setWithdrawingSample(s)}
-                              className="text-[11px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100"
+                              className="text-[11px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 whitespace-nowrap"
                             >
                               領用
                             </button>
@@ -5429,9 +5481,15 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
     images: sample.images || [],
     idVersion: sample.idVersion || '',
     threeDVersion: sample.threeDVersion || '',
-    source: sample.source || '',  // 自由輸入
-    orderNote: sample.orderNote || '',  // 手板訂單備註（只有手板類型用）
-    ...sample,  // 保留其他現有欄位
+    source: sample.source || '',
+    // 手板訂單欄位
+    orderNo: sample.orderNo || '',
+    orderDate: sample.orderDate || '',
+    unitPrice: sample.unitPrice || '',
+    currency: sample.currency || 'TWD',
+    supplier: sample.supplier || '',
+    orderNote: sample.orderNote || '',
+    ...sample,
   });
   const [uploading, setUploading] = useState(false);
   const [pasteHint, setPasteHint] = useState(false);
@@ -5674,17 +5732,85 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
             );
           })()}
 
-          {/* 手板訂單備註：只有「手板」類型才出現 */}
+          {/* 手板訂單欄位：只有「手板」類型才出現 */}
           {data.type === '手板' && (
-            <div className="bg-amber-50/50 border border-amber-200 rounded p-2">
-              <label className="block text-xs text-amber-800 font-medium mb-1">📋 手板訂單備註</label>
-              <textarea
-                value={data.orderNote}
-                onChange={(e) => setData(prev => ({ ...prev, orderNote: e.target.value }))}
-                rows={2}
-                placeholder="訂單編號、單價、供應商、下單日期等（台北下單給工程時填寫；工程直接提供可留空）"
-                className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded resize-none"
-              />
+            <div className="bg-amber-50/50 border border-amber-200 rounded-lg p-3 space-y-2">
+              <p className="text-xs text-amber-800 font-medium">📋 手板訂單（台北向工程下單時填寫，工程直接提供可略）</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">訂單編號</label>
+                  <input
+                    type="text"
+                    value={data.orderNo}
+                    onChange={(e) => setData(prev => ({ ...prev, orderNo: e.target.value }))}
+                    placeholder="PT-XXX-01"
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">下單日期</label>
+                  <input
+                    type="date"
+                    value={data.orderDate}
+                    onChange={(e) => setData(prev => ({ ...prev, orderDate: e.target.value }))}
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">單價</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={data.unitPrice}
+                    onChange={(e) => setData(prev => ({ ...prev, unitPrice: e.target.value }))}
+                    placeholder="0"
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">幣別</label>
+                  <select
+                    value={data.currency}
+                    onChange={(e) => setData(prev => ({ ...prev, currency: e.target.value }))}
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-white"
+                  >
+                    <option value="TWD">TWD</option>
+                    <option value="USD">USD</option>
+                    <option value="CNY">CNY</option>
+                    <option value="VND">VND</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">總價（自動）</label>
+                  <div className="px-2 py-1 text-xs bg-slate-50 border border-slate-200 rounded font-medium text-slate-700 tabular-nums">
+                    {data.unitPrice && data.initialQuantity
+                      ? `${(Number(data.unitPrice) * Number(data.initialQuantity)).toLocaleString()} ${data.currency}`
+                      : '—'}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-500 mb-0.5">供應商</label>
+                <input
+                  type="text"
+                  value={data.supplier}
+                  onChange={(e) => setData(prev => ({ ...prev, supplier: e.target.value }))}
+                  placeholder="恆群、新益..."
+                  className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-500 mb-0.5">備註（選填）</label>
+                <textarea
+                  value={data.orderNote}
+                  onChange={(e) => setData(prev => ({ ...prev, orderNote: e.target.value }))}
+                  rows={1}
+                  placeholder="其他備註..."
+                  className="w-full px-2 py-1 text-xs border border-slate-200 rounded resize-none"
+                />
+              </div>
             </div>
           )}
 
@@ -6468,9 +6594,18 @@ function PrototypeSection({ orders, onChange, defaultSupplier, readOnly, designs
                   </div>
                   <div className="text-xs text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
                     {o.partNo && <span>料號: {o.partNo}</span>}
-                    <span>{o.supplier}</span>
-                    <span>{o.quantity} 個 × {formatMoney(o.unitPrice)} = {formatMoney(o.quantity * o.unitPrice)} {o.currency}</span>
+                    {o.supplier && <span>{o.supplier}</span>}
                     <span className="tabular-nums">{o.orderDate}</span>
+                  </div>
+                </div>
+                {/* 總價顯眼顯示 */}
+                <div className="flex-shrink-0 text-right">
+                  <div className="text-base font-bold text-slate-800 tabular-nums">
+                    {formatMoney(Number(o.quantity || 0) * Number(o.unitPrice || 0))}
+                    <span className="text-xs font-normal text-slate-400 ml-1">{o.currency}</span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 tabular-nums">
+                    {o.quantity} × {formatMoney(o.unitPrice)}
                   </div>
                 </div>
                 <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
@@ -6563,9 +6698,18 @@ function MouldSection({ orders, onChange, defaultSupplier, readOnly }) {
                   </div>
                   <div className="text-xs text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
                     {o.partNo && <span>料號: {o.partNo}</span>}
-                    <span>{o.supplier}</span>
-                    <span>{o.quantity} 套 × {formatMoney(o.unitPrice)} = {formatMoney(o.quantity * o.unitPrice)} {o.currency}</span>
+                    {o.supplier && <span>{o.supplier}</span>}
                     <span className="tabular-nums">{o.orderDate}</span>
+                  </div>
+                </div>
+                {/* 總價顯眼顯示 */}
+                <div className="flex-shrink-0 text-right">
+                  <div className="text-base font-bold text-slate-800 tabular-nums">
+                    {formatMoney(Number(o.quantity || 0) * Number(o.unitPrice || 0))}
+                    <span className="text-xs font-normal text-slate-400 ml-1">{o.currency}</span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 tabular-nums">
+                    {o.quantity} 套 × {formatMoney(o.unitPrice)}
                   </div>
                 </div>
                 <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">

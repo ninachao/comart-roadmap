@@ -5159,14 +5159,14 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto -mx-1 px-1">
+            <div className="flex-1 overflow-y-auto pr-1">
               {filtered.length === 0 ? (
                 <p className="text-center text-sm text-slate-400 py-8">沒有符合條件的樣品</p>
               ) : (
                 <div className="border border-slate-200 rounded-lg overflow-hidden">
                   {/* 桌面：表格標題列（sm 以上顯示） */}
                   <div className="hidden sm:grid gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold text-slate-500 uppercase tracking-wide"
-                    style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(80px,120px) 90px'}}>
+                    style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(80px,120px) 84px'}}>
                     <span></span>
                     <span>名稱</span>
                     <span>類型</span>
@@ -5215,7 +5215,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                       <div key={s.id} className={`border-b border-slate-100 last:border-0 transition ${rowBg}`}>
                         {/* 桌面列（sm 以上） */}
                         <div className="hidden sm:grid gap-2 px-3 py-2 items-center"
-                          style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(80px,120px) 90px'}}>
+                          style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(80px,120px) 84px'}}>
                           {thumbEl}
                           <div className="min-w-0">
                             <p className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</p>

@@ -46,8 +46,8 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.56.1';
-const BUILD_ID = '20260527-0010';
+const APP_VERSION = 'v0.56.2';
+const BUILD_ID = '20260527-0100';
 
 const VERSION_HISTORY = [
   {
@@ -2994,7 +2994,21 @@ async function getStorageUrl(path) {
 
 // 樣品圖片 Gallery Modal（支援多圖、左右切換）
 // 圖片裁剪 Modal（純 Canvas 實作，不依賴外部套件）
-function ImageCropModal({ imageUrl, onSave, onClose }) {
+function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }) {
+  // 統一介面：onSave/onClose 或 onConfirm/onCancel 都支援
+  const handleSaveResult = onSave || onConfirm;
+  const handleClose = onClose || onCancel;
+
+  // imageUrl 或 file 二擇一
+  const [resolvedUrl, setResolvedUrl] = useState(imageUrl || null);
+  // file → objectURL
+  useEffect(() => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setResolvedUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -3051,22 +3065,38 @@ function ImageCropModal({ imageUrl, onSave, onClose }) {
   };
 
   useEffect(() => {
-    const img = new window.Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      imgRef.current = img;
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      // 設定 canvas 尺寸（等比例，最大 600px）
-      const maxW = 600, maxH = 420;
-      let w = img.naturalWidth, h = img.naturalHeight;
-      if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
-      if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
-      canvas.width = w; canvas.height = h;
-      draw();
+    let blobUrl = null;
+    const loadImage = async () => {
+      if (!resolvedUrl) return;
+      try {
+        let imgSrc = resolvedUrl;
+        // 如果是 blob: URL（本地 File），直接用；如果是遠端 URL，fetch 繞過 CORS
+        if (!resolvedUrl.startsWith('blob:')) {
+          const res = await fetch(resolvedUrl, { mode: 'cors' });
+          const blob = await res.blob();
+          blobUrl = URL.createObjectURL(blob);
+          imgSrc = blobUrl;
+        }
+        const img = new window.Image();
+        img.onload = () => {
+          imgRef.current = img;
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          const maxW = 600, maxH = 420;
+          let w = img.naturalWidth, h = img.naturalHeight;
+          if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+          if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
+          canvas.width = w; canvas.height = h;
+          draw();
+        };
+        img.src = imgSrc;
+      } catch (e) {
+        console.error('裁剪圖片載入失敗：', e);
+      }
     };
-    img.src = imageUrl;
-  }, [imageUrl]);
+    loadImage();
+    return () => { if (blobUrl) URL.revokeObjectURL(blobUrl); };
+  }, [resolvedUrl]);
 
   useEffect(() => { draw(); }, [crop]);
 
@@ -3157,10 +3187,16 @@ function ImageCropModal({ imageUrl, onSave, onClose }) {
     out.width = sw; out.height = sh;
     out.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
     out.toBlob(async (blob) => {
-      const file = new File([blob], `crop_${Date.now()}.jpg`, { type: 'image/jpeg' });
-      const compressed = await compressImageFile(file);
-      const res = await uploadFileToStorage(compressed);
-      onSave({ name: res.name, url: res.url, path: res.path, size: res.size, type: 'image/jpeg' });
+      const croppedFile = new File([blob], `crop_${Date.now()}.jpg`, { type: 'image/jpeg' });
+      const compressed = await compressImageFile(croppedFile);
+      if (onConfirm) {
+        // ProductImagesSection 的流程：回傳 File 讓它自己上傳
+        handleSaveResult(compressed);
+      } else {
+        // 樣品庫流程：直接上傳回傳 Storage 物件
+        const res = await uploadFileToStorage(compressed);
+        handleSaveResult({ name: res.name, url: res.url, path: res.path, size: res.size, type: 'image/jpeg' });
+      }
       setSaving(false);
     }, 'image/jpeg', 0.88);
   };
@@ -3170,7 +3206,7 @@ function ImageCropModal({ imageUrl, onSave, onClose }) {
       <div className="bg-white rounded-xl max-w-2xl w-full p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-medium">裁剪圖片</h3>
-          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded"><X className="w-4 h-4 text-slate-500" /></button>
+          <button onClick={handleClose} className="p-1.5 hover:bg-slate-100 rounded"><X className="w-4 h-4 text-slate-500" /></button>
         </div>
         <p className="text-xs text-slate-400 mb-2">拖曳框框移動位置，拖曳四個角調整大小</p>
         <div className="flex justify-center mb-3 touch-none">
@@ -3188,7 +3224,7 @@ function ImageCropModal({ imageUrl, onSave, onClose }) {
           />
         </div>
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+          <button onClick={handleClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
           <button
             onClick={handleSave}
             disabled={saving}

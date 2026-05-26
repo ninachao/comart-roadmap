@@ -2707,13 +2707,6 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             onCodeChange={(v) => onUpdateField('materialCodeNumber', v)}
           />
 
-          {/* 開發費用摘要 */}
-          <DevCostSection
-            project={project}
-            isViewer={isViewer}
-            onUpdateField={onUpdateField}
-          />
-
           <section>
             <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide mb-2">備註 / 特色</h3>
             {editingField === 'notes' ? (

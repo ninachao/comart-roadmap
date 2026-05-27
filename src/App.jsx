@@ -4782,6 +4782,23 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
 
   const handleSave = async (sample) => {
     const sampleId = sample.id || `s${Date.now()}`;
+
+    // 重複料號檢查
+    if (sample.sampleNo && sample.sampleNo.trim()) {
+      const duplicate = samples.find(s =>
+        s.id !== sampleId &&
+        s.sampleNo && s.sampleNo.trim().toLowerCase() === sample.sampleNo.trim().toLowerCase()
+      );
+      if (duplicate) {
+        const go = confirm(
+          `⚠ 料號「${sample.sampleNo}」已存在！\n` +
+          `現有樣品：${duplicate.name}\n\n` +
+          `確定要繼續新增嗎？`
+        );
+        if (!go) return;
+      }
+    }
+
     const cleaned = {};
     Object.keys(sample).forEach(k => {
       if (sample[k] !== undefined && k !== '_docId' && k !== '_remaining') cleaned[k] = sample[k];
@@ -5130,6 +5147,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [addingBundleToExId, setAddingBundleToExId] = useState(null);   // 正在建組合品的展覽
 
   const locationOptions = useMemo(() => [...new Set(samples.map(s => s.location).filter(Boolean))], [samples]);
+  // 動態類型選項：固定選項 + 樣品裡出現的自訂類型
+  const typeOptions = useMemo(() => {
+    const custom = samples.map(s => s.type).filter(t => t && !SAMPLE_TYPES.includes(t));
+    return [...SAMPLE_TYPES, ...new Set(custom)];
+  }, [samples]);
 
   // 計算每個樣品的剩餘數量 + 連動關聯產品的即時名稱/料號
   const samplesWithRemaining = useMemo(() => {
@@ -5163,6 +5185,23 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
 
   const handleSaveSample = async (sample) => {
     const sampleId = sample.id || `s${Date.now()}`;
+
+    // 重複料號檢查（sampleNo 不為空時才檢查）
+    if (sample.sampleNo && sample.sampleNo.trim()) {
+      const duplicate = samples.find(s =>
+        s.id !== sampleId &&  // 排除自己（編輯時）
+        s.sampleNo && s.sampleNo.trim().toLowerCase() === sample.sampleNo.trim().toLowerCase()
+      );
+      if (duplicate) {
+        const go = confirm(
+          `⚠ 料號「${sample.sampleNo}」已存在！\n` +
+          `現有樣品：${duplicate._displayName || duplicate.name}\n\n` +
+          `確定要繼續新增嗎？`
+        );
+        if (!go) return;
+      }
+    }
+
     const cleaned = {};
     Object.keys(sample).forEach(k => { if (sample[k] !== undefined && k !== '_docId' && k !== '_remaining') cleaned[k] = sample[k]; });
     cleaned.id = sampleId;
@@ -5355,7 +5394,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
               />
               <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="px-2 py-1.5 text-sm border border-slate-200 rounded bg-white">
                 <option value="全部">全部類型</option>
-                {SAMPLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                {typeOptions.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
               <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} className="px-2 py-1.5 text-sm border border-slate-200 rounded bg-white">
                 <option value="全部">全部位置</option>
@@ -6079,12 +6118,12 @@ function CreateBundleModal({ exhibition, samples, onConfirm, onClose }) {
         </div>
 
         <div className="flex justify-between items-center gap-2 mt-3 pt-3 border-t border-slate-100">
-          <span className="text-xs text-slate-500">已選 {selected.size} 個散件</span>
+          <span className="text-xs text-slate-500">已選 {[...selected].length} 個散件</span>
           <div className="flex gap-2">
             <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
             <button
               onClick={submit}
-              disabled={selected.size === 0 || !bundleName.trim()}
+              disabled={[...selected].length === 0 || !bundleName.trim()}
               className="text-sm px-4 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-40"
             >
               建立組合品

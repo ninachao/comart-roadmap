@@ -3017,13 +3017,14 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
   const [crop, setCrop] = useState({ x: 20, y: 20, w: 60, h: 60 }); // 暫時預設，載入圖片後重算
   const [saving, setSaving] = useState(false);
 
-  // 計算正方形裁剪框（根據圖片長寬比）
-  const initSquareCrop = (imgW, imgH, canvasW, canvasH) => {
-    // 取短邊的 80% 作為正方形邊長（以 % 為單位）
-    const shortSide = Math.min(imgW, imgH);
-    const size = (shortSide / Math.max(imgW, imgH)) * 80;
-    const wPct = imgW >= imgH ? size : 80;
-    const hPct = imgH >= imgW ? size : 80;
+  // 計算正方形裁剪框（以 canvas 像素空間計算，確保輸出是正方形）
+  const initSquareCrop = (canvasW, canvasH) => {
+    // 取短邊的 85% 作為正方形邊長
+    const shortSide = Math.min(canvasW, canvasH);
+    const sizePx = shortSide * 0.85;
+    // 轉換成百分比（x% 是相對 canvasW，y% 是相對 canvasH）
+    const wPct = sizePx / canvasW * 100;
+    const hPct = sizePx / canvasH * 100;
     const x = (100 - wPct) / 2;
     const y = (100 - hPct) / 2;
     return { x, y, w: wPct, h: hPct };
@@ -3100,8 +3101,8 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
           if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
           if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
           canvas.width = w; canvas.height = h;
-          // 自動設定正方形裁剪框
-          const sq = initSquareCrop(img.naturalWidth, img.naturalHeight, w, h);
+          // 自動設定正方形裁剪框（以 canvas 像素空間計算）
+          const sq = initSquareCrop(w, h);
           setCrop(sq);
           cropRef.current = sq;
           draw();
@@ -3167,21 +3168,41 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
     const MIN = 5;
 
     let { x, y, w, h } = s;
+    const cvs = canvasRef.current;
+    const canW = cvs ? cvs.width : 100;
+    const canH = cvs ? cvs.height : 100;
+
     if (dragType === 'move') {
       x = Math.max(0, Math.min(100 - w, s.x + dx));
       y = Math.max(0, Math.min(100 - h, s.y + dy));
-    } else if (dragType === 'se') {
-      const size = Math.max(MIN, Math.min(100 - s.x, s.w + dx, 100 - s.y, s.h + dy));
-      w = size; h = size;
-    } else if (dragType === 'nw') {
-      const size = Math.max(MIN, Math.min(s.x + s.w, s.y + s.h, s.w - dx, s.h - dy));
-      x = s.x + s.w - size; y = s.y + s.h - size; w = size; h = size;
-    } else if (dragType === 'ne') {
-      const size = Math.max(MIN, Math.min(100 - s.x, s.y + s.h, s.w + dx, s.h - dy));
-      y = s.y + s.h - size; w = size; h = size;
-    } else if (dragType === 'sw') {
-      const size = Math.max(MIN, Math.min(s.x + s.w, 100 - s.y, s.w - dx, s.h + dy));
-      x = s.x + s.w - size; w = size; h = size;
+    } else {
+      const curWpx = s.w / 100 * canW;
+      const curHpx = s.h / 100 * canH;
+
+      if (dragType === 'se') {
+        const newWpx = Math.max(MIN / 100 * canW, curWpx + dx / 100 * canW);
+        const newHpx = Math.max(MIN / 100 * canH, curHpx + dy / 100 * canH);
+        const sizePx = Math.min(newWpx, newHpx, (100 - s.x) / 100 * canW, (100 - s.y) / 100 * canH);
+        w = sizePx / canW * 100; h = sizePx / canH * 100;
+      } else if (dragType === 'nw') {
+        const newWpx = Math.max(MIN / 100 * canW, curWpx - dx / 100 * canW);
+        const newHpx = Math.max(MIN / 100 * canH, curHpx - dy / 100 * canH);
+        const sizePx = Math.min(newWpx, newHpx, (s.x + s.w) / 100 * canW, (s.y + s.h) / 100 * canH);
+        w = sizePx / canW * 100; h = sizePx / canH * 100;
+        x = s.x + s.w - w; y = s.y + s.h - h;
+      } else if (dragType === 'ne') {
+        const newWpx = Math.max(MIN / 100 * canW, curWpx + dx / 100 * canW);
+        const newHpx = Math.max(MIN / 100 * canH, curHpx - dy / 100 * canH);
+        const sizePx = Math.min(newWpx, newHpx, (100 - s.x) / 100 * canW, (s.y + s.h) / 100 * canH);
+        w = sizePx / canW * 100; h = sizePx / canH * 100;
+        y = s.y + s.h - h;
+      } else if (dragType === 'sw') {
+        const newWpx = Math.max(MIN / 100 * canW, curWpx - dx / 100 * canW);
+        const newHpx = Math.max(MIN / 100 * canH, curHpx + dy / 100 * canH);
+        const sizePx = Math.min(newWpx, newHpx, (s.x + s.w) / 100 * canW, (100 - s.y) / 100 * canH);
+        w = sizePx / canW * 100; h = sizePx / canH * 100;
+        x = s.x + s.w - w;
+      }
     }
     setCrop({ x, y, w, h });
   };
@@ -3197,9 +3218,11 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
     const sy = y / 100 * img.naturalHeight;
     const sw = w / 100 * img.naturalWidth;
     const sh = h / 100 * img.naturalHeight;
+    // 強制正方形輸出（取較小的邊）
+    const sizePx = Math.round(Math.min(sw, sh));
     const out = document.createElement('canvas');
-    out.width = sw; out.height = sh;
-    out.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+    out.width = sizePx; out.height = sizePx;
+    out.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sizePx, sizePx);
     out.toBlob(async (blob) => {
       const croppedFile = new File([blob], `crop_${Date.now()}.jpg`, { type: 'image/jpeg' });
       const compressed = await compressImageFile(croppedFile);

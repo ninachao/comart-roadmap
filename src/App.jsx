@@ -4730,6 +4730,7 @@ function DFMSection({ hasDFM, dfmNotes, dfmAttachments, onToggle, onNotesChange,
 // 從樣品庫 filter 出此產品有關的樣品
 function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
   const [editingSample, setEditingSample] = useState(null);
+  const [viewingGallery, setViewingGallery] = useState(null); // {images, index}
 
   // Filter 出此產品的樣品
   const relatedSamples = useMemo(() => {
@@ -4794,8 +4795,17 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
                 key={s.id}
                 className={`bg-white border rounded-lg p-3 flex gap-3 group ${isOut ? 'opacity-60 border-rose-200' : 'border-amber-200 hover:border-amber-400 hover:bg-amber-50/30'} transition`}
               >
-                <div className="flex-shrink-0 w-16 h-16 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
+                <div
+                  className="flex-shrink-0 w-16 h-16 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center cursor-zoom-in hover:border-amber-400 hover:shadow-md transition relative"
+                  onClick={() => { const imgs = s.images || []; if (imgs.length > 0) setViewingGallery({ images: imgs, index: 0 }); }}
+                  title={`點擊放大${(s.images || []).length > 1 ? `（共 ${s.images.length} 張）` : ''}`}
+                >
                   <SampleMediaThumb media={mainImage} className="w-full h-full object-cover" />
+                  {(s.images || []).length > 1 && (
+                    <span className="absolute bottom-0 right-0 text-[9px] bg-slate-800/70 text-white px-1 rounded-tl">
+                      {s.images.length}
+                    </span>
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-1 mb-0.5">
@@ -4890,10 +4900,18 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
       {editingSample && (
         <SampleEditModal
           sample={editingSample}
-          projects={[project]}  // 傳當前產品（讓 ID/3D 版本可連動下拉）
-          lockProject={true}    // 鎖定產品（不顯示產品下拉）
+          projects={[project]}
+          lockProject={true}
           onSave={handleSave}
           onClose={() => setEditingSample(null)}
+        />
+      )}
+
+      {viewingGallery && (
+        <SampleImageGalleryModal
+          images={viewingGallery.images}
+          initialIndex={viewingGallery.index}
+          onClose={() => setViewingGallery(null)}
         />
       )}
     </CollapsibleSection>

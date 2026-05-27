@@ -2743,6 +2743,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             project={project}
             isViewer={isViewer}
             onUpdateField={onUpdateField}
+            samples={samples}
           />
 
           <section>
@@ -4972,7 +4973,8 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
         ...s,
         _remaining: remaining,
         _effectiveTotal: effectiveTotal,
-        _displayName: relatedProj ? relatedProj.name : s.name,
+        // 優先用樣品自己填的名稱；沒填或和產品名一樣才用產品名
+        _displayName: (s.name && s.name.trim()) ? s.name : (relatedProj ? relatedProj.name : s.name),
         _displayCode: relatedProj ? (relatedProj.code || '') : (s.relatedProjectCode || ''),
         _projectExists: !!relatedProj,
       };
@@ -5166,12 +5168,13 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                 <div className="border border-slate-200 rounded-lg overflow-hidden">
                   {/* 桌面：表格標題列（sm 以上顯示） */}
                   <div className="hidden sm:grid gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold text-slate-500 uppercase tracking-wide"
-                    style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(80px,120px) 84px'}}>
+                    style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(70px,100px) 60px 84px'}}>
                     <span></span>
                     <span>名稱</span>
                     <span>類型</span>
                     <span>剩餘/總數</span>
                     <span>位置</span>
+                    <span>材質</span>
                     <span>操作</span>
                   </div>
 
@@ -5215,7 +5218,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                       <div key={s.id} className={`border-b border-slate-100 last:border-0 transition ${rowBg}`}>
                         {/* 桌面列（sm 以上） */}
                         <div className="hidden sm:grid gap-2 px-3 py-2 items-center"
-                          style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(80px,120px) 84px'}}>
+                          style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(70px,100px) 60px 84px'}}>
                           {thumbEl}
                           <div className="min-w-0">
                             <p className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</p>
@@ -5231,6 +5234,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                             <span className="text-slate-400 text-xs font-normal"> / {s._effectiveTotal ?? s.initialQuantity ?? 0}</span>
                           </span>
                           <span className="text-xs text-emerald-700 truncate">{s.location ? `📍 ${s.location}` : <span className="text-slate-300">—</span>}</span>
+                          <span className="text-xs text-slate-600 truncate">{s.material || <span className="text-slate-300">—</span>}</span>
                           {actionBtns}
                         </div>
 
@@ -7423,23 +7427,37 @@ function TrialRunForm({ data, availableRounds, onChange, onCancel, onSave }) {
 }
 
 // ============= 開發費用摘要 =============
-function DevCostSection({ project, isViewer, onUpdateField }) {
+function DevCostSection({ project, isViewer, onUpdateField, samples = [] }) {
   const [adding, setAdding] = useState(false);
   const [newItem, setNewItem] = useState({ label: '', amount: '', currency: 'TWD', note: '' });
 
   const extraItems = project.devCostItems || [];
 
+  // 此產品的相關樣品（含手板費用）
+  const relatedSamples = samples.filter(s =>
+    s.relatedProjectId === project.id && s.unitPrice && Number(s.unitPrice) > 0
+  );
+
   // 把所有費用按幣別分組加總
   const totalsByCurrency = useMemo(() => {
     const map = {};
 
-    // 手板訂單
+    // 來源 A：手板訂單（prototypeOrders，舊欄位）
     (project.prototypeOrders || []).forEach(o => {
       const cur = o.currency || 'TWD';
       const amt = Number(o.quantity || 0) * Number(o.unitPrice || 0);
       if (amt === 0) return;
-      if (!map[cur]) map[cur] = { proto: 0, mould: 0, extra: 0 };
+      if (!map[cur]) map[cur] = { proto: 0, mould: 0, sample: 0, extra: 0 };
       map[cur].proto += amt;
+    });
+
+    // 來源 B：相關樣品的手板費用（新欄位，在 SampleEditModal 填的）
+    relatedSamples.forEach(s => {
+      const cur = s.currency || 'TWD';
+      const amt = Number(s.unitPrice || 0) * Number(s.initialQuantity || 1);
+      if (amt === 0) return;
+      if (!map[cur]) map[cur] = { proto: 0, mould: 0, sample: 0, extra: 0 };
+      map[cur].sample += amt;
     });
 
     // 模具訂單
@@ -7447,7 +7465,7 @@ function DevCostSection({ project, isViewer, onUpdateField }) {
       const cur = o.currency || 'TWD';
       const amt = Number(o.quantity || 0) * Number(o.unitPrice || 0);
       if (amt === 0) return;
-      if (!map[cur]) map[cur] = { proto: 0, mould: 0, extra: 0 };
+      if (!map[cur]) map[cur] = { proto: 0, mould: 0, sample: 0, extra: 0 };
       map[cur].mould += amt;
     });
 
@@ -7456,17 +7474,17 @@ function DevCostSection({ project, isViewer, onUpdateField }) {
       const cur = item.currency || 'TWD';
       const amt = Number(item.amount || 0);
       if (amt === 0) return;
-      if (!map[cur]) map[cur] = { proto: 0, mould: 0, extra: 0 };
+      if (!map[cur]) map[cur] = { proto: 0, mould: 0, sample: 0, extra: 0 };
       map[cur].extra += amt;
     });
 
     return map;
-  }, [project.prototypeOrders, project.mouldOrders, extraItems]);
+  }, [project.prototypeOrders, project.mouldOrders, extraItems, relatedSamples]);
 
   // 各幣別總計
   const grandTotals = Object.entries(totalsByCurrency).map(([cur, v]) => ({
     currency: cur,
-    total: v.proto + v.mould + v.extra,
+    total: v.proto + v.mould + (v.sample || 0) + v.extra,
   }));
 
   const handleAddItem = () => {
@@ -7482,8 +7500,20 @@ function DevCostSection({ project, isViewer, onUpdateField }) {
   };
 
   const hasProto = (project.prototypeOrders || []).some(o => Number(o.quantity || 0) * Number(o.unitPrice || 0) > 0);
+  const hasSampleCost = relatedSamples.length > 0;
   const hasMould = (project.mouldOrders || []).some(o => Number(o.quantity || 0) * Number(o.unitPrice || 0) > 0);
-  const hasAny = hasProto || hasMould || extraItems.length > 0;
+  const hasAny = hasProto || hasSampleCost || hasMould || extraItems.length > 0;
+
+  // 樣品手板費用按幣別分組（用於顯示）
+  const sampleCostByCur = {};
+  relatedSamples.forEach(s => {
+    const cur = s.currency || 'TWD';
+    const amt = Number(s.unitPrice || 0) * Number(s.initialQuantity || 1);
+    if (!amt) return;
+    sampleCostByCur[cur] = (sampleCostByCur[cur] || { amt: 0, count: 0 });
+    sampleCostByCur[cur].amt += amt;
+    sampleCostByCur[cur].count += 1;
+  });
 
   // 各幣別手板/模具明細
   const protoByCur = {};
@@ -7506,10 +7536,20 @@ function DevCostSection({ project, isViewer, onUpdateField }) {
       <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide mb-2">💰 開發費用</h3>
       <div className="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
 
-        {/* 手板費用（按幣別） */}
+        {/* 手板費用（按幣別）— 來自手板訂單 */}
         {Object.entries(protoByCur).map(([cur, amt]) => (
           <div key={`proto-${cur}`} className="flex items-center justify-between px-3 py-2 border-b border-slate-100">
             <span className="text-xs text-slate-600">手板費用（{(project.prototypeOrders || []).filter(o => (o.currency || 'TWD') === cur).length} 筆）</span>
+            <span className="text-sm font-medium tabular-nums text-slate-800">
+              {amt.toLocaleString()} <span className="text-xs text-slate-400">{cur}</span>
+            </span>
+          </div>
+        ))}
+
+        {/* 相關樣品手板費用（來自 RelatedSamplesSection 填的單價） */}
+        {Object.entries(sampleCostByCur).map(([cur, { amt, count }]) => (
+          <div key={`sample-${cur}`} className="flex items-center justify-between px-3 py-2 border-b border-slate-100">
+            <span className="text-xs text-slate-600">手板費用（樣品 {count} 筆）</span>
             <span className="text-sm font-medium tabular-nums text-slate-800">
               {amt.toLocaleString()} <span className="text-xs text-slate-400">{cur}</span>
             </span>

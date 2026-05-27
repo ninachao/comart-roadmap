@@ -6352,14 +6352,14 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl max-w-2xl w-full p-4 sm:p-5 my-auto max-h-[95vh] flex flex-col">
+    <div className="fixed inset-0 bg-slate-900/50 z-40 flex items-center justify-center p-2 sm:p-4">
+      <div className="bg-white rounded-xl max-w-2xl w-full p-4 sm:p-5 flex flex-col" style={{height:'min(90vh,640px)'}}>
         <div className="flex items-center justify-between mb-3">
           <div>
             <h3 className="text-base font-medium flex items-center gap-2">
               <span>🔔</span>提醒
               <span className="text-xs text-slate-400 font-normal">
-                ({staleProjects.length} 個未更新 · {overdueFollowUps.length} 個跟追到期)
+                ({staleProjects.length} 個久未更新進度 · {overdueFollowUps.length} 個跟蹤到期)
               </span>
             </h3>
           </div>
@@ -6374,10 +6374,10 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
             🔔 跟追到期 ({overdueFollowUps.length})
           </button>
           <button onClick={() => setTab('calendar')} className={`px-3 py-2 text-sm font-medium transition border-b-2 whitespace-nowrap ${tab === 'calendar' ? 'border-blue-500 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-            📅 月曆
+            📅 跟蹤日曆
           </button>
           <button onClick={() => setTab('stale')} className={`px-3 py-2 text-sm font-medium transition border-b-2 whitespace-nowrap ${tab === 'stale' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-            ⚠ 需更新 ({staleProjects.length})
+            ⏰ 久未更新進度 ({staleProjects.length})
           </button>
           <button onClick={() => setTab('manage')} className={`px-3 py-2 text-sm font-medium transition border-b-2 whitespace-nowrap ${tab === 'manage' ? 'border-slate-500 text-slate-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
             ⚙ 管理
@@ -6390,7 +6390,7 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
           {tab === 'stale' && (
             <div>
               <div className="flex justify-between items-center mb-2">
-                <p className="text-xs text-slate-500">設計中的產品超過 14 天未更新進度，或手動加入的產品</p>
+                <p className="text-xs text-slate-500">以下產品超過 14 天沒有新增進度紀錄，可能有資訊沒有同步回來</p>
                 {staleProjects.length > 0 && (
                   <button onClick={copyToWeChat} className="text-xs px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded hover:bg-amber-50 inline-flex items-center gap-1 flex-shrink-0">
                     📋 複製傳 WeChat
@@ -6585,7 +6585,7 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
               {!selectedDate && (
                 <div className="mt-3 pt-3 border-t border-slate-100">
                   <p className="text-xs text-slate-400 mb-2">
-                    點日期查看當天項目 · 紅色圓圈 = 已逾期 · 藍色圓圈 = 尚未到期
+                    點日期查看當天要跟蹤的進度 · 🔴 紅色 = 已逾期 · 🔵 藍色 = 尚未到期
                   </p>
                   {(() => {
                     const todayStr = new Date().toISOString().split('T')[0];

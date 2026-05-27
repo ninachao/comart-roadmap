@@ -46,8 +46,8 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.56.2';
-const BUILD_ID = '20260527-0100';
+const APP_VERSION = 'v0.57.0';
+const BUILD_ID = '20260527-0900';
 
 const VERSION_HISTORY = [
   {
@@ -6309,8 +6309,27 @@ function WithdrawalModal({ sample, currentUser, onSave, onClose }) {
 
 // ============= 提醒頁面 Modal =============
 function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOverrides, onSetOverride, onJumpToProject, onMarkFollowedUp, onClose, isAdmin }) {
-  const [tab, setTab] = useState('stale'); // 'stale' | 'followup' | 'manage'
+  const [tab, setTab] = useState('followup'); // 'stale' | 'followup' | 'calendar' | 'manage'
   const [searchTerm, setSearchTerm] = useState('');
+
+  // 月曆 state
+  const today = new Date();
+  const [calYear, setCalYear] = useState(today.getFullYear());
+  const [calMonth, setCalMonth] = useState(today.getMonth()); // 0-11
+  const [selectedDate, setSelectedDate] = useState(null); // 'YYYY-MM-DD'
+
+  // 所有跟蹤日期 → Map<date, [{project, update}]>
+  const followUpByDate = useMemo(() => {
+    const map = {};
+    projects.forEach(p => {
+      (p.updates || []).forEach(u => {
+        if (!u.followUpDate || u.followedUp) return;
+        if (!map[u.followUpDate]) map[u.followUpDate] = [];
+        map[u.followUpDate].push({ project: p, update: u });
+      });
+    });
+    return map;
+  }, [projects]);
 
   // 所有「未被加入追蹤」的產品（用於手動追加）
   const trackingIds = new Set(staleProjects.map(({ project: p }) => String(p.id)));
@@ -6350,15 +6369,18 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
         </div>
 
         {/* 分頁 */}
-        <div className="flex gap-1 mb-3 border-b border-slate-100">
-          <button onClick={() => setTab('stale')} className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'stale' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-            ⚠ 需更新進度 ({staleProjects.length})
-          </button>
-          <button onClick={() => setTab('followup')} className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'followup' ? 'border-orange-500 text-orange-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+        <div className="flex gap-1 mb-3 border-b border-slate-100 overflow-x-auto">
+          <button onClick={() => setTab('followup')} className={`px-3 py-2 text-sm font-medium transition border-b-2 whitespace-nowrap ${tab === 'followup' ? 'border-orange-500 text-orange-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
             🔔 跟追到期 ({overdueFollowUps.length})
           </button>
-          <button onClick={() => setTab('manage')} className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'manage' ? 'border-blue-500 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-            ⚙ 管理清單
+          <button onClick={() => setTab('calendar')} className={`px-3 py-2 text-sm font-medium transition border-b-2 whitespace-nowrap ${tab === 'calendar' ? 'border-blue-500 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+            📅 月曆
+          </button>
+          <button onClick={() => setTab('stale')} className={`px-3 py-2 text-sm font-medium transition border-b-2 whitespace-nowrap ${tab === 'stale' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+            ⚠ 需更新 ({staleProjects.length})
+          </button>
+          <button onClick={() => setTab('manage')} className={`px-3 py-2 text-sm font-medium transition border-b-2 whitespace-nowrap ${tab === 'manage' ? 'border-slate-500 text-slate-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+            ⚙ 管理
           </button>
         </div>
 
@@ -6436,6 +6458,167 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
           )}
 
           {/* 管理清單分頁 */}
+          {/* 月曆分頁 */}
+          {tab === 'calendar' && (
+            <div>
+              {/* 月份導航 */}
+              <div className="flex items-center justify-between mb-3">
+                <button
+                  onClick={() => { const d = new Date(calYear, calMonth - 1); setCalYear(d.getFullYear()); setCalMonth(d.getMonth()); setSelectedDate(null); }}
+                  className="p-1.5 hover:bg-slate-100 rounded"
+                >
+                  <ChevronLeft className="w-4 h-4 text-slate-500" />
+                </button>
+                <span className="text-sm font-medium text-slate-700">
+                  {calYear} 年 {calMonth + 1} 月
+                </span>
+                <button
+                  onClick={() => { const d = new Date(calYear, calMonth + 1); setCalYear(d.getFullYear()); setCalMonth(d.getMonth()); setSelectedDate(null); }}
+                  className="p-1.5 hover:bg-slate-100 rounded"
+                >
+                  <ChevronRight className="w-4 h-4 text-slate-500" />
+                </button>
+              </div>
+
+              {/* 星期標題 */}
+              <div className="grid grid-cols-7 mb-1">
+                {['日','一','二','三','四','五','六'].map(d => (
+                  <div key={d} className="text-center text-[10px] text-slate-400 font-medium py-1">{d}</div>
+                ))}
+              </div>
+
+              {/* 日期格子 */}
+              {(() => {
+                const firstDay = new Date(calYear, calMonth, 1).getDay();
+                const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+                const todayStr = new Date().toISOString().split('T')[0];
+                const cells = [];
+
+                // 空格
+                for (let i = 0; i < firstDay; i++) cells.push(null);
+                // 日期
+                for (let d = 1; d <= daysInMonth; d++) {
+                  const dateStr = `${calYear}-${String(calMonth + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                  cells.push(dateStr);
+                }
+
+                return (
+                  <div className="grid grid-cols-7 gap-0.5">
+                    {cells.map((dateStr, i) => {
+                      if (!dateStr) return <div key={`empty-${i}`} />;
+                      const items = followUpByDate[dateStr] || [];
+                      const isToday = dateStr === todayStr;
+                      const isPast = dateStr < todayStr;
+                      const isSelected = dateStr === selectedDate;
+                      const hasItems = items.length > 0;
+                      const dayNum = parseInt(dateStr.split('-')[2]);
+
+                      return (
+                        <button
+                          key={dateStr}
+                          onClick={() => setSelectedDate(isSelected ? null : dateStr)}
+                          className={`relative flex flex-col items-center py-1 rounded-lg text-xs transition ${
+                            isSelected ? 'bg-blue-100 ring-2 ring-blue-400' :
+                            isToday ? 'bg-orange-50 ring-1 ring-orange-300' :
+                            hasItems ? 'bg-blue-50 hover:bg-blue-100' :
+                            'hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className={`font-medium ${
+                            isToday ? 'text-orange-600' :
+                            isPast && hasItems ? 'text-rose-600' :
+                            hasItems ? 'text-blue-700' :
+                            'text-slate-600'
+                          }`}>
+                            {dayNum}
+                          </span>
+                          {hasItems && (
+                            <span className={`text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center mt-0.5 ${
+                              isPast ? 'bg-rose-500 text-white' : 'bg-blue-500 text-white'
+                            }`}>
+                              {items.length}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              {/* 選取日期的項目 */}
+              {selectedDate && (
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <p className="text-xs font-medium text-slate-600 mb-2">
+                    {selectedDate} 的跟蹤項目（{(followUpByDate[selectedDate] || []).length} 筆）
+                  </p>
+                  {(followUpByDate[selectedDate] || []).length === 0 ? (
+                    <p className="text-xs text-slate-400">這天沒有跟蹤項目</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {(followUpByDate[selectedDate] || []).map(({ project: p, update: u }, i) => (
+                        <div key={i} className="bg-white border border-blue-200 rounded-lg px-3 py-2 flex items-baseline gap-2 flex-wrap">
+                          <button
+                            onClick={() => { onJumpToProject(p); onClose(); }}
+                            className="text-sm text-slate-800 hover:text-blue-700 hover:underline font-medium"
+                          >
+                            {p.name}
+                          </button>
+                          {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
+                          <span className="text-xs text-slate-600 flex-1 truncate">— {u.text}</span>
+                          {isAdmin && (
+                            <button
+                              onClick={() => onMarkFollowedUp(p, u)}
+                              className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0"
+                            >
+                              ✓ 已跟追
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 本月所有跟蹤項目 */}
+              {!selectedDate && (
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <p className="text-xs text-slate-400 mb-2">
+                    點日期查看當天項目 · 紅色圓圈 = 已逾期 · 藍色圓圈 = 尚未到期
+                  </p>
+                  {(() => {
+                    const todayStr = new Date().toISOString().split('T')[0];
+                    const monthStr = `${calYear}-${String(calMonth + 1).padStart(2,'0')}`;
+                    const thisMonthDates = Object.keys(followUpByDate)
+                      .filter(d => d.startsWith(monthStr))
+                      .sort();
+                    if (thisMonthDates.length === 0) return <p className="text-xs text-slate-400">本月沒有跟蹤提醒</p>;
+                    return (
+                      <div className="space-y-1">
+                        {thisMonthDates.map(dateStr => {
+                          const items = followUpByDate[dateStr];
+                          const isPast = dateStr < todayStr;
+                          return (
+                            <button
+                              key={dateStr}
+                              onClick={() => setSelectedDate(dateStr)}
+                              className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50"
+                            >
+                              <span className={`text-xs font-medium w-24 flex-shrink-0 ${isPast ? 'text-rose-600' : 'text-blue-600'}`}>{dateStr}</span>
+                              <span className="text-xs text-slate-600 truncate">{items.map(it => it.project.name).join('、')}</span>
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${isPast ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}`}>{items.length} 筆</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
+
           {tab === 'manage' && (
             <div>
               <p className="text-xs text-slate-500 mb-3">手動加入不在清單的產品，或查看已排除的產品</p>

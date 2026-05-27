@@ -2269,7 +2269,7 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
               src={mainImage.url || mainImage.dataUrl}
               path={mainImage.path}
               alt={project.name}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
               style={mainImage.fit === 'cover' ? { objectFit: 'cover' } : undefined}
             />
           ) : (
@@ -3014,8 +3014,20 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
   const imgRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragType, setDragType] = useState(null); // 'move' | 'nw'|'ne'|'sw'|'se'
-  const [crop, setCrop] = useState({ x: 20, y: 20, w: 60, h: 60 }); // % 百分比
+  const [crop, setCrop] = useState({ x: 20, y: 20, w: 60, h: 60 }); // 暫時預設，載入圖片後重算
   const [saving, setSaving] = useState(false);
+
+  // 計算正方形裁剪框（根據圖片長寬比）
+  const initSquareCrop = (imgW, imgH, canvasW, canvasH) => {
+    // 取短邊的 80% 作為正方形邊長（以 % 為單位）
+    const shortSide = Math.min(imgW, imgH);
+    const size = (shortSide / Math.max(imgW, imgH)) * 80;
+    const wPct = imgW >= imgH ? size : 80;
+    const hPct = imgH >= imgW ? size : 80;
+    const x = (100 - wPct) / 2;
+    const y = (100 - hPct) / 2;
+    return { x, y, w: wPct, h: hPct };
+  };
   const startRef = useRef(null);
   const cropRef = useRef(crop);
   cropRef.current = crop;
@@ -3088,6 +3100,10 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
           if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
           if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
           canvas.width = w; canvas.height = h;
+          // 自動設定正方形裁剪框
+          const sq = initSquareCrop(img.naturalWidth, img.naturalHeight, w, h);
+          setCrop(sq);
+          cropRef.current = sq;
           draw();
         };
         img.src = imgSrc;
@@ -3155,20 +3171,17 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
       x = Math.max(0, Math.min(100 - w, s.x + dx));
       y = Math.max(0, Math.min(100 - h, s.y + dy));
     } else if (dragType === 'se') {
-      w = Math.max(MIN, Math.min(100 - s.x, s.w + dx));
-      h = Math.max(MIN, Math.min(100 - s.y, s.h + dy));
+      const size = Math.max(MIN, Math.min(100 - s.x, s.w + dx, 100 - s.y, s.h + dy));
+      w = size; h = size;
     } else if (dragType === 'nw') {
-      const nx = Math.max(0, Math.min(s.x + s.w - MIN, s.x + dx));
-      const ny = Math.max(0, Math.min(s.y + s.h - MIN, s.y + dy));
-      w = s.w - (nx - s.x); h = s.h - (ny - s.y); x = nx; y = ny;
+      const size = Math.max(MIN, Math.min(s.x + s.w, s.y + s.h, s.w - dx, s.h - dy));
+      x = s.x + s.w - size; y = s.y + s.h - size; w = size; h = size;
     } else if (dragType === 'ne') {
-      const ny = Math.max(0, Math.min(s.y + s.h - MIN, s.y + dy));
-      w = Math.max(MIN, Math.min(100 - s.x, s.w + dx));
-      h = s.h - (ny - s.y); y = ny;
+      const size = Math.max(MIN, Math.min(100 - s.x, s.y + s.h, s.w + dx, s.h - dy));
+      y = s.y + s.h - size; w = size; h = size;
     } else if (dragType === 'sw') {
-      const nx = Math.max(0, Math.min(s.x + s.w - MIN, s.x + dx));
-      w = s.w - (nx - s.x); x = nx;
-      h = Math.max(MIN, Math.min(100 - s.y, s.h + dy));
+      const size = Math.max(MIN, Math.min(s.x + s.w, 100 - s.y, s.w - dx, s.h + dy));
+      x = s.x + s.w - size; w = size; h = size;
     }
     setCrop({ x, y, w, h });
   };
@@ -3209,7 +3222,7 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
           <h3 className="text-sm font-medium">裁剪圖片</h3>
           <button onClick={handleClose} className="p-1.5 hover:bg-slate-100 rounded"><X className="w-4 h-4 text-slate-500" /></button>
         </div>
-        <p className="text-xs text-slate-400 mb-2">拖曳框框移動位置，拖曳四個角調整大小</p>
+        <p className="text-xs text-slate-400 mb-2">框框是正方形 · 拖曳移動位置 · 拖曳四個角縮放 · 讓產品完整在框內再儲存</p>
         <div className="flex justify-center mb-3 touch-none">
           <canvas
             ref={canvasRef}
@@ -3292,7 +3305,7 @@ function SampleImageGalleryModal({ images, initialIndex = 0, onClose }) {
                 onClick={() => setCurrent(i)}
                 className={`w-12 h-12 rounded border-2 overflow-hidden flex-shrink-0 transition ${i === current ? 'border-white' : 'border-transparent opacity-60 hover:opacity-90'}`}
               >
-                <SampleMediaThumb media={img} className="w-full h-full object-cover" />
+                <SampleMediaThumb media={img} className="w-full h-full object-contain" />
               </button>
             ))}
           </div>
@@ -4800,7 +4813,7 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
                   onClick={() => { const imgs = s.images || []; if (imgs.length > 0) setViewingGallery({ images: imgs, index: 0 }); }}
                   title={`點擊放大${(s.images || []).length > 1 ? `（共 ${s.images.length} 張）` : ''}`}
                 >
-                  <SampleMediaThumb media={mainImage} className="w-full h-full object-cover" />
+                  <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                   {(s.images || []).length > 1 && (
                     <span className="absolute bottom-0 right-0 text-[9px] bg-slate-800/70 text-white px-1 rounded-tl">
                       {s.images.length}
@@ -4861,7 +4874,10 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
                     </span>
                     {s.location && <span className="text-emerald-700">📍 {s.location}</span>}
                   </div>
-                  <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-2">
+                  <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-2 items-center">
+                    {s.sampleNo && <span className="font-mono bg-slate-100 text-slate-600 px-1 rounded">{s.sampleNo}</span>}
+                    {s.sampleNo && s._displayCode && <span className="text-slate-300">·</span>}
+                    {s._displayCode && <span className="text-blue-500 font-mono">{s._displayCode}</span>}
                     {s.idVersion && <span className="text-blue-600">ID {s.idVersion}</span>}
                     {s.threeDVersion && <span className="text-purple-600">3D {s.threeDVersion}</span>}
                     {s.material && <span>{s.material}</span>}
@@ -4989,7 +5005,7 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
             onClick={() => { const imgs = s.images || []; if (imgs.length > 0) onViewGallery({ images: imgs, index: 0 }); }}
             title={`點擊放大（共 ${(s.images || []).length} 張）`}
           >
-            <SampleMediaThumb media={mainImage} className="w-full h-full object-cover" />
+            <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
             {(s.images || []).length > 1 && (
               <span className="absolute bottom-0 right-0 text-[9px] bg-slate-800/70 text-white px-0.5 rounded-tl">{(s.images || []).length}</span>
             )}
@@ -5022,7 +5038,9 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</p>
                 <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                  {s._displayCode && !compact && <button onClick={() => onJump(s.relatedProjectId)} className="text-[10px] text-blue-600 hover:underline font-mono">{s._displayCode}</button>}
+                  {s.sampleNo && <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1 rounded">{s.sampleNo}</span>}
+                  {s.sampleNo && s._displayCode && !compact && <span className="text-[10px] text-slate-300">·</span>}
+                  {s._displayCode && !compact && <button onClick={() => onJump(s.relatedProjectId)} className="text-[10px] text-blue-500 hover:underline font-mono">{s._displayCode}</button>}
                   {s.idVersion && <span className="text-[10px] text-blue-500">ID {s.idVersion}</span>}
                   {s.threeDVersion && <span className="text-[10px] text-purple-500">3D {s.threeDVersion}</span>}
                 </div>
@@ -5044,7 +5062,9 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</p>
                     <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                      {s._displayCode && !compact && <button onClick={() => onJump(s.relatedProjectId)} className="text-[10px] text-blue-600 hover:underline font-mono">{s._displayCode}</button>}
+                      {s.sampleNo && <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1 rounded">{s.sampleNo}</span>}
+                  {s.sampleNo && s._displayCode && !compact && <span className="text-[10px] text-slate-300">·</span>}
+                  {s._displayCode && !compact && <button onClick={() => onJump(s.relatedProjectId)} className="text-[10px] text-blue-500 hover:underline font-mono">{s._displayCode}</button>}
                       {s.idVersion && <span className="text-[10px] text-blue-500">ID {s.idVersion}</span>}
                       {s.threeDVersion && <span className="text-[10px] text-purple-500">3D {s.threeDVersion}</span>}
                     </div>
@@ -5111,7 +5131,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       const matchType = typeFilter === '全部' || s.type === typeFilter;
       const matchLocation = locationFilter === '全部' || s.location === locationFilter;
       const matchSearch = !searchTerm || [
-        s._displayName, s._displayCode, s.material, s.location, s.notes, s.orderNote, s.source
+        s._displayName, s._displayCode, s.sampleNo, s.material, s.location, s.notes, s.orderNote, s.source
       ].some(v => (v || '').toLowerCase().includes(searchTerm.toLowerCase()));
       return matchType && matchLocation && matchSearch;
     }).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -5532,7 +5552,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                 return (
                                   <div key={it.sampleId} className="flex gap-2 items-center bg-white border border-slate-200 rounded-lg p-2">
                                     <div className="flex-shrink-0 w-12 h-12 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
-                                      <SampleMediaThumb media={mainImage} className="w-full h-full object-cover" />
+                                      <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                                     </div>
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-baseline gap-1.5 flex-wrap">
@@ -5786,7 +5806,7 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose }
                   >
                     <input type="checkbox" checked={isSel} readOnly className="w-4 h-4 flex-shrink-0" />
                     <div className="flex-shrink-0 w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
-                      <SampleMediaThumb media={mainImage} className="w-full h-full object-cover" />
+                      <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline gap-1.5">
@@ -5839,6 +5859,7 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
     source: sample.source || '',
     // 手板訂單欄位
     orderNo: sample.orderNo || '',
+    sampleNo: sample.sampleNo || '',  // 樣品自己的料號（如 6MT0100306）
     orderDate: sample.orderDate || '',
     unitPrice: sample.unitPrice || '',
     currency: sample.currency || 'TWD',
@@ -5970,15 +5991,27 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs text-slate-600 mb-1">名稱 *</label>
-            <input
-              type="text"
-              value={data.name}
-              onChange={(e) => setData(prev => ({ ...prev, name: e.target.value }))}
-              placeholder="例：MagSafe 磁吸支架"
-              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
-            />
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">名稱 *</label>
+              <input
+                type="text"
+                value={data.name}
+                onChange={(e) => setData(prev => ({ ...prev, name: e.target.value }))}
+                placeholder="例：MagSafe 磁吸支架"
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">樣品料號（選填）</label>
+              <input
+                type="text"
+                value={data.sampleNo}
+                onChange={(e) => setData(prev => ({ ...prev, sampleNo: e.target.value }))}
+                placeholder="如 6MT0100306"
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
           </div>
 
           {/* 關聯產品（所有類型都可選，非僅手板） */}
@@ -6227,9 +6260,9 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                   return (
                     <div key={i} className="relative aspect-square bg-slate-100 border border-slate-200 rounded overflow-hidden group">
                       {isVid ? (
-                        <video src={img.url} className="w-full h-full object-cover" preload="metadata" muted playsInline onMouseEnter={e => e.target.play()} onMouseLeave={e => { e.target.pause(); e.target.currentTime = 0; }} />
+                        <video src={img.url} className="w-full h-full object-contain" preload="metadata" muted playsInline onMouseEnter={e => e.target.play()} onMouseLeave={e => { e.target.pause(); e.target.currentTime = 0; }} />
                       ) : (
-                        <StorageImage src={img.url || img.dataUrl} path={img.path} alt={img.name} className="w-full h-full" style={{ objectFit: 'cover' }} />
+                        <StorageImage src={img.url || img.dataUrl} path={img.path} alt={img.name} className="w-full h-full" style={{ objectFit: 'contain' }} />
                       )}
                       {isVid && <div className="absolute bottom-1 left-1 text-[10px] bg-slate-900/70 text-white px-1 rounded">▶</div>}
                       {/* 操作按鈕 */}
@@ -7083,7 +7116,7 @@ function PrototypeOverviewModal({ projects, onClose, onJumpToProject }) {
                         src={o._displayImage.url || o._displayImage.dataUrl}
                         path={o._displayImage.path}
                         alt={o._projectName}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-contain"
                       />
                     ) : (
                       <ImageIcon className="w-6 h-6 text-slate-300" />

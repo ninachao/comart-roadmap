@@ -5696,16 +5696,25 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                             {items.length} 項樣品 · 已打包 {packedCount}/{items.length}
                           </div>
                         </div>
-                        {canEdit && (
-                          <div className="flex gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                            <button onClick={() => setEditingExhibition(ex)} className="p-1 text-slate-400 hover:text-slate-700">
-                              <Edit2 className="w-3.5 h-3.5" />
+                        <div className="flex gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => exportExhibitionPDF(ex, samplesWithRemaining)}
+                              className="p-1 text-slate-400 hover:text-blue-600"
+                              title="匯出 PDF"
+                            >
+                              <Download className="w-3.5 h-3.5" />
                             </button>
-                            <button onClick={() => handleDeleteExhibition(ex)} className="p-1 text-slate-400 hover:text-rose-600">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {canEdit && (
+                              <>
+                                <button onClick={() => setEditingExhibition(ex)} className="p-1 text-slate-400 hover:text-slate-700">
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button onClick={() => handleDeleteExhibition(ex)} className="p-1 text-slate-400 hover:text-rose-600">
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
                           </div>
-                        )}
                       </div>
 
                       {/* 展開：樣品籌備清單 */}
@@ -6100,6 +6109,154 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose }
       </div>
     </div>
   );
+}
+
+// === 展覽 PDF 匯出 ===
+function exportExhibitionPDF(exhibition, allSamples) {
+  const items = exhibition.items || [];
+  const today = new Date().toLocaleDateString('zh-TW');
+
+  // 計算統計
+  const bundleCount = items.filter(it => it.type === 'bundle').length;
+  const singleCount = items.filter(it => it.type !== 'bundle').length;
+
+  // 打包狀態顏色（文字）
+  const packLabel = (status) => {
+    switch(status) {
+      case '已打包': return '✅ 已打包';
+      case '已帶走': return '🚗 已帶走';
+      case '已歸還': return '↩ 已歸還';
+      default: return '⬜ 待準備';
+    }
+  };
+
+  // 建立 HTML 內容
+  let rows = '';
+  items.forEach((it, idx) => {
+    if (it.type === 'bundle') {
+      // 組合品標題列
+      rows += `
+        <tr class="bundle-row">
+          <td colspan="4" class="bundle-title">
+            <span class="bundle-badge">組合品</span> ${it.name || '(未命名組合品)'}
+          </td>
+          <td class="status ${(it.packStatus || '').replace(/\s/g,'')}">${packLabel(it.packStatus)}</td>
+        </tr>`;
+      // 組合品內的散件
+      (it.bundleItems || []).forEach((bi, bii) => {
+        const s = allSamples.find(s => s.id === bi.sampleId);
+        if (!s) return;
+        rows += `
+          <tr class="bundle-item-row">
+            <td class="sub-indent">└ ${s._displayName || s.name}</td>
+            <td>${s.sampleNo || s._displayCode || '—'}</td>
+            <td class="type-cell">${s.type}</td>
+            <td class="qty-cell">× ${bi.qty || 1}</td>
+            <td>—</td>
+          </tr>`;
+      });
+    } else {
+      // 散件
+      const s = allSamples.find(s => s.id === it.sampleId);
+      if (!s) return;
+      rows += `
+        <tr class="${idx % 2 === 0 ? 'even' : 'odd'}">
+          <td>${s._displayName || s.name}</td>
+          <td>${s.sampleNo || s._displayCode || '—'}</td>
+          <td class="type-cell">${s.type}</td>
+          <td class="qty-cell">× ${it.qty || 1}</td>
+          <td class="status ${(it.packStatus || '').replace(/\s/g,'')}">${packLabel(it.packStatus)}</td>
+        </tr>`;
+    }
+  });
+
+  const html = `<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>${exhibition.name} — 展覽樣品清單</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'PingFang TC', '微軟正黑體', Arial, sans-serif; font-size: 13px; color: #1e293b; padding: 32px; }
+  h1 { font-size: 22px; font-weight: 700; color: #0f172a; margin-bottom: 4px; }
+  .meta { font-size: 12px; color: #64748b; margin-bottom: 20px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .meta span { display: flex; align-items: center; gap: 4px; }
+  .stats { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; display: flex; gap: 24px; }
+  .stat { text-align: center; }
+  .stat-num { font-size: 20px; font-weight: 700; color: #0f172a; }
+  .stat-label { font-size: 11px; color: #64748b; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #0f172a; color: white; padding: 8px 12px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+  td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+  tr.even td { background: #fff; }
+  tr.odd td { background: #f8fafc; }
+  tr.bundle-row td { background: #f3e8ff; font-weight: 600; }
+  tr.bundle-item-row td { background: #faf5ff; font-size: 12px; color: #4b5563; }
+  .bundle-badge { background: #7c3aed; color: white; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-right: 6px; font-weight: 600; }
+  .bundle-title { font-size: 13px; }
+  .sub-indent { padding-left: 24px; }
+  .type-cell { font-size: 11px; color: #64748b; }
+  .qty-cell { font-weight: 600; color: #0f172a; text-align: center; }
+  .status { font-size: 12px; white-space: nowrap; }
+  .footer { margin-top: 24px; font-size: 11px; color: #94a3b8; text-align: right; }
+  @media print {
+    body { padding: 16px; }
+    @page { margin: 1.5cm; size: A4; }
+  }
+</style>
+</head>
+<body>
+  <h1>${exhibition.name || '展覽樣品清單'}</h1>
+  <div class="meta">
+    ${exhibition.date ? `<span>📅 ${exhibition.date}</span>` : ''}
+    ${exhibition.location ? `<span>📍 ${exhibition.location}</span>` : ''}
+    <span>🖨 匯出日期：${today}</span>
+  </div>
+  ${exhibition.notes ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#78350f;">${exhibition.notes}</div>` : ''}
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-num">${items.length}</div>
+      <div class="stat-label">樣品 / 組合品</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">${bundleCount}</div>
+      <div class="stat-label">組合品</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">${singleCount}</div>
+      <div class="stat-label">散件</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">${items.filter(it => ['已打包','已帶走','已歸還'].includes(it.packStatus)).length}</div>
+      <div class="stat-label">已完成準備</div>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>名稱</th>
+        <th>料號</th>
+        <th>類型</th>
+        <th>數量</th>
+        <th>打包狀態</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px">尚未加入樣品</td></tr>'}
+    </tbody>
+  </table>
+  <div class="footer">COMART Product Dev · 產品進度管理系統 · ${today}</div>
+  <script>window.onload = function() { window.print(); }</script>
+</body>
+</html>`;
+
+  const w = window.open('', '_blank');
+  if (w) {
+    w.document.write(html);
+    w.document.close();
+  } else {
+    alert('請允許彈出視窗以開啟 PDF 預覽');
+  }
 }
 
 // === 建立組合品 Modal ===

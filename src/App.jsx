@@ -5107,7 +5107,7 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
       {/* 桌面：表格標題列 */}
       {!compact && (
         <div className="hidden sm:grid gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold text-slate-500 uppercase tracking-wide"
-          style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(70px,100px) 60px 84px'}}>
+          style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(100px,1fr) 60px 84px'}}>
           <span></span><span>名稱</span><span>類型</span><span>剩餘/總數</span><span>位置</span><span>材質</span><span>操作</span>
         </div>
       )}
@@ -5151,7 +5151,7 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
           <div key={s.id} className={`border-b border-slate-100 last:border-0 transition ${rowBg}`}>
             {/* 桌面列 */}
             <div className="hidden sm:grid gap-2 px-3 py-2 items-center"
-              style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(70px,100px) 60px 84px'}}>
+              style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(100px,1fr) 60px 84px'}}>
               {thumbEl}
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</p>

@@ -5697,20 +5697,29 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                           </div>
                         </div>
                             <div className="flex gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={() => exportExhibitionPDF(ex, samplesWithRemaining, false)}
-                              className="p-1 text-slate-400 hover:text-blue-600"
-                              title="匯出 PDF（文字）"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => exportExhibitionPDF(ex, samplesWithRemaining, true)}
-                              className="p-1 text-slate-400 hover:text-purple-600"
-                              title="匯出 PDF（含圖片，較慢）"
-                            >
-                              <ImageIcon className="w-3.5 h-3.5" />
-                            </button>
+                            <div className="relative group/pdf">
+                              <button
+                                className="p-1 text-slate-400 hover:text-blue-600"
+                                title="匯出 PDF"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
+                              {/* hover 下拉選項 */}
+                              <div className="absolute right-0 top-full mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg z-10 hidden group-hover/pdf:block min-w-[110px]">
+                                <button
+                                  onClick={() => exportExhibitionPDF(ex, samplesWithRemaining, false)}
+                                  className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-t-lg"
+                                >
+                                  文字版
+                                </button>
+                                <button
+                                  onClick={() => exportExhibitionPDF(ex, samplesWithRemaining, true)}
+                                  className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-b-lg border-t border-slate-100"
+                                >
+                                  含圖片版
+                                </button>
+                              </div>
+                            </div>
                             {canEdit && (
                               <>
                                 <button onClick={() => setEditingExhibition(ex)} className="p-1 text-slate-400 hover:text-slate-700">
@@ -6207,7 +6216,7 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
       + (exhibition.date ? '<span>📅 ' + exhibition.date + '</span>' : '')
       + (exhibition.location ? '<span>📍 ' + exhibition.location + '</span>' : '')
       + '<span>🖨 匯出日期：' + today + '</span>'
-      + (withImages ? '<span>📷 含圖片版</span>' : '<span>📝 文字版</span>')
+      + (withImages ? '<span>含圖片版</span>' : '<span>文字版</span>')
       + '</div>'
       + notesHtml
       + '<div class="stats">'

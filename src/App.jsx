@@ -5696,13 +5696,20 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                             {items.length} 項樣品 · 已打包 {packedCount}/{items.length}
                           </div>
                         </div>
-                        <div className="flex gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                             <button
-                              onClick={() => exportExhibitionPDF(ex, samplesWithRemaining)}
+                              onClick={() => exportExhibitionPDF(ex, samplesWithRemaining, false)}
                               className="p-1 text-slate-400 hover:text-blue-600"
-                              title="匯出 PDF"
+                              title="匯出 PDF（文字）"
                             >
                               <Download className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => exportExhibitionPDF(ex, samplesWithRemaining, true)}
+                              className="p-1 text-slate-400 hover:text-purple-600"
+                              title="匯出 PDF（含圖片，較慢）"
+                            >
+                              <ImageIcon className="w-3.5 h-3.5" />
                             </button>
                             {canEdit && (
                               <>
@@ -6112,151 +6119,161 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose }
 }
 
 // === 展覽 PDF 匯出 ===
-function exportExhibitionPDF(exhibition, allSamples) {
+function exportExhibitionPDF(exhibition, allSamples, withImages) {
+  withImages = !!withImages;
   const items = exhibition.items || [];
   const today = new Date().toLocaleDateString('zh-TW');
+  const bundleCount = items.filter(function(it){ return it.type === 'bundle'; }).length;
+  const singleCount = items.filter(function(it){ return it.type !== 'bundle'; }).length;
 
-  // 計算統計
-  const bundleCount = items.filter(it => it.type === 'bundle').length;
-  const singleCount = items.filter(it => it.type !== 'bundle').length;
+  function packLabel(status) {
+    if (status === '已打包') return '✅ 已打包';
+    if (status === '已帶走') return '🚗 已帶走';
+    if (status === '已歸還') return '↩ 已歸還';
+    return '⬜ 待準備';
+  }
 
-  // 打包狀態顏色（文字）
-  const packLabel = (status) => {
-    switch(status) {
-      case '已打包': return '✅ 已打包';
-      case '已帶走': return '🚗 已帶走';
-      case '已歸還': return '↩ 已歸還';
-      default: return '⬜ 待準備';
+  function buildAndOpen(imgCache) {
+    function imgTag(url, size) {
+      size = size || 48;
+      if (!withImages) return '';
+      var b64 = imgCache[url];
+      if (!b64) return '<div style="width:' + size + 'px;height:' + size + 'px;background:#f1f5f9;border-radius:4px;border:1px solid #e2e8f0;display:inline-block;"></div>';
+      return '<img src="' + b64 + '" style="width:' + size + 'px;height:' + size + 'px;object-fit:contain;border-radius:4px;border:1px solid #e2e8f0;background:#fff;vertical-align:middle;" />';
     }
-  };
 
-  // 建立 HTML 內容
-  let rows = '';
-  items.forEach((it, idx) => {
-    if (it.type === 'bundle') {
-      // 組合品標題列
-      rows += `
-        <tr class="bundle-row">
-          <td colspan="4" class="bundle-title">
-            <span class="bundle-badge">組合品</span> ${it.name || '(未命名組合品)'}
-          </td>
-          <td class="status ${(it.packStatus || '').replace(/\s/g,'')}">${packLabel(it.packStatus)}</td>
-        </tr>`;
-      // 組合品內的散件
-      (it.bundleItems || []).forEach((bi, bii) => {
-        const s = allSamples.find(s => s.id === bi.sampleId);
+    var rows = '';
+    items.forEach(function(it, idx) {
+      if (it.type === 'bundle') {
+        var bundleImgs = '';
+        if (withImages) {
+          bundleImgs = '<span style="display:inline-flex;gap:3px;margin-left:8px;vertical-align:middle;">';
+          (it.bundleItems || []).slice(0, 4).forEach(function(bi) {
+            var s = allSamples.find(function(s){ return s.id === bi.sampleId; });
+            if (s) bundleImgs += imgTag((s.images || [])[0] && (s.images[0].url), 28);
+          });
+          bundleImgs += '</span>';
+        }
+        rows += '<tr style="background:#f3e8ff;font-weight:600;">';
+        rows += '<td colspan="4"><span style="background:#7c3aed;color:white;font-size:10px;padding:1px 6px;border-radius:10px;margin-right:6px;">組合品</span>' + (it.name || '未命名組合品') + bundleImgs + '</td>';
+        rows += '<td>' + packLabel(it.packStatus) + '</td></tr>';
+        (it.bundleItems || []).forEach(function(bi) {
+          var s = allSamples.find(function(s){ return s.id === bi.sampleId; });
+          if (!s) return;
+          var imgUrl = (s.images || [])[0] && s.images[0].url;
+          rows += '<tr style="background:#faf5ff;font-size:12px;color:#4b5563;">';
+          rows += '<td style="padding-left:24px;">' + (withImages ? imgTag(imgUrl, 28) + ' ' : '') + '└ ' + (s._displayName || s.name) + '</td>';
+          rows += '<td>' + (s.sampleNo || s._displayCode || '—') + '</td>';
+          rows += '<td style="font-size:11px;color:#64748b;">' + s.type + '</td>';
+          rows += '<td style="font-weight:600;text-align:center;">× ' + (bi.qty || 1) + '</td>';
+          rows += '<td>—</td></tr>';
+        });
+      } else {
+        var s = allSamples.find(function(s){ return s.id === it.sampleId; });
         if (!s) return;
-        rows += `
-          <tr class="bundle-item-row">
-            <td class="sub-indent">└ ${s._displayName || s.name}</td>
-            <td>${s.sampleNo || s._displayCode || '—'}</td>
-            <td class="type-cell">${s.type}</td>
-            <td class="qty-cell">× ${bi.qty || 1}</td>
-            <td>—</td>
-          </tr>`;
+        var imgUrl = (s.images || [])[0] && s.images[0].url;
+        var bg = idx % 2 === 0 ? '#fff' : '#f8fafc';
+        rows += '<tr style="background:' + bg + ';">';
+        rows += '<td>' + (withImages ? imgTag(imgUrl, 40) + ' ' : '') + (s._displayName || s.name) + '</td>';
+        rows += '<td>' + (s.sampleNo || s._displayCode || '—') + '</td>';
+        rows += '<td style="font-size:11px;color:#64748b;">' + s.type + '</td>';
+        rows += '<td style="font-weight:600;text-align:center;">× ' + (it.qty || 1) + '</td>';
+        rows += '<td style="font-size:12px;">' + packLabel(it.packStatus) + '</td></tr>';
+      }
+    });
+
+    var packedCount = items.filter(function(it){ return ['已打包','已帶走','已歸還'].indexOf(it.packStatus) !== -1; }).length;
+    var notesHtml = exhibition.notes ? '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#78350f;">' + exhibition.notes + '</div>' : '';
+
+    var html = '<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8">'
+      + '<title>' + (exhibition.name || '展覽樣品清單') + '</title>'
+      + '<style>'
+      + '* { box-sizing: border-box; margin: 0; padding: 0; }'
+      + 'body { font-family: PingFang TC, 微軟正黑體, Arial, sans-serif; font-size: 13px; color: #1e293b; padding: 32px; }'
+      + 'h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }'
+      + '.meta { font-size: 12px; color: #64748b; margin-bottom: 20px; display: flex; gap: 16px; flex-wrap: wrap; }'
+      + '.stats { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; display: flex; gap: 24px; }'
+      + '.stat { text-align: center; }'
+      + '.stat-num { font-size: 20px; font-weight: 700; }'
+      + '.stat-label { font-size: 11px; color: #64748b; margin-top: 2px; }'
+      + 'table { width: 100%; border-collapse: collapse; }'
+      + 'th { background: #0f172a; color: white; padding: 8px 12px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .05em; }'
+      + 'td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }'
+      + '.footer { margin-top: 24px; font-size: 11px; color: #94a3b8; text-align: right; }'
+      + '@media print { body { padding: 16px; } @page { margin: 1.5cm; size: A4; } }'
+      + '</style></head><body>'
+      + '<h1>' + (exhibition.name || '展覽樣品清單') + '</h1>'
+      + '<div class="meta">'
+      + (exhibition.date ? '<span>📅 ' + exhibition.date + '</span>' : '')
+      + (exhibition.location ? '<span>📍 ' + exhibition.location + '</span>' : '')
+      + '<span>🖨 匯出日期：' + today + '</span>'
+      + (withImages ? '<span>📷 含圖片版</span>' : '<span>📝 文字版</span>')
+      + '</div>'
+      + notesHtml
+      + '<div class="stats">'
+      + '<div class="stat"><div class="stat-num">' + items.length + '</div><div class="stat-label">樣品 / 組合品</div></div>'
+      + '<div class="stat"><div class="stat-num">' + bundleCount + '</div><div class="stat-label">組合品</div></div>'
+      + '<div class="stat"><div class="stat-num">' + singleCount + '</div><div class="stat-label">散件</div></div>'
+      + '<div class="stat"><div class="stat-num">' + packedCount + '</div><div class="stat-label">已完成準備</div></div>'
+      + '</div>'
+      + '<table><thead><tr>'
+      + '<th>名稱</th><th>料號</th><th>類型</th><th>數量</th><th>打包狀態</th>'
+      + '</tr></thead><tbody>'
+      + (rows || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px">尚未加入樣品</td></tr>')
+      + '</tbody></table>'
+      + '<div class="footer">COMART Product Dev · ' + today + '</div>'
+      + '<script>window.onload = function() { window.print(); }</' + 'script>'
+      + '</body></html>';
+
+    var w = window.open('', '_blank');
+    if (w) { w.document.write(html); w.document.close(); }
+    else { alert('請允許彈出視窗以開啟 PDF 預覽'); }
+  }
+
+  if (!withImages) {
+    buildAndOpen({});
+    return;
+  }
+
+  // 含圖片：先 fetch 所有圖片轉 base64
+  var urlsToFetch = [];
+  var seen = {};
+  items.forEach(function(it) {
+    if (it.type === 'bundle') {
+      (it.bundleItems || []).forEach(function(bi) {
+        var s = allSamples.find(function(s){ return s.id === bi.sampleId; });
+        var url = s && (s.images || [])[0] && s.images[0].url;
+        if (url && !seen[url]) { seen[url] = true; urlsToFetch.push(url); }
       });
     } else {
-      // 散件
-      const s = allSamples.find(s => s.id === it.sampleId);
-      if (!s) return;
-      rows += `
-        <tr class="${idx % 2 === 0 ? 'even' : 'odd'}">
-          <td>${s._displayName || s.name}</td>
-          <td>${s.sampleNo || s._displayCode || '—'}</td>
-          <td class="type-cell">${s.type}</td>
-          <td class="qty-cell">× ${it.qty || 1}</td>
-          <td class="status ${(it.packStatus || '').replace(/\s/g,'')}">${packLabel(it.packStatus)}</td>
-        </tr>`;
+      var s = allSamples.find(function(s){ return s.id === it.sampleId; });
+      var url = s && (s.images || [])[0] && s.images[0].url;
+      if (url && !seen[url]) { seen[url] = true; urlsToFetch.push(url); }
     }
   });
 
-  const html = `<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-<meta charset="UTF-8">
-<title>${exhibition.name} — 展覽樣品清單</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'PingFang TC', '微軟正黑體', Arial, sans-serif; font-size: 13px; color: #1e293b; padding: 32px; }
-  h1 { font-size: 22px; font-weight: 700; color: #0f172a; margin-bottom: 4px; }
-  .meta { font-size: 12px; color: #64748b; margin-bottom: 20px; display: flex; gap: 16px; flex-wrap: wrap; }
-  .meta span { display: flex; align-items: center; gap: 4px; }
-  .stats { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; display: flex; gap: 24px; }
-  .stat { text-align: center; }
-  .stat-num { font-size: 20px; font-weight: 700; color: #0f172a; }
-  .stat-label { font-size: 11px; color: #64748b; margin-top: 2px; }
-  table { width: 100%; border-collapse: collapse; }
-  th { background: #0f172a; color: white; padding: 8px 12px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
-  td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
-  tr.even td { background: #fff; }
-  tr.odd td { background: #f8fafc; }
-  tr.bundle-row td { background: #f3e8ff; font-weight: 600; }
-  tr.bundle-item-row td { background: #faf5ff; font-size: 12px; color: #4b5563; }
-  .bundle-badge { background: #7c3aed; color: white; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-right: 6px; font-weight: 600; }
-  .bundle-title { font-size: 13px; }
-  .sub-indent { padding-left: 24px; }
-  .type-cell { font-size: 11px; color: #64748b; }
-  .qty-cell { font-weight: 600; color: #0f172a; text-align: center; }
-  .status { font-size: 12px; white-space: nowrap; }
-  .footer { margin-top: 24px; font-size: 11px; color: #94a3b8; text-align: right; }
-  @media print {
-    body { padding: 16px; }
-    @page { margin: 1.5cm; size: A4; }
-  }
-</style>
-</head>
-<body>
-  <h1>${exhibition.name || '展覽樣品清單'}</h1>
-  <div class="meta">
-    ${exhibition.date ? `<span>📅 ${exhibition.date}</span>` : ''}
-    ${exhibition.location ? `<span>📍 ${exhibition.location}</span>` : ''}
-    <span>🖨 匯出日期：${today}</span>
-  </div>
-  ${exhibition.notes ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#78350f;">${exhibition.notes}</div>` : ''}
-  <div class="stats">
-    <div class="stat">
-      <div class="stat-num">${items.length}</div>
-      <div class="stat-label">樣品 / 組合品</div>
-    </div>
-    <div class="stat">
-      <div class="stat-num">${bundleCount}</div>
-      <div class="stat-label">組合品</div>
-    </div>
-    <div class="stat">
-      <div class="stat-num">${singleCount}</div>
-      <div class="stat-label">散件</div>
-    </div>
-    <div class="stat">
-      <div class="stat-num">${items.filter(it => ['已打包','已帶走','已歸還'].includes(it.packStatus)).length}</div>
-      <div class="stat-label">已完成準備</div>
-    </div>
-  </div>
-  <table>
-    <thead>
-      <tr>
-        <th>名稱</th>
-        <th>料號</th>
-        <th>類型</th>
-        <th>數量</th>
-        <th>打包狀態</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px">尚未加入樣品</td></tr>'}
-    </tbody>
-  </table>
-  <div class="footer">COMART Product Dev · 產品進度管理系統 · ${today}</div>
-  <script>window.onload = function() { window.print(); }</script>
-</body>
-</html>`;
+  var imgCache = {};
+  var pending = urlsToFetch.length;
+  if (pending === 0) { buildAndOpen(imgCache); return; }
 
-  const w = window.open('', '_blank');
-  if (w) {
-    w.document.write(html);
-    w.document.close();
-  } else {
-    alert('請允許彈出視窗以開啟 PDF 預覽');
-  }
+  urlsToFetch.forEach(function(url) {
+    fetch(url, { mode: 'cors' })
+      .then(function(r){ return r.blob(); })
+      .then(function(blob){
+        return new Promise(function(res){
+          var reader = new FileReader();
+          reader.onload = function(){ res(reader.result); };
+          reader.onerror = function(){ res(null); };
+          reader.readAsDataURL(blob);
+        });
+      })
+      .catch(function(){ return null; })
+      .then(function(b64){
+        imgCache[url] = b64;
+        pending--;
+        if (pending === 0) buildAndOpen(imgCache);
+      });
+  });
 }
 
 // === 建立組合品 Modal ===

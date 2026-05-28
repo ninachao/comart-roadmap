@@ -6936,11 +6936,10 @@ function WithdrawalModal({ sample, currentUser, onSave, onClose }) {
             />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 mb-1">數量 (最多 {remaining})</label>
+            <label className="block text-xs text-slate-600 mb-1">數量（庫存剩 {remaining}）</label>
             <input
               type="number"
               min="1"
-              max={remaining}
               value={quantity}
               onChange={(e) => setQuantity(Number(e.target.value))}
               className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"

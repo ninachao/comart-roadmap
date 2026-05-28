@@ -51,6 +51,84 @@ const BUILD_ID = '20260527-1500';
 
 const VERSION_HISTORY = [
   {
+    version: 'v0.59.0',
+    date: '2026-05-27',
+    changes: [
+      '🎉 展覽「組合品」功能：多選散件組合成一個展示品，可命名、顯示縮圖列、打包狀態',
+      '🎉 展覽清單「+ 加入散件」和「+ 建立組合品」並排',
+      '🔧 建立組合品按鈕 disabled 修正（Set.size → 陣列長度）',
+      '🔧 樣品料號重複檢查：新增或編輯時若料號已存在跳出警告',
+      '🔧 裁剪工具正方形計算修正（canvas 像素空間計算，確保輸出為正方形）',
+    ],
+  },
+  {
+    version: 'v0.58.0',
+    date: '2026-05-27',
+    changes: [
+      '🎉 樣品庫「依產品分組」功能：按鈕切換，相同關聯產品的樣品自動歸在一起',
+      '🎉 相關樣品（含手板）縮圖加點擊放大 + 多張切換（SampleImageGalleryModal）',
+      '🎉 圖片裁剪工具：預設正方形框、拖曳保持正方形、輸出強制正方形像素',
+      '🔧 裁剪 CORS 修復：fetch→blob→createObjectURL 繞過 Canvas taint',
+      '🔧 ImageCropModal 統一介面：支援 imageUrl（URL）和 file（File 物件）',
+      '🎉 上傳壓縮：長邊最大 1600px，JPEG 0.82（compressImageFile helper）',
+      '🔧 縮圖改 object-contain + 白色背景，不裁切產品邊緣',
+      '🎉 樣品料號（sampleNo）欄位：新增 + 列表顯示（灰色方框）+ 搜尋支援',
+      '🔧 樣品庫類型篩選改動態（含自訂類型）',
+    ],
+  },
+  {
+    version: 'v0.57.0',
+    date: '2026-05-27',
+    changes: [
+      '🎉 提醒頁 Modal 固定高度 min(90vh, 640px)，切分頁不再忽大忽小',
+      '🎉 提醒頁加「📅 跟蹤日曆」分頁：月曆視圖，有跟蹤日期的格子顯示數字圓圈',
+      '分頁文字改清楚：「跟蹤到期」「📅 跟蹤日曆」「⏰ 久未更新進度」「⚙ 管理」',
+    ],
+  },
+  {
+    version: 'v0.56.0',
+    date: '2026-05-27',
+    changes: [
+      '🎉 樣品庫列表響應式：桌面表格式 / 手機卡片式（不需橫向滾動）',
+      '🔧 移除材質欄 → 後來加回來（同名不同材質需要區分）',
+      '🔧 scrollbar 遮住垃圾桶 → 修正 padding',
+      '🔧 樣品名稱優先顯示：有關聯產品也優先用樣品自己填的名稱',
+      '🔧 開發費用同步樣品手板費用（讀取 samples collection 的 unitPrice）',
+      '🎉 縮圖 object-cover（填滿正方形，不留黑色空白）→ 後改回 object-contain',
+    ],
+  },
+  {
+    version: 'v0.55.0',
+    date: '2026-05-27',
+    changes: [
+      '🎉 不歸還從總數扣除：不歸還的領用讓 9/10 變成 9/9',
+      '🎉 領用紀錄加「不歸還（送客戶等）」按鈕 + 自訂原因',
+      '🎉 領用紀錄加刪除按鈕（hover 顯示）',
+      '🎉 從樣品庫跳到產品頁後，右上角出現「← 樣品庫」返回按鈕',
+    ],
+  },
+  {
+    version: 'v0.54.0',
+    date: '2026-05-26',
+    changes: [
+      '🎉 樣品庫圖片點擊放大（SampleImageGalleryModal），支援多張左右切換',
+      '🎉 縮圖有多張時右下角顯示數量標示',
+      '🎉 樣品類型加 T1/T2/T3/T4 + 自訂輸入選項',
+      '🎉 分組按鈕移至狀態篩選列同一排（右側）',
+    ],
+  },
+  {
+    version: 'v0.53.0',
+    date: '2026-05-26',
+    changes: [
+      '🎉 手板訂單卡片右側加顯眼總價（大字 + 小字數量×單價）',
+      '🎉 模具訂單卡片同樣改法',
+      '🎉 SampleEditModal 手板訂單欄位升級：訂單號、下單日、單價、幣別（自動算總價）、手板料號、供應商',
+      '🎉 DevCostSection 建立：放在料號申請下方，自動加總手板+模具費用，支援手動新增其他費用項目',
+      '🔧 DevCostSection 多幣別版本：各幣別分開顯示，不強制換算',
+    ],
+  },
+  {
     version: 'v0.52.0',
     date: '2026-05-26',
     changes: [
@@ -6971,76 +7049,73 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
                 );
               })()}
 
-              {/* 選取日期的項目 */}
-              {selectedDate && (
-                <div className="mt-3 pt-3 border-t border-slate-100">
-                  <p className="text-xs font-medium text-slate-600 mb-2">
-                    {selectedDate} 的跟蹤項目（{(followUpByDate[selectedDate] || []).length} 筆）
-                  </p>
-                  {(followUpByDate[selectedDate] || []).length === 0 ? (
-                    <p className="text-xs text-slate-400">這天沒有跟蹤項目</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {(followUpByDate[selectedDate] || []).map(({ project: p, update: u }, i) => (
-                        <div key={i} className="bg-white border border-blue-200 rounded-lg px-3 py-2 flex items-baseline gap-2 flex-wrap">
-                          <button
-                            onClick={() => { onJumpToProject(p); onClose(); }}
-                            className="text-sm text-slate-800 hover:text-blue-700 hover:underline font-medium"
-                          >
-                            {p.name}
-                          </button>
-                          {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
-                          <span className="text-xs text-slate-600 flex-1 truncate">— {u.text}</span>
-                          {isAdmin && (
-                            <button
-                              onClick={() => onMarkFollowedUp(p, u)}
-                              className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0"
-                            >
-                              ✓ 已跟追
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* 日期清單：統一用同一個格式，選了日期就篩選那天，否則顯示本月 */}
+              <div className="mt-3 pt-3 border-t border-slate-100 flex-1 overflow-y-auto">
+                {(() => {
+                  const todayStr = new Date().toISOString().split('T')[0];
+                  const monthStr = `${calYear}-${String(calMonth + 1).padStart(2,'0')}`;
 
-              {/* 本月所有跟蹤項目 */}
-              {!selectedDate && (
-                <div className="mt-3 pt-3 border-t border-slate-100">
-                  <p className="text-xs text-slate-400 mb-2">
-                    點日期查看當天要跟蹤的進度 · 🔴 紅色 = 已逾期 · 🔵 藍色 = 尚未到期
-                  </p>
-                  {(() => {
-                    const todayStr = new Date().toISOString().split('T')[0];
-                    const monthStr = `${calYear}-${String(calMonth + 1).padStart(2,'0')}`;
-                    const thisMonthDates = Object.keys(followUpByDate)
-                      .filter(d => d.startsWith(monthStr))
-                      .sort();
-                    if (thisMonthDates.length === 0) return <p className="text-xs text-slate-400">本月沒有跟蹤提醒</p>;
-                    return (
-                      <div className="space-y-1">
-                        {thisMonthDates.map(dateStr => {
-                          const items = followUpByDate[dateStr];
+                  // 決定要顯示哪些日期
+                  const datesToShow = selectedDate
+                    ? (followUpByDate[selectedDate] ? [selectedDate] : [])
+                    : Object.keys(followUpByDate).filter(d => d.startsWith(monthStr)).sort();
+
+                  // 標題
+                  const title = selectedDate
+                    ? `${selectedDate} 的跟蹤項目（${(followUpByDate[selectedDate] || []).length} 筆）`
+                    : '點日期查看當天項目 · 🔴 紅色 = 已逾期 · 🔵 藍色 = 尚未到期';
+
+                  if (datesToShow.length === 0) {
+                    return <p className="text-xs text-slate-400">{selectedDate ? '這天沒有跟蹤項目' : '本月沒有跟蹤提醒'}</p>;
+                  }
+
+                  return (
+                    <>
+                      <p className="text-xs text-slate-500 mb-2">{title}</p>
+                      <div className="space-y-3">
+                        {datesToShow.map(dateStr => {
+                          const items = followUpByDate[dateStr] || [];
                           const isPast = dateStr < todayStr;
                           return (
-                            <button
-                              key={dateStr}
-                              onClick={() => setSelectedDate(dateStr)}
-                              className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50"
-                            >
-                              <span className={`text-xs font-medium w-24 flex-shrink-0 ${isPast ? 'text-rose-600' : 'text-blue-600'}`}>{dateStr}</span>
-                              <span className="text-xs text-slate-600 truncate">{items.map(it => it.project.name).join('、')}</span>
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${isPast ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}`}>{items.length} 筆</span>
-                            </button>
+                            <div key={dateStr}>
+                              {/* 日期標題列 */}
+                              {!selectedDate && (
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className={`text-xs font-semibold ${isPast ? 'text-rose-600' : 'text-blue-600'}`}>{dateStr}</span>
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isPast ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}`}>{items.length} 筆</span>
+                                </div>
+                              )}
+                              {/* 項目卡片 */}
+                              <div className="space-y-1">
+                                {items.map(({ project: p, update: u }, i) => (
+                                  <div key={i} className={`bg-white border rounded-lg px-3 py-2 flex items-baseline gap-2 flex-wrap ${isPast ? 'border-rose-200' : 'border-blue-200'}`}>
+                                    <button
+                                      onClick={() => { onJumpToProject(p); onClose(); }}
+                                      className="text-sm text-slate-800 hover:text-blue-700 hover:underline font-medium"
+                                    >
+                                      {p.name}
+                                    </button>
+                                    {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
+                                    <span className="text-xs text-slate-600 flex-1 truncate">— {u.text}</span>
+                                    {isAdmin && (
+                                      <button
+                                        onClick={() => onMarkFollowedUp(p, u)}
+                                        className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0"
+                                      >
+                                        ✓ 已跟追
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
                           );
                         })}
                       </div>
-                    );
-                  })()}
-                </div>
-              )}
+                    </>
+                  );
+                })()}
+              </div>
             </div>
           )}
 

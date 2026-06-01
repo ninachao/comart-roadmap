@@ -46,10 +46,22 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.59.0';
-const BUILD_ID = '20260527-1500';
+const APP_VERSION = 'v0.60.0';
+const BUILD_ID = '20260601-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.60.0',
+    date: '2026-06-01',
+    changes: [
+      '🎉 產品詳情「返回」按鈕全面升級：從哪裡開的就返回哪裡',
+      '從提醒面板點入產品 → 關閉後重新開啟提醒面板（不用重新點鈴鐺）',
+      '從手板總覽點入產品 → 關閉後重新開啟手板總覽',
+      '從樣品庫點入產品 → 原有返回樣品庫功能保留',
+      '從主頁直接點入 → 維持原本叉叉關閉行為（不顯示返回）',
+      '🔧 統一使用 openFrom 取代舊版 returnToSampleLibrary boolean',
+    ],
+  },
   {
     version: 'v0.59.0',
     date: '2026-05-27',
@@ -1436,7 +1448,7 @@ export default function ProductRoadmap() {
   const [showNewModal, setShowNewModal] = useState(false);
   const [showPrototypeOverview, setShowPrototypeOverview] = useState(false);
   const [showSampleLibrary, setShowSampleLibrary] = useState(false);
-  const [returnToSampleLibrary, setReturnToSampleLibrary] = useState(false); // 從樣品庫跳來的，可返回
+  const [openFrom, setOpenFrom] = useState(null); // 'samples' | 'reminders' | 'prototype' | null
   const [showReminders, setShowReminders] = useState(false);
   // trackingOverrides: { [projectId]: 'include' | 'exclude' }
   const [trackingOverrides, setTrackingOverrides] = useState({});
@@ -2095,7 +2107,7 @@ export default function ProductRoadmap() {
           project={selectedProject}
           allTags={allTags}
           isViewer={isViewer}
-          onClose={() => { setSelectedProject(null); setReturnToSampleLibrary(false); }}
+          onClose={() => { setSelectedProject(null); setOpenFrom(null); }}
           onAddUpdate={(u) => handleAddUpdate(selectedProject.id, u)}
           onEditUpdate={(idx, u) => handleEditUpdate(selectedProject.id, idx, u)}
           onDeleteUpdate={(idx) => handleDeleteUpdate(selectedProject.id, idx)}
@@ -2111,11 +2123,13 @@ export default function ProductRoadmap() {
           samples={samples}
           withdrawals={withdrawals}
           currentUser={currentUser}
-          returnToSampleLibrary={returnToSampleLibrary}
-          onReturnToSampleLibrary={() => {
+          openFrom={openFrom}
+          onReturn={() => {
             setSelectedProject(null);
-            setReturnToSampleLibrary(false);
-            setShowSampleLibrary(true);
+            setOpenFrom(null);
+            if (openFrom === 'samples') setShowSampleLibrary(true);
+            else if (openFrom === 'reminders') setShowReminders(true);
+            else if (openFrom === 'prototype') setShowPrototypeOverview(true);
           }}
         />
       )}
@@ -2138,6 +2152,7 @@ export default function ProductRoadmap() {
             const target = projects.find(p => p.id === id);
             if (target) {
               setSelectedProject(target);
+              setOpenFrom('prototype');
               setShowPrototypeOverview(false);
             }
           }}
@@ -2151,7 +2166,7 @@ export default function ProductRoadmap() {
           projects={projects}
           trackingOverrides={trackingOverrides}
           onSetOverride={setTrackingOverride}
-          onJumpToProject={(p) => setSelectedProject(p)}
+          onJumpToProject={(p) => { setSelectedProject(p); setOpenFrom('reminders'); }}
           onMarkFollowedUp={(p, u) => {
             const idx = (p.updates || []).findIndex(x => x.date === u.date && x.text === u.text);
             if (idx < 0) return;
@@ -2177,7 +2192,7 @@ export default function ProductRoadmap() {
             const target = projects.find(p => p.id === id);
             if (target) {
               setSelectedProject(target);
-              setReturnToSampleLibrary(true); // 記錄從樣品庫來的
+              setOpenFrom('samples'); // 記錄從樣品庫來的
               setShowSampleLibrary(false);
             }
           }}
@@ -2420,7 +2435,7 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
   );
 }
 
-function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, samples = [], withdrawals = [], currentUser, returnToSampleLibrary = false, onReturnToSampleLibrary }) {
+function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, samples = [], withdrawals = [], currentUser, openFrom = null, onReturn }) {
   const [showWizard, setShowWizard] = useState(false);
 
   // 收到自動打開請求時，跳出精靈
@@ -2560,17 +2575,27 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
-            {/* 返回樣品庫按鈕（從樣品庫跳來才顯示） */}
-            {returnToSampleLibrary && onReturnToSampleLibrary && (
-              <button
-                onClick={onReturnToSampleLibrary}
-                className="p-1.5 hover:bg-amber-50 rounded text-amber-600 hover:text-amber-700 inline-flex items-center gap-1 text-xs px-2 border border-amber-200"
-                title="返回樣品庫"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">樣品庫</span>
-              </button>
-            )}
+            {/* 返回按鈕（從其他面板跳來才顯示） */}
+            {openFrom && onReturn && (() => {
+              const backLabels = {
+                samples: { icon: '📦', label: '樣品庫', title: '返回樣品庫' },
+                reminders: { icon: '🔔', label: '提醒', title: '返回提醒面板' },
+                prototype: { icon: '🧪', label: '手板總覽', title: '返回手板總覽' },
+              };
+              const back = backLabels[openFrom];
+              if (!back) return null;
+              return (
+                <button
+                  onClick={onReturn}
+                  className="p-1.5 hover:bg-amber-50 rounded text-amber-600 hover:text-amber-700 inline-flex items-center gap-1 text-xs px-2 border border-amber-200"
+                  title={back.title}
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">{back.icon} {back.label}</span>
+                  <span className="sm:hidden">{back.icon}</span>
+                </button>
+              );
+            })()}
             {/* 分享連結按鈕 */}
             <button
               onClick={() => {

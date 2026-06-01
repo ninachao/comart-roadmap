@@ -46,10 +46,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.63.0';
-const BUILD_ID = '20260601-1500';
+const APP_VERSION = 'v0.64.0';
+const BUILD_ID = '20260601-1600';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.64.0',
+    date: '2026-06-01',
+    changes: [
+      '🔧 篩選列版面修正：搜尋框改回自動伸展填滿，移除 ⊞依分類碼 的 ml-auto 造成的空白',
+    ],
+  },
   {
     version: 'v0.63.0',
     date: '2026-06-01',
@@ -2028,7 +2035,7 @@ export default function ProductRoadmap() {
         <div className="bg-white rounded-xl border border-slate-200 p-3 mb-4">
           {/* 第一排：搜尋 + 所有下拉 + 分類碼 */}
           <div className="flex flex-wrap gap-2 mb-3 items-center">
-            <div className="relative" style={{minWidth: '200px', maxWidth: '320px', flex: '1 1 200px'}}>
+            <div className="relative flex-1 min-w-[200px]">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
@@ -2093,7 +2100,7 @@ export default function ProductRoadmap() {
               )}
             </div>
 
-            <div className="ml-auto flex-shrink-0">
+            <div className="flex-shrink-0">
               <button
                 onClick={cycleGroupMode}
                 title={`目前：${groupModeLabel[groupMode]}，點擊切換`}

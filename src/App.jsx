@@ -46,10 +46,22 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.61.0';
-const BUILD_ID = '20260601-1200';
+const APP_VERSION = 'v0.62.0';
+const BUILD_ID = '20260601-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.62.0',
+    date: '2026-06-01',
+    changes: [
+      '🎉 篩選列全面重整：搜尋框縮小，所有下拉集中在第一排，狀態按鈕獨立第二排',
+      '🎉 新增「近期更新」篩選：最近 7 / 14 / 30 天，或自訂日期區間',
+      '選取後下拉框變藍色提示目前有篩選，右側 ✕ 一鍵清除',
+      '自訂區間：選「自訂區間」後展開開始～結束日期輸入',
+      '依最新進度的有效日期篩選（有 dateEnd 用 dateEnd）',
+      '⊞ 依分類碼按鈕移至第一排右側',
+    ],
+  },
   {
     version: 'v0.61.0',
     date: '2026-06-01',
@@ -1448,6 +1460,10 @@ export default function ProductRoadmap() {
   const [statusFilter, setStatusFilter] = useState('全部');
   const [tagFilter, setTagFilter] = useState('全部');
   const [phaseFilter, setPhaseFilter] = useState('全部');
+  const [recentFilter, setRecentFilter] = useState('全部'); // '全部' | '7' | '14' | '30' | 'custom'
+  const [recentCustomStart, setRecentCustomStart] = useState('');
+  const [recentCustomEnd, setRecentCustomEnd] = useState('');
+  const [showRecentCustom, setShowRecentCustom] = useState(false);
   // 分組模式：'none' | 'category' | 'category+feature'
   const [groupMode, setGroupMode] = useState(() => {
     try { return localStorage.getItem('comart_groupMode') || 'none'; } catch { return 'none'; }
@@ -1557,6 +1573,10 @@ export default function ProductRoadmap() {
   }, [projects]);
 
   const filteredProjects = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+
+    const getEffectiveDate = (u) => u?.dateEnd || u?.date;
+
     return projects.filter(p => {
       const matchSearch = !searchTerm ||
         p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1565,16 +1585,35 @@ export default function ProductRoadmap() {
       const matchStatus = statusFilter === '全部' || p.status === statusFilter;
       const matchTag = tagFilter === '全部' || (p.tags || []).includes(tagFilter);
       const matchPhase = phaseFilter === '全部' || getCurrentPhase(p) === phaseFilter;
-      return matchSearch && matchStatus && matchTag && matchPhase;
+
+      let matchRecent = true;
+      if (recentFilter !== '全部') {
+        const latestDate = getEffectiveDate(p.updates?.[0]);
+        if (!latestDate) {
+          matchRecent = false;
+        } else {
+          const last = new Date(latestDate); last.setHours(0, 0, 0, 0);
+          if (recentFilter === 'custom') {
+            const start = recentCustomStart ? new Date(recentCustomStart) : null;
+            const end = recentCustomEnd ? new Date(recentCustomEnd) : null;
+            if (start) start.setHours(0, 0, 0, 0);
+            if (end) end.setHours(0, 0, 0, 0);
+            matchRecent = (!start || last >= start) && (!end || last <= end);
+          } else {
+            const days = parseInt(recentFilter);
+            matchRecent = Math.floor((today - last) / 86400000) <= days;
+          }
+        }
+      }
+
+      return matchSearch && matchStatus && matchTag && matchPhase && matchRecent;
     }).sort((a, b) => {
-      // 依 sortOrder 排序，沒有的補 999999（放後面）
       const oa = a.sortOrder ?? 999999;
       const ob = b.sortOrder ?? 999999;
       if (oa !== ob) return oa - ob;
-      // sortOrder 相同就依 id 排（保持穩定）
       return (a.id || 0) - (b.id || 0);
     });
-  }, [projects, searchTerm, statusFilter, tagFilter, phaseFilter]);
+  }, [projects, searchTerm, statusFilter, tagFilter, phaseFilter, recentFilter, recentCustomStart, recentCustomEnd]);
 
   // 把 filteredProjects 按分組模式整理成 [{key, label, projects}]
   const groupedProjects = useMemo(() => {
@@ -1980,8 +2019,9 @@ export default function ProductRoadmap() {
         {!isLoading && (
         <>
         <div className="bg-white rounded-xl border border-slate-200 p-3 mb-4">
-          <div className="flex flex-col sm:flex-row gap-2 mb-3">
-            <div className="relative flex-1">
+          {/* 第一排：搜尋 + 所有下拉 + 分類碼 */}
+          <div className="flex flex-wrap gap-2 mb-3 items-center">
+            <div className="relative" style={{minWidth: '200px', maxWidth: '320px', flex: '1 1 200px'}}>
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
@@ -1991,7 +2031,7 @@ export default function ProductRoadmap() {
                 className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
               />
             </div>
-            {/* 產品階段篩選（依當前階段篩選） */}
+
             <select
               value={phaseFilter}
               onChange={(e) => setPhaseFilter(e.target.value)}
@@ -2025,8 +2065,60 @@ export default function ProductRoadmap() {
                 )}
               </div>
             )}
+
+            {/* 近期更新篩選 */}
+            <div className="flex items-center gap-1">
+              <select
+                value={recentFilter}
+                onChange={(e) => {
+                  setRecentFilter(e.target.value);
+                  setShowRecentCustom(e.target.value === 'custom');
+                  if (e.target.value !== 'custom') { setRecentCustomStart(''); setRecentCustomEnd(''); }
+                }}
+                className={`px-3 py-2 text-sm border rounded-lg bg-white ${recentFilter !== '全部' ? 'border-blue-400 text-blue-700' : 'border-slate-200'}`}
+              >
+                <option value="全部">近期更新</option>
+                <option value="7">最近 7 天</option>
+                <option value="14">最近 14 天</option>
+                <option value="30">最近 30 天</option>
+                <option value="custom">自訂區間</option>
+              </select>
+              {recentFilter !== '全部' && (
+                <button onClick={() => { setRecentFilter('全部'); setShowRecentCustom(false); setRecentCustomStart(''); setRecentCustomEnd(''); }}
+                  className="text-xs text-slate-400 hover:text-rose-500 px-1" title="清除篩選">✕</button>
+              )}
+            </div>
+
+            <div className="ml-auto flex-shrink-0">
+              <button
+                onClick={cycleGroupMode}
+                title={`目前：${groupModeLabel[groupMode]}，點擊切換`}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border transition whitespace-nowrap ${
+                  groupMode !== 'none'
+                    ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                    : 'text-slate-500 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span className="text-base leading-none">⊞</span>
+                <span className="text-xs">{groupModeLabel[groupMode]}</span>
+              </button>
+            </div>
           </div>
 
+          {/* 自訂區間展開列 */}
+          {showRecentCustom && (
+            <div className="flex items-center gap-2 mb-3 px-1">
+              <span className="text-xs text-slate-500 flex-shrink-0">更新日期</span>
+              <input type="date" value={recentCustomStart} onChange={(e) => setRecentCustomStart(e.target.value)}
+                className="text-xs px-2 py-1 border border-slate-200 rounded bg-white" />
+              <span className="text-xs text-slate-400">～</span>
+              <input type="date" value={recentCustomEnd} onChange={(e) => setRecentCustomEnd(e.target.value)}
+                className="text-xs px-2 py-1 border border-slate-200 rounded bg-white" />
+              <span className="text-xs text-slate-400">（依最新進度日期篩選）</span>
+            </div>
+          )}
+
+          {/* 第二排：狀態按鈕 */}
           <div className="flex items-center gap-1 overflow-x-auto pb-1">
             {['全部', ...STATUS_OPTIONS].map(s => {
               const active = statusFilter === s;
@@ -2046,20 +2138,6 @@ export default function ProductRoadmap() {
                 </button>
               );
             })}
-            <div className="ml-auto flex-shrink-0 pl-2 border-l border-slate-200">
-              <button
-                onClick={cycleGroupMode}
-                title={`目前：${groupModeLabel[groupMode]}，點擊切換`}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border transition whitespace-nowrap ${
-                  groupMode !== 'none'
-                    ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-                    : 'text-slate-500 border-slate-200 hover:bg-slate-50'
-                }`}
-              >
-                <span className="text-base leading-none">⊞</span>
-                <span className="text-xs">{groupModeLabel[groupMode]}</span>
-              </button>
-            </div>
           </div>
         </div>
 

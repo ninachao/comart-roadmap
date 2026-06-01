@@ -46,10 +46,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.60.0';
-const BUILD_ID = '20260601-1000';
+const APP_VERSION = 'v0.61.0';
+const BUILD_ID = '20260601-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.61.0',
+    date: '2026-06-01',
+    changes: [
+      '🎉 進度紀錄支援日期區間：勾選「設定區間」可填開始日～結束日',
+      '已有的單一日期紀錄可編輯改成區間',
+      '🔧 「久未更新」改用區間結束日計算（進行中的區間不會誤觸提醒）',
+      '🔧 產品卡片 N天未更新 同步使用區間結束日',
+      '🔧 返回按鈕移到 modal 左上角（標題列上方），位置更直覺',
+    ],
+  },
   {
     version: 'v0.60.0',
     date: '2026-06-01',
@@ -1505,23 +1516,27 @@ export default function ProductRoadmap() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    // 取最新進度的「有效日期」：有 dateEnd 用 dateEnd，否則用 date
+    const getEffectiveDate = (update) => update?.dateEnd || update?.date;
+
     return projects.filter(p => {
       const override = trackingOverrides[String(p.id)];
-      if (override === 'exclude') return false; // 手動排除
-      if (override === 'include') return true;  // 手動加入
+      if (override === 'exclude') return false;
+      if (override === 'include') return true;
 
-      // 預設邏輯：進行中且≥14天未更新
       if (['取消', '暫停', '設計完成'].includes(p.status)) return false;
       const latest = p.updates?.[0];
-      if (!latest?.date) return true;
-      const last = new Date(latest.date);
+      const effectiveDate = getEffectiveDate(latest);
+      if (!effectiveDate) return true;
+      const last = new Date(effectiveDate);
       last.setHours(0, 0, 0, 0);
       return Math.floor((today - last) / 86400000) >= 14;
     }).map(p => {
       const latest = p.updates?.[0];
+      const effectiveDate = getEffectiveDate(latest);
       const today2 = new Date(); today2.setHours(0, 0, 0, 0);
-      const days = latest?.date
-        ? Math.floor((today2 - new Date(latest.date)) / 86400000)
+      const days = effectiveDate
+        ? Math.floor((today2 - new Date(effectiveDate)) / 86400000)
         : null;
       const override = trackingOverrides[String(p.id)];
       return { project: p, days, override };
@@ -2303,8 +2318,9 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
 
   // 計算距離上次更新的天數
   const daysSinceUpdate = (() => {
-    if (!latest?.date) return null;
-    const last = new Date(latest.date);
+    const effectiveDate = latest?.dateEnd || latest?.date;
+    if (!effectiveDate) return null;
+    const last = new Date(effectiveDate);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     last.setHours(0, 0, 0, 0);
@@ -2507,6 +2523,28 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
   return (
     <div className="fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
       <div className="bg-white w-full sm:max-w-3xl sm:rounded-xl min-h-screen sm:min-h-0 sm:max-h-[92vh] flex flex-col">
+        {/* 返回按鈕列（從其他面板跳來才顯示） */}
+        {openFrom && onReturn && (() => {
+          const backLabels = {
+            samples: { icon: '📦', label: '樣品庫', title: '返回樣品庫' },
+            reminders: { icon: '🔔', label: '提醒', title: '返回提醒面板' },
+            prototype: { icon: '🧪', label: '手板總覽', title: '返回手板總覽' },
+          };
+          const back = backLabels[openFrom];
+          if (!back) return null;
+          return (
+            <div className="px-4 pt-3 pb-0">
+              <button
+                onClick={onReturn}
+                className="inline-flex items-center gap-1 text-xs text-amber-700 hover:text-amber-800 hover:bg-amber-50 px-2 py-1 rounded border border-amber-200 transition"
+                title={back.title}
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                {back.icon} 返回{back.label}
+              </button>
+            </div>
+          );
+        })()}
         <div className="flex items-start justify-between px-5 py-4 border-b border-slate-200 sticky top-0 bg-white z-10">
           <div className="flex-1 min-w-0 pr-3">
             {editingField === 'name' ? (
@@ -2575,27 +2613,6 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
-            {/* 返回按鈕（從其他面板跳來才顯示） */}
-            {openFrom && onReturn && (() => {
-              const backLabels = {
-                samples: { icon: '📦', label: '樣品庫', title: '返回樣品庫' },
-                reminders: { icon: '🔔', label: '提醒', title: '返回提醒面板' },
-                prototype: { icon: '🧪', label: '手板總覽', title: '返回手板總覽' },
-              };
-              const back = backLabels[openFrom];
-              if (!back) return null;
-              return (
-                <button
-                  onClick={onReturn}
-                  className="p-1.5 hover:bg-amber-50 rounded text-amber-600 hover:text-amber-700 inline-flex items-center gap-1 text-xs px-2 border border-amber-200"
-                  title={back.title}
-                >
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">{back.icon} {back.label}</span>
-                  <span className="sm:hidden">{back.icon}</span>
-                </button>
-              );
-            })()}
             {/* 分享連結按鈕 */}
             <button
               onClick={() => {
@@ -8647,6 +8664,8 @@ function formatMoney(n) {
 
 function UpdateForm({ initial, onCancel, onSave, currentUser }) {
   const [date, setDate] = useState(initial?.date || new Date().toISOString().split('T')[0]);
+  const [dateEnd, setDateEnd] = useState(initial?.dateEnd || '');
+  const [isRange, setIsRange] = useState(!!(initial?.dateEnd));
   const [text, setText] = useState(initial?.text || '');
   const [author, setAuthor] = useState(initial?.author || currentUser?.name || '');
   const [attachments, setAttachments] = useState(initial?.attachments || initial?.images?.map(img => ({ ...img, kind: 'upload' })) || []);
@@ -8655,9 +8674,17 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
 
   const submit = () => {
     if (!text.trim() && attachments.length === 0) return;
-    // 儲存時同時保留 attachments（新格式）和 images（舊格式相容）
     const images = attachments.filter(a => a.kind === 'upload' && isImageFile(a.name, a.type));
-    onSave({ date, text: text.trim(), attachments, images, author: author.trim(), followUpDate: followUpDate || null, followedUp });
+    onSave({
+      date,
+      dateEnd: isRange && dateEnd ? dateEnd : null,
+      text: text.trim(),
+      attachments,
+      images,
+      author: author.trim(),
+      followUpDate: followUpDate || null,
+      followedUp,
+    });
   };
 
   return (
@@ -8671,6 +8698,27 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
           onChange={(e) => setDate(e.target.value)}
           className="text-xs px-2 py-1 border border-slate-200 rounded bg-white"
         />
+        {isRange && (
+          <>
+            <span className="text-xs text-slate-400">～</span>
+            <input
+              type="date"
+              value={dateEnd}
+              min={date}
+              onChange={(e) => setDateEnd(e.target.value)}
+              className="text-xs px-2 py-1 border border-slate-200 rounded bg-white"
+            />
+          </>
+        )}
+        <label className="flex items-center gap-1 text-[11px] text-slate-500 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={isRange}
+            onChange={(e) => { setIsRange(e.target.checked); if (!e.target.checked) setDateEnd(''); }}
+            className="w-3 h-3"
+          />
+          設定區間
+        </label>
         <input
           type="text"
           value={author}
@@ -8734,6 +8782,11 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
   const isOverdue = hasFollowUp && update.followUpDate <= today;
   const isDueSoon = hasFollowUp && update.followUpDate > today;
 
+  // 日期顯示：區間或單一
+  const dateDisplay = update.dateEnd
+    ? `${update.date} ～ ${update.dateEnd}`
+    : update.date;
+
   const containerClass = isLatest
     ? 'bg-blue-50/40 border-l-2 border-l-blue-500 border-y border-r border-blue-100'
     : 'bg-white border border-slate-200';
@@ -8744,7 +8797,7 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
         <div className="flex items-baseline justify-between gap-2 mb-1.5">
           <div className="flex items-baseline gap-2 min-w-0 flex-wrap">
             <span className={`text-xs font-medium tabular-nums flex-shrink-0 ${isLatest ? 'text-blue-700' : 'text-slate-500'}`}>
-              {update.date}
+              {dateDisplay}
             </span>
             {isLatest && <span className="text-xs text-blue-600 flex-shrink-0">最新</span>}
             {update.author && (

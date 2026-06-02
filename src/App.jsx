@@ -46,10 +46,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.67.0';
-const BUILD_ID = '20260601-2100';
+const APP_VERSION = 'v0.68.0';
+const BUILD_ID = '20260601-2200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.68.0',
+    date: '2026-06-01',
+    changes: [
+      '🔧 放棄 Quill（對表格支援太差），改用原生 contentEditable 富文本編輯器',
+      '表格插入 100% 可用，儲存格可直接打字、Tab 切換',
+      '工具列：粗體、斜體、底線、文字顏色、背景色、清除格式、插入表格',
+      'index.html 不再需要 Quill CDN，載入速度更快',
+    ],
+  },
   {
     version: 'v0.67.0',
     date: '2026-06-01',
@@ -8778,122 +8788,146 @@ function formatMoney(n) {
 }
 
 
-// 判斷是否為富文本 HTML（Quill 產生的，必定以 <p> 或 <table> 或 <ol> 開頭）
+// 判斷是否為富文本 HTML
 function isRichText(text) {
   if (!text) return false;
-  const trimmed = text.trimStart();
-  return trimmed.startsWith('<p>') || trimmed.startsWith('<table>') ||
-    trimmed.startsWith('<ol>') || trimmed.startsWith('<ul>') ||
-    trimmed.startsWith('<h1>') || trimmed.startsWith('<h2>');
+  const t = text.trimStart();
+  return t.startsWith('<p>') || t.startsWith('<table>') ||
+    t.startsWith('<ol>') || t.startsWith('<ul>') ||
+    t.startsWith('<h1>') || t.startsWith('<h2>') || t.startsWith('<div>');
 }
 
-// ── Quill 富文本編輯器元件 ──────────────────────────────────────
-function QuillEditor({ value, onChange, placeholder }) {
-  const containerRef = React.useRef(null);
-  const quillRef = React.useRef(null);
-  const isInitialized = React.useRef(false);
+// ── 原生 contentEditable 富文本編輯器 ─────────────────────────
+function RichEditor({ value, onChange, placeholder }) {
+  const editorRef = React.useRef(null);
   const [showTablePicker, setShowTablePicker] = React.useState(false);
   const [tableRows, setTableRows] = React.useState(3);
   const [tableCols, setTableCols] = React.useState(3);
 
+  // 初始化內容
   React.useEffect(() => {
-    if (!containerRef.current || isInitialized.current) return;
-    if (typeof window.Quill === 'undefined') return;
-    isInitialized.current = true;
-
-    const quill = new window.Quill(containerRef.current, {
-      theme: 'snow',
-      placeholder: placeholder || '輸入內容...',
-      modules: {
-        toolbar: [
-          [{ 'header': [false, 1, 2] }],
-          ['bold', 'italic', 'underline'],
-          [{ 'color': [] }, { 'background': [] }],
-          [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-          ['clean'],
-        ],
-      },
-    });
-
-    // 初始值
-    if (value) {
-      if (isRichText(value)) {
-        quill.clipboard.dangerouslyPasteHTML(value);
-      } else {
-        quill.setText(value);
-      }
+    if (!editorRef.current) return;
+    if (value && editorRef.current.innerHTML === '') {
+      editorRef.current.innerHTML = isRichText(value)
+        ? value
+        : value.replace(/\n/g, '<br>');
     }
-
-    quill.on('text-change', () => {
-      const html = quill.root.innerHTML;
-      onChange(html === '<p><br></p>' ? '' : html);
-    });
-
-    quillRef.current = quill;
   }, []);
 
+  const exec = (cmd, val = null) => {
+    editorRef.current?.focus();
+    document.execCommand(cmd, false, val);
+  };
+
+  const getHtml = () => editorRef.current?.innerHTML || '';
+
+  const handleInput = () => {
+    const html = getHtml();
+    onChange(html === '<br>' || html === '' ? '' : html);
+  };
+
   const insertTable = () => {
-    const quill = quillRef.current;
-    if (!quill) return;
+    editorRef.current?.focus();
     const r = Math.max(1, tableRows);
     const c = Math.max(1, tableCols);
-    let html = '<table style="border-collapse:collapse;width:100%;margin:8px 0"><tbody>';
+    let html = '<table><tbody>';
     for (let i = 0; i < r; i++) {
       html += '<tr>';
       for (let j = 0; j < c; j++) {
-        const style = 'border:1px solid #cbd5e1;padding:4px 8px;min-width:60px;' +
-          (i === 0 ? 'background:#f1f5f9;font-weight:600;' : '');
-        html += `<td style="${style}">&nbsp;</td>`;
+        html += i === 0
+          ? '<th> </th>'
+          : '<td> </td>';
       }
       html += '</tr>';
     }
     html += '</tbody></table><p><br></p>';
-
-    // 直接寫入 innerHTML 繞過 Quill sanitizer
-    const current = quill.root.innerHTML;
-    const isEmpty = current === '<p><br></p>';
-    quill.root.innerHTML = isEmpty ? html : current + html;
-
-    // 觸發 onChange
-    onChange(quill.root.innerHTML);
+    document.execCommand('insertHTML', false, html);
+    onChange(getHtml());
     setShowTablePicker(false);
-
-    // 游標移到表格後
-    setTimeout(() => {
-      quill.setSelection(quill.getLength() - 1);
-    }, 50);
   };
 
+  // 顏色選單狀態
+  const [showFgColor, setShowFgColor] = React.useState(false);
+  const [showBgColor, setShowBgColor] = React.useState(false);
+  const colors = ['#000000','#dc2626','#ea580c','#ca8a04','#16a34a','#2563eb','#7c3aed','#db2777','#ffffff','#fecaca','#fed7aa','#fef08a','#bbf7d0','#bfdbfe','#e9d5ff','#94a3b8'];
+
+  const ToolBtn = ({ onClick, title, children, active }) => (
+    <button type="button" onMouseDown={e => { e.preventDefault(); onClick(); }}
+      title={title}
+      className={`px-1.5 py-0.5 rounded text-sm font-medium hover:bg-slate-200 transition ${active ? 'bg-slate-200' : ''}`}>
+      {children}
+    </button>
+  );
+
   return (
-    <div className="border border-slate-200 rounded-lg overflow-hidden">
-      {/* 自訂工具列補充：插入表格 */}
-      <div className="flex items-center gap-1 px-2 py-1 bg-slate-50 border-b border-slate-200 flex-wrap">
-        <button
-          type="button"
-          onClick={() => setShowTablePicker(v => !v)}
-          className={`text-xs px-2 py-0.5 rounded border transition ${showTablePicker ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
-        >
+    <div className="border border-slate-200 rounded-lg overflow-visible">
+      {/* 工具列 */}
+      <div className="flex items-center gap-0.5 px-2 py-1 bg-slate-50 border-b border-slate-200 flex-wrap">
+        {/* 插入表格 */}
+        <button type="button" onMouseDown={e => { e.preventDefault(); setShowTablePicker(v => !v); setShowFgColor(false); setShowBgColor(false); }}
+          className={`text-xs px-2 py-0.5 rounded border transition mr-1 ${showTablePicker ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}>
           ⊞ 插入表格
         </button>
         {showTablePicker && (
-          <div className="flex items-center gap-1.5 text-xs text-slate-600">
-            <input type="number" min={1} max={10} value={tableRows}
-              onChange={e => setTableRows(Number(e.target.value))}
-              className="w-12 px-1 py-0.5 border border-slate-200 rounded text-center" />
+          <div className="flex items-center gap-1 text-xs text-slate-600 mr-2">
+            <input type="number" min={1} max={10} value={tableRows} onChange={e => setTableRows(Number(e.target.value))}
+              className="w-10 px-1 py-0.5 border border-slate-200 rounded text-center" />
             <span>列 ×</span>
-            <input type="number" min={1} max={10} value={tableCols}
-              onChange={e => setTableCols(Number(e.target.value))}
-              className="w-12 px-1 py-0.5 border border-slate-200 rounded text-center" />
+            <input type="number" min={1} max={10} value={tableCols} onChange={e => setTableCols(Number(e.target.value))}
+              className="w-10 px-1 py-0.5 border border-slate-200 rounded text-center" />
             <span>欄</span>
-            <button type="button" onClick={insertTable}
-              className="px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 text-xs">
-              確定插入
-            </button>
+            <button type="button" onMouseDown={e => { e.preventDefault(); insertTable(); }}
+              className="px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 text-xs">確定</button>
           </div>
         )}
+        <div className="w-px h-4 bg-slate-300 mx-1" />
+        <ToolBtn onClick={() => exec('bold')} title="粗體"><b>B</b></ToolBtn>
+        <ToolBtn onClick={() => exec('italic')} title="斜體"><i>I</i></ToolBtn>
+        <ToolBtn onClick={() => exec('underline')} title="底線"><u>U</u></ToolBtn>
+        <div className="w-px h-4 bg-slate-300 mx-1" />
+        {/* 文字顏色 */}
+        <div className="relative">
+          <button type="button" onMouseDown={e => { e.preventDefault(); setShowFgColor(v => !v); setShowBgColor(false); setShowTablePicker(false); }}
+            className="px-1.5 py-0.5 rounded hover:bg-slate-200 text-sm" title="文字顏色">A🎨</button>
+          {showFgColor && (
+            <div className="absolute top-full left-0 z-50 bg-white border border-slate-200 rounded shadow-lg p-2 flex flex-wrap gap-1" style={{width: 140}}>
+              {colors.map(c => (
+                <button key={c} type="button"
+                  onMouseDown={e => { e.preventDefault(); exec('foreColor', c); setShowFgColor(false); }}
+                  style={{background: c, width: 20, height: 20, border: '1px solid #ccc', borderRadius: 3}} />
+              ))}
+            </div>
+          )}
+        </div>
+        {/* 背景顏色 */}
+        <div className="relative">
+          <button type="button" onMouseDown={e => { e.preventDefault(); setShowBgColor(v => !v); setShowFgColor(false); setShowTablePicker(false); }}
+            className="px-1.5 py-0.5 rounded hover:bg-slate-200 text-sm" title="背景色">▣</button>
+          {showBgColor && (
+            <div className="absolute top-full left-0 z-50 bg-white border border-slate-200 rounded shadow-lg p-2 flex flex-wrap gap-1" style={{width: 140}}>
+              {colors.map(c => (
+                <button key={c} type="button"
+                  onMouseDown={e => { e.preventDefault(); exec('hiliteColor', c); setShowBgColor(false); }}
+                  style={{background: c, width: 20, height: 20, border: '1px solid #ccc', borderRadius: 3}} />
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="w-px h-4 bg-slate-300 mx-1" />
+        <ToolBtn onClick={() => exec('removeFormat')} title="清除格式">✕</ToolBtn>
       </div>
-      {/* Quill 編輯區 */}
-      <div ref={containerRef} />
+
+      {/* 編輯區 */}
+      <div
+        ref={editorRef}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={handleInput}
+        data-placeholder={placeholder || '本週工程更新...'}
+        className="rich-editor px-3 py-2"
+        style={{ minHeight: 100, maxHeight: 400, overflowY: 'auto' }}
+        onClick={() => { setShowFgColor(false); setShowBgColor(false); }}
+      />
     </div>
   );
 }
@@ -8965,24 +8999,13 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
       </div>
 
       {/* 內文 - 富文本編輯器 */}
-      {typeof window !== 'undefined' && typeof window.Quill !== 'undefined' ? (
-        <div className="mb-2">
-          <QuillEditor
-            value={text}
-            onChange={setText}
-            placeholder="本週工程更新..."
-          />
-        </div>
-      ) : (
-        <textarea
+      <div className="mb-2">
+        <RichEditor
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={3}
-          autoFocus
+          onChange={setText}
           placeholder="本週工程更新..."
-          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none bg-white mb-2"
         />
-      )}
+      </div>
 
       {/* 附件（圖片/影片/Excel/PDF/任意檔案 + 連結） */}
       <div className="bg-white rounded border border-slate-200 px-2 pt-1 pb-2 mb-2">

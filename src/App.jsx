@@ -46,10 +46,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.66.0';
-const BUILD_ID = '20260601-2000';
+const APP_VERSION = 'v0.67.0';
+const BUILD_ID = '20260601-2100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.67.0',
+    date: '2026-06-01',
+    changes: [
+      '🔧 修正插入表格無效問題：改用直接寫入 innerHTML 繞過 Quill 1.3.7 的 sanitizer 限制',
+    ],
+  },
   {
     version: 'v0.66.0',
     date: '2026-06-01',
@@ -8830,20 +8837,31 @@ function QuillEditor({ value, onChange, placeholder }) {
     if (!quill) return;
     const r = Math.max(1, tableRows);
     const c = Math.max(1, tableCols);
-    let html = '<table><tbody>';
+    let html = '<table style="border-collapse:collapse;width:100%;margin:8px 0"><tbody>';
     for (let i = 0; i < r; i++) {
       html += '<tr>';
       for (let j = 0; j < c; j++) {
-        html += i === 0
-          ? '<th style="background:#f1f5f9;font-weight:600">&nbsp;</th>'
-          : '<td>&nbsp;</td>';
+        const style = 'border:1px solid #cbd5e1;padding:4px 8px;min-width:60px;' +
+          (i === 0 ? 'background:#f1f5f9;font-weight:600;' : '');
+        html += `<td style="${style}">&nbsp;</td>`;
       }
       html += '</tr>';
     }
     html += '</tbody></table><p><br></p>';
-    const range = quill.getSelection(true);
-    quill.clipboard.dangerouslyPasteHTML(range ? range.index : quill.getLength(), html);
+
+    // 直接寫入 innerHTML 繞過 Quill sanitizer
+    const current = quill.root.innerHTML;
+    const isEmpty = current === '<p><br></p>';
+    quill.root.innerHTML = isEmpty ? html : current + html;
+
+    // 觸發 onChange
+    onChange(quill.root.innerHTML);
     setShowTablePicker(false);
+
+    // 游標移到表格後
+    setTimeout(() => {
+      quill.setSelection(quill.getLength() - 1);
+    }, 50);
   };
 
   return (

@@ -46,10 +46,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.65.0';
-const BUILD_ID = '20260601-1800';
+const APP_VERSION = 'v0.66.0';
+const BUILD_ID = '20260601-2000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.66.0',
+    date: '2026-06-01',
+    changes: [
+      '🔧 插入表格改為編輯器內展開選列欄，不再用 prompt 彈窗',
+      '🔧 表格按鈕移到 Quill 工具列上方獨立列，不超出範圍',
+      '🔧 主頁亂碼修正：改用 isRichText() 精確判斷，純文字不誤判為 HTML',
+    ],
+  },
   {
     version: 'v0.65.0',
     date: '2026-06-01',
@@ -8762,81 +8771,46 @@ function formatMoney(n) {
 }
 
 
+// 判斷是否為富文本 HTML（Quill 產生的，必定以 <p> 或 <table> 或 <ol> 開頭）
+function isRichText(text) {
+  if (!text) return false;
+  const trimmed = text.trimStart();
+  return trimmed.startsWith('<p>') || trimmed.startsWith('<table>') ||
+    trimmed.startsWith('<ol>') || trimmed.startsWith('<ul>') ||
+    trimmed.startsWith('<h1>') || trimmed.startsWith('<h2>');
+}
+
 // ── Quill 富文本編輯器元件 ──────────────────────────────────────
 function QuillEditor({ value, onChange, placeholder }) {
   const containerRef = React.useRef(null);
   const quillRef = React.useRef(null);
   const isInitialized = React.useRef(false);
+  const [showTablePicker, setShowTablePicker] = React.useState(false);
+  const [tableRows, setTableRows] = React.useState(3);
+  const [tableCols, setTableCols] = React.useState(3);
 
   React.useEffect(() => {
     if (!containerRef.current || isInitialized.current) return;
-    if (typeof window.Quill === 'undefined') return; // CDN 還沒載入
-
+    if (typeof window.Quill === 'undefined') return;
     isInitialized.current = true;
-
-    const toolbarOptions = [
-      [{ 'header': [1, 2, false] }],
-      ['bold', 'italic', 'underline', 'strike'],
-      [{ 'color': [] }, { 'background': [] }],
-      [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-      ['table-insert'],
-      ['clean'],
-    ];
 
     const quill = new window.Quill(containerRef.current, {
       theme: 'snow',
       placeholder: placeholder || '輸入內容...',
       modules: {
-        toolbar: {
-          container: [
-            [{ 'header': [false, 1, 2] }],
-            ['bold', 'italic', 'underline'],
-            [{ 'color': [] }, { 'background': [] }],
-            [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-            ['clean'],
-          ],
-        },
+        toolbar: [
+          [{ 'header': [false, 1, 2] }],
+          ['bold', 'italic', 'underline'],
+          [{ 'color': [] }, { 'background': [] }],
+          [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+          ['clean'],
+        ],
       },
     });
 
-    // 加入「插入表格」按鈕到工具列
-    const toolbar = quill.getModule('toolbar');
-    const toolbarEl = containerRef.current.previousSibling;
-
-    // 自訂插入表格按鈕
-    const tableBtn = document.createElement('button');
-    tableBtn.innerHTML = '⊞ 表格';
-    tableBtn.title = '插入表格';
-    tableBtn.style.cssText = 'font-size:11px;padding:2px 6px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:white;margin-left:4px;';
-    tableBtn.onclick = () => {
-      // 彈出行列選擇
-      const rows = parseInt(prompt('幾列？', '3') || '3');
-      const cols = parseInt(prompt('幾欄？', '3') || '3');
-      if (!rows || !cols) return;
-
-      // 建立 HTML 表格插入
-      let tableHtml = '<table><tbody>';
-      for (let r = 0; r < rows; r++) {
-        tableHtml += '<tr>';
-        for (let c = 0; c < cols; c++) {
-          tableHtml += r === 0
-            ? `<th contenteditable="true">&nbsp;</th>`
-            : `<td contenteditable="true">&nbsp;</td>`;
-        }
-        tableHtml += '</tr>';
-      }
-      tableHtml += '</tbody></table><p><br></p>';
-
-      const range = quill.getSelection(true);
-      quill.clipboard.dangerouslyPasteHTML(range.index, tableHtml);
-    };
-
-    if (toolbarEl) toolbarEl.appendChild(tableBtn);
-
     // 初始值
     if (value) {
-      // 判斷是否為 HTML（富文本）或純文字
-      if (value.startsWith('<') || value.includes('<p>') || value.includes('<table>')) {
+      if (isRichText(value)) {
         quill.clipboard.dangerouslyPasteHTML(value);
       } else {
         quill.setText(value);
@@ -8845,14 +8819,65 @@ function QuillEditor({ value, onChange, placeholder }) {
 
     quill.on('text-change', () => {
       const html = quill.root.innerHTML;
-      // 如果只有空段落，回傳空字串
       onChange(html === '<p><br></p>' ? '' : html);
     });
 
     quillRef.current = quill;
   }, []);
 
-  return <div ref={containerRef} />;
+  const insertTable = () => {
+    const quill = quillRef.current;
+    if (!quill) return;
+    const r = Math.max(1, tableRows);
+    const c = Math.max(1, tableCols);
+    let html = '<table><tbody>';
+    for (let i = 0; i < r; i++) {
+      html += '<tr>';
+      for (let j = 0; j < c; j++) {
+        html += i === 0
+          ? '<th style="background:#f1f5f9;font-weight:600">&nbsp;</th>'
+          : '<td>&nbsp;</td>';
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table><p><br></p>';
+    const range = quill.getSelection(true);
+    quill.clipboard.dangerouslyPasteHTML(range ? range.index : quill.getLength(), html);
+    setShowTablePicker(false);
+  };
+
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden">
+      {/* 自訂工具列補充：插入表格 */}
+      <div className="flex items-center gap-1 px-2 py-1 bg-slate-50 border-b border-slate-200 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setShowTablePicker(v => !v)}
+          className={`text-xs px-2 py-0.5 rounded border transition ${showTablePicker ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+        >
+          ⊞ 插入表格
+        </button>
+        {showTablePicker && (
+          <div className="flex items-center gap-1.5 text-xs text-slate-600">
+            <input type="number" min={1} max={10} value={tableRows}
+              onChange={e => setTableRows(Number(e.target.value))}
+              className="w-12 px-1 py-0.5 border border-slate-200 rounded text-center" />
+            <span>列 ×</span>
+            <input type="number" min={1} max={10} value={tableCols}
+              onChange={e => setTableCols(Number(e.target.value))}
+              className="w-12 px-1 py-0.5 border border-slate-200 rounded text-center" />
+            <span>欄</span>
+            <button type="button" onClick={insertTable}
+              className="px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 text-xs">
+              確定插入
+            </button>
+          </div>
+        )}
+      </div>
+      {/* Quill 編輯區 */}
+      <div ref={containerRef} />
+    </div>
+  );
 }
 
 function UpdateForm({ initial, onCancel, onSave, currentUser }) {
@@ -9044,15 +9069,13 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
           </div>
         </div>
         {update.text && (
-          update.text.startsWith('<') || update.text.includes('<p>') || update.text.includes('<table>') ? (
-            // 富文本 HTML
+          isRichText(update.text) ? (
             <div
               className={`text-sm leading-relaxed quill-display ${isLatest ? 'text-slate-900' : 'text-slate-700'}`}
               dangerouslySetInnerHTML={{ __html: update.text }}
               style={{ overflowX: 'auto' }}
             />
           ) : (
-            // 舊版純文字
             <p className={`text-sm leading-relaxed whitespace-pre-wrap ${isLatest ? 'text-slate-900' : 'text-slate-700'}`}>
               {update.text}
             </p>

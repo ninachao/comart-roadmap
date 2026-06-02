@@ -46,10 +46,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.64.0';
-const BUILD_ID = '20260601-1600';
+const APP_VERSION = 'v0.65.0';
+const BUILD_ID = '20260601-1800';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.65.0',
+    date: '2026-06-01',
+    changes: [
+      '🎉 進度紀錄支援富文本編輯（需搭配 index.html 更新）',
+      '工具列：標題、粗體、斜體、底線、文字顏色、背景色、清單',
+      '「⊞ 表格」按鈕：輸入列數欄數後直接插入表格，儲存格可編輯',
+      '舊版純文字資料完整保留，自動判斷格式顯示',
+      'Quill CDN 載入失敗時自動降級為純文字 textarea',
+    ],
+  },
   {
     version: 'v0.64.0',
     date: '2026-06-01',
@@ -8751,6 +8762,99 @@ function formatMoney(n) {
 }
 
 
+// ── Quill 富文本編輯器元件 ──────────────────────────────────────
+function QuillEditor({ value, onChange, placeholder }) {
+  const containerRef = React.useRef(null);
+  const quillRef = React.useRef(null);
+  const isInitialized = React.useRef(false);
+
+  React.useEffect(() => {
+    if (!containerRef.current || isInitialized.current) return;
+    if (typeof window.Quill === 'undefined') return; // CDN 還沒載入
+
+    isInitialized.current = true;
+
+    const toolbarOptions = [
+      [{ 'header': [1, 2, false] }],
+      ['bold', 'italic', 'underline', 'strike'],
+      [{ 'color': [] }, { 'background': [] }],
+      [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+      ['table-insert'],
+      ['clean'],
+    ];
+
+    const quill = new window.Quill(containerRef.current, {
+      theme: 'snow',
+      placeholder: placeholder || '輸入內容...',
+      modules: {
+        toolbar: {
+          container: [
+            [{ 'header': [false, 1, 2] }],
+            ['bold', 'italic', 'underline'],
+            [{ 'color': [] }, { 'background': [] }],
+            [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+            ['clean'],
+          ],
+        },
+      },
+    });
+
+    // 加入「插入表格」按鈕到工具列
+    const toolbar = quill.getModule('toolbar');
+    const toolbarEl = containerRef.current.previousSibling;
+
+    // 自訂插入表格按鈕
+    const tableBtn = document.createElement('button');
+    tableBtn.innerHTML = '⊞ 表格';
+    tableBtn.title = '插入表格';
+    tableBtn.style.cssText = 'font-size:11px;padding:2px 6px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:white;margin-left:4px;';
+    tableBtn.onclick = () => {
+      // 彈出行列選擇
+      const rows = parseInt(prompt('幾列？', '3') || '3');
+      const cols = parseInt(prompt('幾欄？', '3') || '3');
+      if (!rows || !cols) return;
+
+      // 建立 HTML 表格插入
+      let tableHtml = '<table><tbody>';
+      for (let r = 0; r < rows; r++) {
+        tableHtml += '<tr>';
+        for (let c = 0; c < cols; c++) {
+          tableHtml += r === 0
+            ? `<th contenteditable="true">&nbsp;</th>`
+            : `<td contenteditable="true">&nbsp;</td>`;
+        }
+        tableHtml += '</tr>';
+      }
+      tableHtml += '</tbody></table><p><br></p>';
+
+      const range = quill.getSelection(true);
+      quill.clipboard.dangerouslyPasteHTML(range.index, tableHtml);
+    };
+
+    if (toolbarEl) toolbarEl.appendChild(tableBtn);
+
+    // 初始值
+    if (value) {
+      // 判斷是否為 HTML（富文本）或純文字
+      if (value.startsWith('<') || value.includes('<p>') || value.includes('<table>')) {
+        quill.clipboard.dangerouslyPasteHTML(value);
+      } else {
+        quill.setText(value);
+      }
+    }
+
+    quill.on('text-change', () => {
+      const html = quill.root.innerHTML;
+      // 如果只有空段落，回傳空字串
+      onChange(html === '<p><br></p>' ? '' : html);
+    });
+
+    quillRef.current = quill;
+  }, []);
+
+  return <div ref={containerRef} />;
+}
+
 function UpdateForm({ initial, onCancel, onSave, currentUser }) {
   const [date, setDate] = useState(initial?.date || new Date().toISOString().split('T')[0]);
   const [dateEnd, setDateEnd] = useState(initial?.dateEnd || '');
@@ -8817,15 +8921,25 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
         />
       </div>
 
-      {/* 內文 */}
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={3}
-        autoFocus
-        placeholder="本週工程更新..."
-        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none bg-white mb-2"
-      />
+      {/* 內文 - 富文本編輯器 */}
+      {typeof window !== 'undefined' && typeof window.Quill !== 'undefined' ? (
+        <div className="mb-2">
+          <QuillEditor
+            value={text}
+            onChange={setText}
+            placeholder="本週工程更新..."
+          />
+        </div>
+      ) : (
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={3}
+          autoFocus
+          placeholder="本週工程更新..."
+          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none bg-white mb-2"
+        />
+      )}
 
       {/* 附件（圖片/影片/Excel/PDF/任意檔案 + 連結） */}
       <div className="bg-white rounded border border-slate-200 px-2 pt-1 pb-2 mb-2">
@@ -8929,9 +9043,21 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
             </button>
           </div>
         </div>
-        <p className={`text-sm leading-relaxed whitespace-pre-wrap ${isLatest ? 'text-slate-900' : 'text-slate-700'}`}>
-          {update.text}
-        </p>
+        {update.text && (
+          update.text.startsWith('<') || update.text.includes('<p>') || update.text.includes('<table>') ? (
+            // 富文本 HTML
+            <div
+              className={`text-sm leading-relaxed quill-display ${isLatest ? 'text-slate-900' : 'text-slate-700'}`}
+              dangerouslySetInnerHTML={{ __html: update.text }}
+              style={{ overflowX: 'auto' }}
+            />
+          ) : (
+            // 舊版純文字
+            <p className={`text-sm leading-relaxed whitespace-pre-wrap ${isLatest ? 'text-slate-900' : 'text-slate-700'}`}>
+              {update.text}
+            </p>
+          )
+        )}
         {/* 附件：優先用新格式 attachments，舊格式 images 轉換相容 */}
         {(() => {
           const atts = update.attachments?.length > 0

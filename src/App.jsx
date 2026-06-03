@@ -46,10 +46,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.68.0';
-const BUILD_ID = '20260601-2200';
+const APP_VERSION = 'v0.69.0';
+const BUILD_ID = '20260601-2300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.69.0',
+    date: '2026-06-01',
+    changes: [
+      '🔧 修正主頁亂碼：isRichText() 改為偵測內容中任何 HTML 標籤，不限開頭',
+      '🔧 表格儲存格加大 padding、加 hover 藍色提示，更容易點擊打字',
+    ],
+  },
   {
     version: 'v0.68.0',
     date: '2026-06-01',
@@ -8791,10 +8799,8 @@ function formatMoney(n) {
 // 判斷是否為富文本 HTML
 function isRichText(text) {
   if (!text) return false;
-  const t = text.trimStart();
-  return t.startsWith('<p>') || t.startsWith('<table>') ||
-    t.startsWith('<ol>') || t.startsWith('<ul>') ||
-    t.startsWith('<h1>') || t.startsWith('<h2>') || t.startsWith('<div>');
+  return /<(table|tr|td|th|p|ol|ul|h1|h2|br|b|i|u|span|div|strong|em)[\s>]/i.test(text)
+    || text.includes('</');
 }
 
 // ── 原生 contentEditable 富文本編輯器 ─────────────────────────

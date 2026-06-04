@@ -46,10 +46,29 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.69.0';
-const BUILD_ID = '20260601-2300';
+const APP_VERSION = 'v0.71.0';
+const BUILD_ID = '20260604-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.71.0',
+    date: '2026-06-04',
+    changes: [
+      '🔧 內文編輯區移除圖片貼上功能（避免 base64 亂碼顯示在主頁）',
+      '圖片改回用原本的「上傳附件」區域貼上（Ctrl+V）',
+      '內文編輯區只允許文字和 Excel 表格貼入',
+    ],
+  },
+  {
+    version: 'v0.70.0',
+    date: '2026-06-02',
+    changes: [
+      '🎉 進度編輯區支援貼上圖片（Ctrl+V）：圖片以縮圖顯示在文字中',
+      '縮圖點擊可全螢幕放大預覽',
+      '🔧 移除插入表格按鈕（直接貼 Excel 即可）',
+      '工具列提示文字：「可直接貼上 Excel 表格或圖片」',
+    ],
+  },
   {
     version: 'v0.69.0',
     date: '2026-06-01',
@@ -8806,9 +8825,9 @@ function isRichText(text) {
 // ── 原生 contentEditable 富文本編輯器 ─────────────────────────
 function RichEditor({ value, onChange, placeholder }) {
   const editorRef = React.useRef(null);
-  const [showTablePicker, setShowTablePicker] = React.useState(false);
-  const [tableRows, setTableRows] = React.useState(3);
-  const [tableCols, setTableCols] = React.useState(3);
+  const [showFgColor, setShowFgColor] = React.useState(false);
+  const [showBgColor, setShowBgColor] = React.useState(false);
+  const colors = ['#000000','#dc2626','#ea580c','#ca8a04','#16a34a','#2563eb','#7c3aed','#db2777','#ffffff','#fecaca','#fed7aa','#fef08a','#bbf7d0','#bfdbfe','#e9d5ff','#94a3b8'];
 
   // 初始化內容
   React.useEffect(() => {
@@ -8832,35 +8851,23 @@ function RichEditor({ value, onChange, placeholder }) {
     onChange(html === '<br>' || html === '' ? '' : html);
   };
 
-  const insertTable = () => {
-    editorRef.current?.focus();
-    const r = Math.max(1, tableRows);
-    const c = Math.max(1, tableCols);
-    let html = '<table><tbody>';
-    for (let i = 0; i < r; i++) {
-      html += '<tr>';
-      for (let j = 0; j < c; j++) {
-        html += i === 0
-          ? '<th> </th>'
-          : '<td> </td>';
+  // 處理貼上：攔截圖片，只允許文字和表格
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault(); // 阻止圖片貼入內文
+        return;
       }
-      html += '</tr>';
     }
-    html += '</tbody></table><p><br></p>';
-    document.execCommand('insertHTML', false, html);
-    onChange(getHtml());
-    setShowTablePicker(false);
+    // 文字、HTML（Excel 表格）正常貼上
   };
 
-  // 顏色選單狀態
-  const [showFgColor, setShowFgColor] = React.useState(false);
-  const [showBgColor, setShowBgColor] = React.useState(false);
-  const colors = ['#000000','#dc2626','#ea580c','#ca8a04','#16a34a','#2563eb','#7c3aed','#db2777','#ffffff','#fecaca','#fed7aa','#fef08a','#bbf7d0','#bfdbfe','#e9d5ff','#94a3b8'];
-
-  const ToolBtn = ({ onClick, title, children, active }) => (
+  const ToolBtn = ({ onClick, title, children }) => (
     <button type="button" onMouseDown={e => { e.preventDefault(); onClick(); }}
       title={title}
-      className={`px-1.5 py-0.5 rounded text-sm font-medium hover:bg-slate-200 transition ${active ? 'bg-slate-200' : ''}`}>
+      className="px-1.5 py-0.5 rounded text-sm font-medium hover:bg-slate-200 transition">
       {children}
     </button>
   );
@@ -8869,31 +8876,13 @@ function RichEditor({ value, onChange, placeholder }) {
     <div className="border border-slate-200 rounded-lg overflow-visible">
       {/* 工具列 */}
       <div className="flex items-center gap-0.5 px-2 py-1 bg-slate-50 border-b border-slate-200 flex-wrap">
-        {/* 插入表格 */}
-        <button type="button" onMouseDown={e => { e.preventDefault(); setShowTablePicker(v => !v); setShowFgColor(false); setShowBgColor(false); }}
-          className={`text-xs px-2 py-0.5 rounded border transition mr-1 ${showTablePicker ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'}`}>
-          ⊞ 插入表格
-        </button>
-        {showTablePicker && (
-          <div className="flex items-center gap-1 text-xs text-slate-600 mr-2">
-            <input type="number" min={1} max={10} value={tableRows} onChange={e => setTableRows(Number(e.target.value))}
-              className="w-10 px-1 py-0.5 border border-slate-200 rounded text-center" />
-            <span>列 ×</span>
-            <input type="number" min={1} max={10} value={tableCols} onChange={e => setTableCols(Number(e.target.value))}
-              className="w-10 px-1 py-0.5 border border-slate-200 rounded text-center" />
-            <span>欄</span>
-            <button type="button" onMouseDown={e => { e.preventDefault(); insertTable(); }}
-              className="px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 text-xs">確定</button>
-          </div>
-        )}
-        <div className="w-px h-4 bg-slate-300 mx-1" />
         <ToolBtn onClick={() => exec('bold')} title="粗體"><b>B</b></ToolBtn>
         <ToolBtn onClick={() => exec('italic')} title="斜體"><i>I</i></ToolBtn>
         <ToolBtn onClick={() => exec('underline')} title="底線"><u>U</u></ToolBtn>
         <div className="w-px h-4 bg-slate-300 mx-1" />
         {/* 文字顏色 */}
         <div className="relative">
-          <button type="button" onMouseDown={e => { e.preventDefault(); setShowFgColor(v => !v); setShowBgColor(false); setShowTablePicker(false); }}
+          <button type="button" onMouseDown={e => { e.preventDefault(); setShowFgColor(v => !v); setShowBgColor(false); }}
             className="px-1.5 py-0.5 rounded hover:bg-slate-200 text-sm" title="文字顏色">A🎨</button>
           {showFgColor && (
             <div className="absolute top-full left-0 z-50 bg-white border border-slate-200 rounded shadow-lg p-2 flex flex-wrap gap-1" style={{width: 140}}>
@@ -8907,7 +8896,7 @@ function RichEditor({ value, onChange, placeholder }) {
         </div>
         {/* 背景顏色 */}
         <div className="relative">
-          <button type="button" onMouseDown={e => { e.preventDefault(); setShowBgColor(v => !v); setShowFgColor(false); setShowTablePicker(false); }}
+          <button type="button" onMouseDown={e => { e.preventDefault(); setShowBgColor(v => !v); setShowFgColor(false); }}
             className="px-1.5 py-0.5 rounded hover:bg-slate-200 text-sm" title="背景色">▣</button>
           {showBgColor && (
             <div className="absolute top-full left-0 z-50 bg-white border border-slate-200 rounded shadow-lg p-2 flex flex-wrap gap-1" style={{width: 140}}>
@@ -8921,6 +8910,7 @@ function RichEditor({ value, onChange, placeholder }) {
         </div>
         <div className="w-px h-4 bg-slate-300 mx-1" />
         <ToolBtn onClick={() => exec('removeFormat')} title="清除格式">✕</ToolBtn>
+        <span className="text-[10px] text-slate-400 ml-2">可直接貼上 Excel 表格或圖片</span>
       </div>
 
       {/* 編輯區 */}
@@ -8929,6 +8919,7 @@ function RichEditor({ value, onChange, placeholder }) {
         contentEditable
         suppressContentEditableWarning
         onInput={handleInput}
+        onPaste={handlePaste}
         data-placeholder={placeholder || '本週工程更新...'}
         className="rich-editor px-3 py-2"
         style={{ minHeight: 100, maxHeight: 400, overflowY: 'auto' }}
@@ -9047,6 +9038,7 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
 
 function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete, onMarkFollowedUp, currentUser }) {
   const [previewImg, setPreviewImg] = useState(null);
+  const [inlineImgPreview, setInlineImgPreview] = useState(null);
 
   if (isEditing) {
     return <UpdateForm initial={update} onCancel={onCancelEdit} onSave={onSave} currentUser={currentUser} />;
@@ -9121,6 +9113,12 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
               className={`text-sm leading-relaxed quill-display ${isLatest ? 'text-slate-900' : 'text-slate-700'}`}
               dangerouslySetInnerHTML={{ __html: update.text }}
               style={{ overflowX: 'auto' }}
+              onClick={(e) => {
+                // 點擊嵌入圖片 → 放大預覽
+                if (e.target.tagName === 'IMG' && e.target.src) {
+                  setInlineImgPreview(e.target.src);
+                }
+              }}
             />
           ) : (
             <p className={`text-sm leading-relaxed whitespace-pre-wrap ${isLatest ? 'text-slate-900' : 'text-slate-700'}`}>
@@ -9147,6 +9145,14 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
           onClick={() => setPreviewImg(null)}
         >
           <StorageImage src={previewImg.url || previewImg.dataUrl} path={previewImg.path} alt={previewImg.name} className="max-w-full max-h-full rounded" />
+        </div>
+      )}
+      {inlineImgPreview && (
+        <div
+          className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
+          onClick={() => setInlineImgPreview(null)}
+        >
+          <img src={inlineImgPreview} alt="預覽" className="max-w-full max-h-full rounded shadow-lg" />
         </div>
       )}
     </>

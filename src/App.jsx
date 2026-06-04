@@ -46,10 +46,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.71.0';
-const BUILD_ID = '20260604-1000';
+const APP_VERSION = 'v0.72.0';
+const BUILD_ID = '20260604-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.72.0',
+    date: '2026-06-04',
+    changes: [
+      '🔧 修正主頁亂碼：isRichText 移除 div 判斷，避免 Tailwind 產生的 div 被誤判',
+      '🔧 新增 sanitizeRichHtml：顯示與儲存時自動清除 --tw-* inline CSS 變數',
+      '儲存時即清理，新資料存進 Firebase 已是乾淨 HTML',
+    ],
+  },
   {
     version: 'v0.71.0',
     date: '2026-06-04',
@@ -8818,8 +8827,21 @@ function formatMoney(n) {
 // 判斷是否為富文本 HTML
 function isRichText(text) {
   if (!text) return false;
-  return /<(table|tr|td|th|p|ol|ul|h1|h2|br|b|i|u|span|div|strong|em)[\s>]/i.test(text)
-    || text.includes('</');
+  // 只偵測明確的富文本標籤，排除 div（瀏覽器 contentEditable 會自動包 div）
+  return /<(table|tr|td|th|ol|ul|li|h1|h2|br|b|i|u|strong|em|span)[>\s/]/i.test(text)
+    || text.includes('</b>') || text.includes('</i>') || text.includes('</u>')
+    || text.includes('</table>') || text.includes('</ol>') || text.includes('</ul>');
+}
+
+// 清除 Tailwind/瀏覽器產生的 inline CSS 變數，只保留顏色相關 style
+function sanitizeRichHtml(html) {
+  if (!html) return html;
+  // 移除含 --tw- 開頭的 style 屬性
+  return html.replace(/\s*style="[^"]*--tw-[^"]*"/gi, '')
+    // 移除空的 style=""
+    .replace(/\s*style=""\s*/gi, '')
+    // 把 contentEditable 產生的頂層 div 拆掉（保留內容）
+    .replace(/^<div[^>]*>([\s\S]*)<\/div>$/i, '$1');
 }
 
 // ── 原生 contentEditable 富文本編輯器 ─────────────────────────
@@ -8942,10 +8964,11 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
   const submit = () => {
     if (!text.trim() && attachments.length === 0) return;
     const images = attachments.filter(a => a.kind === 'upload' && isImageFile(a.name, a.type));
+    const cleanText = isRichText(text) ? sanitizeRichHtml(text) : text.trim();
     onSave({
       date,
       dateEnd: isRange && dateEnd ? dateEnd : null,
-      text: text.trim(),
+      text: cleanText,
       attachments,
       images,
       author: author.trim(),
@@ -9111,10 +9134,9 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
           isRichText(update.text) ? (
             <div
               className={`text-sm leading-relaxed quill-display ${isLatest ? 'text-slate-900' : 'text-slate-700'}`}
-              dangerouslySetInnerHTML={{ __html: update.text }}
+              dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(update.text) }}
               style={{ overflowX: 'auto' }}
               onClick={(e) => {
-                // 點擊嵌入圖片 → 放大預覽
                 if (e.target.tagName === 'IMG' && e.target.src) {
                   setInlineImgPreview(e.target.src);
                 }

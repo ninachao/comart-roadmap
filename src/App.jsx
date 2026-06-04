@@ -46,10 +46,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.72.0';
-const BUILD_ID = '20260604-1100';
+const APP_VERSION = 'v0.73.0';
+const BUILD_ID = '20260604-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.73.0',
+    date: '2026-06-04',
+    changes: [
+      '🔧 移除富文本編輯器（contentEditable），回到純文字 textarea',
+      '進度紀錄內文恢復為純文字，不再有格式亂碼問題',
+      '舊的富文本資料仍會以 HTML 格式顯示（不影響既有資料）',
+    ],
+  },
   {
     version: 'v0.72.0',
     date: '2026-06-04',
@@ -8964,11 +8973,10 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
   const submit = () => {
     if (!text.trim() && attachments.length === 0) return;
     const images = attachments.filter(a => a.kind === 'upload' && isImageFile(a.name, a.type));
-    const cleanText = isRichText(text) ? sanitizeRichHtml(text) : text.trim();
     onSave({
       date,
       dateEnd: isRange && dateEnd ? dateEnd : null,
-      text: cleanText,
+      text: text.trim(),
       attachments,
       images,
       author: author.trim(),
@@ -9018,14 +9026,15 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
         />
       </div>
 
-      {/* 內文 - 富文本編輯器 */}
-      <div className="mb-2">
-        <RichEditor
-          value={text}
-          onChange={setText}
-          placeholder="本週工程更新..."
-        />
-      </div>
+      {/* 內文 */}
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={3}
+        autoFocus
+        placeholder="本週工程更新..."
+        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none bg-white mb-2"
+      />
 
       {/* 附件（圖片/影片/Excel/PDF/任意檔案 + 連結） */}
       <div className="bg-white rounded border border-slate-200 px-2 pt-1 pb-2 mb-2">

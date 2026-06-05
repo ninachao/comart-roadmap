@@ -41,15 +41,23 @@ const STORAGE_FOLDER = 'roadmap';
 // === 簡易密碼設定 ===
 // 之後可改成從 Firestore users collection 讀取
 const USERS = {
-  'nina': { password: 'nina2026', role: 'admin', name: 'Nina' },
+  'C00166': { password: 'Cmt0000340', role: 'admin', name: 'Nina' },
   'viewer': { password: 'comart', role: 'viewer', name: '檢視者' },
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.73.0';
-const BUILD_ID = '20260604-1200';
+const APP_VERSION = 'v0.74.0';
+const BUILD_ID = '20260605-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.74.0',
+    date: '2026-06-05',
+    changes: [
+      '🔒 管理員帳號更新為 C00166 / Cmt0000340',
+      '🔒 登入頁移除帳號密碼提示顯示',
+    ],
+  },
   {
     version: 'v0.73.0',
     date: '2026-06-04',
@@ -10144,14 +10152,6 @@ function LoginScreen({ onLogin }) {
           >
             登入
           </button>
-        </div>
-
-        <div className="mt-6 pt-4 border-t border-slate-100">
-          <p className="text-[10px] text-slate-400 text-center leading-relaxed">
-            管理員：<code className="bg-slate-50 px-1 rounded">nina</code> / <code className="bg-slate-50 px-1 rounded">nina2026</code><br />
-            業務：<code className="bg-slate-50 px-1 rounded">sales</code> / <code className="bg-slate-50 px-1 rounded">sales2026</code><br />
-            檢視者：<code className="bg-slate-50 px-1 rounded">viewer</code> / <code className="bg-slate-50 px-1 rounded">comart</code>
-          </p>
         </div>
       </div>
     </div>

@@ -46,10 +46,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.74.0';
-const BUILD_ID = '20260605-1000';
+const APP_VERSION = 'v0.75.0';
+const BUILD_ID = '20260605-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.75.0',
+    date: '2026-06-05',
+    changes: [
+      '🔧 修正登入 bug：帳號比對不再強制轉小寫，C00166 大寫帳號可正常登入',
+      '相容舊帳號 sales / viewer（小寫）',
+    ],
+  },
   {
     version: 'v0.74.0',
     date: '2026-06-05',
@@ -10089,13 +10097,15 @@ function LoginScreen({ onLogin }) {
   const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = () => {
-    const user = USERS[username.toLowerCase().trim()];
+    const trimmed = username.trim();
+    // 先原始比對，找不到再嘗試小寫（相容舊帳號 sales / viewer）
+    const user = USERS[trimmed] || USERS[trimmed.toLowerCase()];
     if (!user || user.password !== password) {
       setError('帳號或密碼錯誤');
       return;
     }
     onLogin({
-      username: username.toLowerCase().trim(),
+      username: trimmed,
       role: user.role,
       name: user.name,
     });

@@ -46,10 +46,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.76.0';
-const BUILD_ID = '20260605-1200';
+const APP_VERSION = 'v0.77.0';
+const BUILD_ID = '20260608-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.77.0',
+    date: '2026-06-08',
+    changes: [
+      '🎉 提醒面板「✓ 已跟追」修正：點擊後跳到產品詳情並自動展開進度新增表單',
+      '表單頂部顯示提示：記錄跟追結果 + 設定下次跟追日期',
+      '儲存後：新增一筆進度 + 同時將舊的標記已跟追',
+      '取消：關閉表單，不新增進度也不標記',
+    ],
+  },
   {
     version: 'v0.76.0',
     date: '2026-06-05',
@@ -1597,7 +1607,8 @@ export default function ProductRoadmap() {
   const [showNewModal, setShowNewModal] = useState(false);
   const [showPrototypeOverview, setShowPrototypeOverview] = useState(false);
   const [showSampleLibrary, setShowSampleLibrary] = useState(false);
-  const [openFrom, setOpenFrom] = useState(null); // 'samples' | 'reminders' | 'prototype' | null
+  const [openFrom, setOpenFrom] = useState(null);
+  const [followUpTrigger, setFollowUpTrigger] = useState(null); // 從提醒面板點「已跟追」帶過來的 update // 'samples' | 'reminders' | 'prototype' | null
   const [showReminders, setShowReminders] = useState(false);
   // trackingOverrides: { [projectId]: 'include' | 'exclude' }
   const [trackingOverrides, setTrackingOverrides] = useState({});
@@ -2319,7 +2330,7 @@ export default function ProductRoadmap() {
           project={selectedProject}
           allTags={allTags}
           isViewer={isViewer}
-          onClose={() => { setSelectedProject(null); setOpenFrom(null); }}
+          onClose={() => { setSelectedProject(null); setOpenFrom(null); setFollowUpTrigger(null); }}
           onAddUpdate={(u) => handleAddUpdate(selectedProject.id, u)}
           onEditUpdate={(idx, u) => handleEditUpdate(selectedProject.id, idx, u)}
           onDeleteUpdate={(idx) => handleDeleteUpdate(selectedProject.id, idx)}
@@ -2336,9 +2347,12 @@ export default function ProductRoadmap() {
           withdrawals={withdrawals}
           currentUser={currentUser}
           openFrom={openFrom}
+          followUpTrigger={followUpTrigger}
+          onFollowUpTriggered={() => setFollowUpTrigger(null)}
           onReturn={() => {
             setSelectedProject(null);
             setOpenFrom(null);
+            setFollowUpTrigger(null);
             if (openFrom === 'samples') setShowSampleLibrary(true);
             else if (openFrom === 'reminders') setShowReminders(true);
             else if (openFrom === 'prototype') setShowPrototypeOverview(true);
@@ -2378,7 +2392,12 @@ export default function ProductRoadmap() {
           projects={projects}
           trackingOverrides={trackingOverrides}
           onSetOverride={setTrackingOverride}
-          onJumpToProject={(p) => { setSelectedProject(p); setOpenFrom('reminders'); }}
+          onJumpToProject={(p, targetUpdate) => {
+            setSelectedProject(p);
+            setOpenFrom('reminders');
+            if (targetUpdate) setFollowUpTrigger(targetUpdate);
+            setShowReminders(false);
+          }}
           onMarkFollowedUp={(p, u) => {
             const idx = (p.updates || []).findIndex(x => x.date === u.date && x.text === u.text);
             if (idx < 0) return;
@@ -2648,7 +2667,7 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
   );
 }
 
-function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, samples = [], withdrawals = [], currentUser, openFrom = null, onReturn }) {
+function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, samples = [], withdrawals = [], currentUser, openFrom = null, onReturn, followUpTrigger = null, onFollowUpTriggered }) {
   const [showWizard, setShowWizard] = useState(false);
 
   // 收到自動打開請求時，跳出精靈
@@ -2663,6 +2682,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
     if (onWizardClose) onWizardClose();
   };
   const [showAddUpdate, setShowAddUpdate] = useState(false);
+  const [followUpInitial, setFollowUpInitial] = useState(null); // 跟追表單的預設值
   const [showEmailImport, setShowEmailImport] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [editingUpdateIdx, setEditingUpdateIdx] = useState(null);
@@ -2670,6 +2690,21 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
   const [tempValue, setTempValue] = useState('');
   const [newTag, setNewTag] = useState('');
   const cfg = STATUS_COLORS[project.status];
+
+  // 從提醒面板點「✓ 已跟追」跳過來時，自動展開新增進度表單
+  React.useEffect(() => {
+    if (followUpTrigger) {
+      setFollowUpInitial({
+        date: new Date().toISOString().split('T')[0],
+        author: currentUser?.name || '',
+        text: '',
+        followUpDate: '',
+        _triggerUpdate: followUpTrigger, // 記錄要標記的那筆
+      });
+      setShowAddUpdate(true);
+      if (onFollowUpTriggered) onFollowUpTriggered();
+    }
+  }, [followUpTrigger]);
 
   const updates = project.updates || [];
   const latest = updates[0];
@@ -2945,11 +2980,32 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             </div>
 
             {showAddUpdate && (
-              <UpdateForm
-                onCancel={() => setShowAddUpdate(false)}
-                onSave={(u) => { onAddUpdate(u); setShowAddUpdate(false); }}
-                currentUser={currentUser}
-              />
+              <>
+                {followUpInitial && (
+                  <p className="text-[11px] text-emerald-700 font-medium mb-1.5 px-1">✓ 記錄這次跟追結果，並可設定下次跟追日期</p>
+                )}
+                <UpdateForm
+                  initial={followUpInitial || undefined}
+                  onCancel={() => { setShowAddUpdate(false); setFollowUpInitial(null); }}
+                  onSave={(u) => {
+                    onAddUpdate(u);
+                    // 如果是從跟追觸發的，同時標記舊的已跟追
+                    if (followUpInitial?._triggerUpdate) {
+                      const trigger = followUpInitial._triggerUpdate;
+                      const updates = project.updates || [];
+                      const idx = updates.findIndex(x => x.date === trigger.date && x.text === trigger.text);
+                      if (idx >= 0) {
+                        const newUpdates = [...updates];
+                        newUpdates[idx] = { ...newUpdates[idx], followedUp: true };
+                        onUpdateField('updates', newUpdates);
+                      }
+                    }
+                    setShowAddUpdate(false);
+                    setFollowUpInitial(null);
+                  }}
+                  currentUser={currentUser}
+                />
+              </>
             )}
 
             {showEmailImport && (
@@ -7235,7 +7291,14 @@ function WithdrawalModal({ sample, currentUser, onSave, onClose }) {
 
 // ============= 提醒頁面 Modal =============
 function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOverrides, onSetOverride, onJumpToProject, onMarkFollowedUp, onClose, isAdmin }) {
-  const [tab, setTab] = useState('followup'); // 'stale' | 'followup' | 'calendar' | 'manage'
+  const [tab, setTab] = useState('followup');
+  const [followUpTarget, setFollowUpTarget] = useState(null); // { project, update }
+
+  const handleFollowUpClick = (p, u) => {
+    // 關閉提醒面板，跳到產品詳情，並帶著「需要展開跟追表單」的資訊
+    onJumpToProject(p, u);
+    onClose();
+  }; // 'stale' | 'followup' | 'calendar' | 'manage'
   const [searchTerm, setSearchTerm] = useState('');
 
   // 月曆 state
@@ -7372,7 +7435,7 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
                       {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
                       <span className="text-xs text-slate-600 flex-1 truncate">— {u.text}</span>
                       {isAdmin && (
-                        <button onClick={() => onMarkFollowedUp(p, u)} className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0">
+                        <button onClick={() => { onJumpToProject(p, u); onClose(); }} className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0">
                           ✓ 已跟追
                         </button>
                       )}
@@ -7522,7 +7585,7 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
                                     <span className="text-xs text-slate-600 flex-1 truncate">— {u.text}</span>
                                     {isAdmin && (
                                       <button
-                                        onClick={() => onMarkFollowedUp(p, u)}
+                                        onClick={() => { onJumpToProject(p, u); onClose(); }}
                                         className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0"
                                       >
                                         ✓ 已跟追

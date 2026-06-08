@@ -46,10 +46,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.75.0';
-const BUILD_ID = '20260605-1100';
+const APP_VERSION = 'v0.76.0';
+const BUILD_ID = '20260605-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.76.0',
+    date: '2026-06-05',
+    changes: [
+      '🎉 按「✓ 已跟追」後直接展開進度新增表單（合併到進度紀錄）',
+      '可填寫這次跟追結果 + 設定下次跟追日期，一次完成',
+      '取消表單：只標記已跟追，不新增進度',
+      '儲存表單：新增一筆進度記錄 + 同時標記舊的已跟追',
+    ],
+  },
   {
     version: 'v0.75.0',
     date: '2026-06-05',
@@ -2964,6 +2974,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     onSave={(u) => { onEditUpdate(0, u); setEditingUpdateIdx(null); }}
                     onDelete={() => onDeleteUpdate(0)}
                     onMarkFollowedUp={isViewer ? null : handleMarkFollowedUp}
+                    onAddUpdate={isViewer ? null : onAddUpdate}
                     currentUser={currentUser}
                   />
                 )}
@@ -2989,6 +3000,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     onSave={(updated) => { onEditUpdate(i + 1, updated); setEditingUpdateIdx(null); }}
                     onDelete={() => onDeleteUpdate(i + 1)}
                     onMarkFollowedUp={isViewer ? null : handleMarkFollowedUp}
+                    onAddUpdate={isViewer ? null : onAddUpdate}
                     currentUser={currentUser}
                   />
                 ))}
@@ -9084,9 +9096,10 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
   );
 }
 
-function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete, onMarkFollowedUp, currentUser }) {
+function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete, onMarkFollowedUp, onAddUpdate, currentUser }) {
   const [previewImg, setPreviewImg] = useState(null);
   const [inlineImgPreview, setInlineImgPreview] = useState(null);
+  const [showFollowUpForm, setShowFollowUpForm] = useState(false);
 
   if (isEditing) {
     return <UpdateForm initial={update} onCancel={onCancelEdit} onSave={onSave} currentUser={currentUser} />;
@@ -9140,8 +9153,8 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
             {isOverdue && onMarkFollowedUp && (
               <button
-                onClick={() => onMarkFollowedUp(update)}
-                title="標記已跟追"
+                onClick={() => setShowFollowUpForm(true)}
+                title="標記已跟追並記錄進度"
                 className="p-1 text-rose-500 hover:text-emerald-600 hover:bg-white rounded text-[10px] font-medium"
               >
                 ✓
@@ -9186,6 +9199,33 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
           );
         })()}
       </div>
+      {/* 跟追後新增進度表單 */}
+      {showFollowUpForm && (
+        <div className="mt-2 border-t border-emerald-100 pt-2">
+          <p className="text-[11px] text-emerald-700 font-medium mb-1.5">✓ 記錄這次跟追結果，並設定下次跟追日期</p>
+          <UpdateForm
+            initial={{
+              date: new Date().toISOString().split('T')[0],
+              author: currentUser?.name || '',
+              text: '',
+              followUpDate: '',
+            }}
+            currentUser={currentUser}
+            onCancel={() => {
+              // 取消：只標記已跟追，不新增進度
+              onMarkFollowedUp(update);
+              setShowFollowUpForm(false);
+            }}
+            onSave={(newUpdate) => {
+              // 儲存：新增進度 + 標記已跟追
+              if (onAddUpdate) onAddUpdate(newUpdate);
+              onMarkFollowedUp(update);
+              setShowFollowUpForm(false);
+            }}
+          />
+        </div>
+      )}
+
       {previewImg && (
         <div
           className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"

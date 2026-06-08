@@ -46,10 +46,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.77.0';
-const BUILD_ID = '20260608-1000';
+const APP_VERSION = 'v0.78.0';
+const BUILD_ID = '20260608-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.78.0',
+    date: '2026-06-08',
+    changes: [
+      '🎉 已跟追流程新增彈性選擇：先問「有沒有新進度要記錄」',
+      '選「有，記錄進度」→ 展開進度表單，儲存後標記已跟追',
+      '選「沒有，直接標記」→ 立刻標記已跟追，從提醒消失',
+      '兩個選項都會讓該項目從提醒面板消失',
+    ],
+  },
   {
     version: 'v0.77.0',
     date: '2026-06-08',
@@ -2682,7 +2692,8 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
     if (onWizardClose) onWizardClose();
   };
   const [showAddUpdate, setShowAddUpdate] = useState(false);
-  const [followUpInitial, setFollowUpInitial] = useState(null); // 跟追表單的預設值
+  const [followUpInitial, setFollowUpInitial] = useState(null);
+  const [showFollowUpPrompt, setShowFollowUpPrompt] = useState(false); // 小對話框
   const [showEmailImport, setShowEmailImport] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [editingUpdateIdx, setEditingUpdateIdx] = useState(null);
@@ -2691,7 +2702,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
   const [newTag, setNewTag] = useState('');
   const cfg = STATUS_COLORS[project.status];
 
-  // 從提醒面板點「✓ 已跟追」跳過來時，自動展開新增進度表單
+  // 從提醒面板點「✓ 已跟追」跳過來時，先問有沒有新進度
   React.useEffect(() => {
     if (followUpTrigger) {
       setFollowUpInitial({
@@ -2699,12 +2710,24 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
         author: currentUser?.name || '',
         text: '',
         followUpDate: '',
-        _triggerUpdate: followUpTrigger, // 記錄要標記的那筆
+        _triggerUpdate: followUpTrigger,
       });
-      setShowAddUpdate(true);
+      setShowFollowUpPrompt(true); // 先跳對話框
       if (onFollowUpTriggered) onFollowUpTriggered();
     }
   }, [followUpTrigger]);
+
+  // 直接標記已跟追（不填進度）
+  const markTriggerFollowedUp = (triggerUpdate) => {
+    if (!triggerUpdate) return;
+    const allUpdates = project.updates || [];
+    const idx = allUpdates.findIndex(x => x.date === triggerUpdate.date && x.text === triggerUpdate.text);
+    if (idx >= 0) {
+      const newUpdates = [...allUpdates];
+      newUpdates[idx] = { ...newUpdates[idx], followedUp: true };
+      onUpdateField('updates', newUpdates);
+    }
+  };
 
   const updates = project.updates || [];
   const latest = updates[0];
@@ -3160,6 +3183,39 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           }}
           onClose={closeWizard}
         />
+      )}
+
+      {/* 跟追後詢問是否記錄進度的對話框 */}
+      {showFollowUpPrompt && followUpInitial && (
+        <div className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-5">
+            <p className="text-sm font-medium text-slate-800 mb-1">這次跟追有新進度要記錄嗎？</p>
+            <p className="text-xs text-slate-500 mb-4">不論選哪個，這筆跟追都會標記為已完成。</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  // 有新進度 → 展開進度表單
+                  setShowFollowUpPrompt(false);
+                  setShowAddUpdate(true);
+                }}
+                className="flex-1 px-3 py-2 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-700"
+              >
+                有，記錄進度
+              </button>
+              <button
+                onClick={() => {
+                  // 沒有新進度 → 直接標記已跟追
+                  markTriggerFollowedUp(followUpInitial._triggerUpdate);
+                  setFollowUpInitial(null);
+                  setShowFollowUpPrompt(false);
+                }}
+                className="flex-1 px-3 py-2 bg-slate-100 text-slate-700 text-sm rounded-lg hover:bg-slate-200"
+              >
+                沒有，直接標記
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

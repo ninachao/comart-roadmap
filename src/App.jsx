@@ -46,10 +46,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.78.0';
-const BUILD_ID = '20260608-1100';
+const APP_VERSION = 'v0.79.0';
+const BUILD_ID = '20260608-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.79.0',
+    date: '2026-06-08',
+    changes: [
+      '🎉 已跟追對話框重新設計：一個視窗完成三件事',
+      '進度備註（選填）：記錄這次跟追結果',
+      '下次跟追日期（選填）：直接設好下一輪',
+      '按「完成」：標記已跟追 + 新增進度（有填才加）+ 設下次日期',
+      '按「取消」：關閉對話框，不做任何變更',
+    ],
+  },
   {
     version: 'v0.78.0',
     date: '2026-06-08',
@@ -2677,6 +2688,57 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
   );
 }
 
+// ── 跟追完成對話框 ─────────────────────────────────────────────
+function FollowUpDialog({ currentUser, onComplete, onCancel }) {
+  const [text, setText] = useState('');
+  const [nextFollowUpDate, setNextFollowUpDate] = useState('');
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-5">
+        <p className="text-sm font-semibold text-slate-800 mb-4">✓ 跟追完成</p>
+
+        <div className="mb-3">
+          <label className="text-xs text-slate-500 mb-1 block">進度備註（選填）</label>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={3}
+            placeholder="記錄這次跟追的結果..."
+            autoFocus
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none"
+          />
+        </div>
+
+        <div className="mb-5">
+          <label className="text-xs text-slate-500 mb-1 block">下次跟追日期（選填）</label>
+          <input
+            type="date"
+            value={nextFollowUpDate}
+            onChange={(e) => setNextFollowUpDate(e.target.value)}
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+          />
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => onComplete({ text, nextFollowUpDate })}
+            className="flex-1 px-3 py-2 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-700"
+          >
+            完成
+          </button>
+          <button
+            onClick={onCancel}
+            className="flex-1 px-3 py-2 bg-slate-100 text-slate-700 text-sm rounded-lg hover:bg-slate-200"
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, samples = [], withdrawals = [], currentUser, openFrom = null, onReturn, followUpTrigger = null, onFollowUpTriggered }) {
   const [showWizard, setShowWizard] = useState(false);
 
@@ -3185,37 +3247,45 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
         />
       )}
 
-      {/* 跟追後詢問是否記錄進度的對話框 */}
+      {/* 跟追完成對話框 */}
       {showFollowUpPrompt && followUpInitial && (
-        <div className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-5">
-            <p className="text-sm font-medium text-slate-800 mb-1">這次跟追有新進度要記錄嗎？</p>
-            <p className="text-xs text-slate-500 mb-4">不論選哪個，這筆跟追都會標記為已完成。</p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  // 有新進度 → 展開進度表單
-                  setShowFollowUpPrompt(false);
-                  setShowAddUpdate(true);
-                }}
-                className="flex-1 px-3 py-2 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-700"
-              >
-                有，記錄進度
-              </button>
-              <button
-                onClick={() => {
-                  // 沒有新進度 → 直接標記已跟追
-                  markTriggerFollowedUp(followUpInitial._triggerUpdate);
-                  setFollowUpInitial(null);
-                  setShowFollowUpPrompt(false);
-                }}
-                className="flex-1 px-3 py-2 bg-slate-100 text-slate-700 text-sm rounded-lg hover:bg-slate-200"
-              >
-                沒有，直接標記
-              </button>
-            </div>
-          </div>
-        </div>
+        <FollowUpDialog
+          currentUser={currentUser}
+          onComplete={({ text, nextFollowUpDate }) => {
+            const trigger = followUpInitial._triggerUpdate;
+            // 如果有填備註，新增一筆進度
+            if (text.trim()) {
+              onAddUpdate({
+                date: new Date().toISOString().split('T')[0],
+                text: text.trim(),
+                author: currentUser?.name || '',
+                followUpDate: nextFollowUpDate || null,
+                followedUp: false,
+              });
+            }
+            // 標記舊的已跟追（如果沒有新進度但有設下次日期，更新舊進度的 followUpDate）
+            if (trigger) {
+              const allUpdates = project.updates || [];
+              const idx = allUpdates.findIndex(x => x.date === trigger.date && x.text === trigger.text);
+              if (idx >= 0) {
+                const newUpdates = [...allUpdates];
+                newUpdates[idx] = {
+                  ...newUpdates[idx],
+                  followedUp: true,
+                  // 如果沒有新進度但有下次日期，把下次日期掛在舊進度上
+                  ...(!text.trim() && nextFollowUpDate ? { followUpDate: nextFollowUpDate, followedUp: false } : {}),
+                };
+                onUpdateField('updates', newUpdates);
+              }
+            }
+            setFollowUpInitial(null);
+            setShowFollowUpPrompt(false);
+          }}
+          onCancel={() => {
+            setFollowUpInitial(null);
+            setShowFollowUpPrompt(false);
+          }}
+        />
       )}
     </div>
   );

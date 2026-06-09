@@ -46,10 +46,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.87.0';
-const BUILD_ID = '20260609-1600';
+const APP_VERSION = 'v0.88.0';
+const BUILD_ID = '20260609-1700';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.88.0',
+    date: '2026-06-09',
+    changes: [
+      '🔧 RFP 圖片修正：開啟時自動用 getStorageUrl 解析所有系統圖片 URL，不再依賴非同步 StorageImage',
+      '圖片未解析完時顯示「載入中」佔位',
+      '🔧 RFP 草稿修正：重新開啟時正確帶回所有文字欄位，圖片重新從系統載入',
+      '料號申請「產生 RFP」按鈕旁有草稿時顯示黃點提示',
+    ],
+  },
   {
     version: 'v0.87.0',
     date: '2026-06-09',
@@ -2804,22 +2814,61 @@ function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
     isMain: !!img.isMain,
   }));
 
-  const [form, setForm] = useState(() => ({
-    rfpNo: '', applicant: currentUser?.name || 'Nina', applyDate: today,
-    categoryMain: '', categorySub: '', devAttr: 'COMART自我開發', client: '',
-    reqDept: '國外業務', execDept: '工程課', owner: '徐福威',
-    productName: project.name || '', targetGroup: '消費者',
-    productReq: '', designReq: '', otherReq: '',
-    targetSales: '5K', amortQty: '5K', firstBatch: '1K',
-    toolingCost: 'N/A', targetCost: 'N/A', fobCost: 'N/A', msrp: 'N/A',
-    schedKickoff: '', schedEVT: '', schedDVT: '', schedPVT: '', schedMP: 'N/A', schedOnMarket: 'N/A',
-    selectedSystemImgIds: systemImages.filter(i => i.isMain).map(i => i.id),
-    uploadedImages: [],
-    ...(project.rfpDraft || {}),
-    selectedSystemImgIds: systemImages.filter(i => i.isMain).map(i => i.id),
-    uploadedImages: [],
-  }));
+  const [form, setForm] = useState(() => {
+    const draft = project.rfpDraft || {};
+    return {
+      rfpNo: draft.rfpNo || '',
+      applicant: draft.applicant || currentUser?.name || 'Nina',
+      applyDate: draft.applyDate || today,
+      categoryMain: draft.categoryMain || '',
+      categorySub: draft.categorySub || '',
+      devAttr: draft.devAttr || 'COMART自我開發',
+      client: draft.client || '',
+      reqDept: draft.reqDept || '國外業務',
+      execDept: draft.execDept || '工程課',
+      owner: draft.owner || '徐福威',
+      productName: draft.productName || project.name || '',
+      targetGroup: draft.targetGroup || '消費者',
+      productReq: draft.productReq || '',
+      designReq: draft.designReq || '',
+      otherReq: draft.otherReq || '',
+      targetSales: draft.targetSales || '5K',
+      amortQty: draft.amortQty || '5K',
+      firstBatch: draft.firstBatch || '1K',
+      toolingCost: draft.toolingCost || 'N/A',
+      targetCost: draft.targetCost || 'N/A',
+      fobCost: draft.fobCost || 'N/A',
+      msrp: draft.msrp || 'N/A',
+      schedKickoff: draft.schedKickoff || '',
+      schedEVT: draft.schedEVT || '',
+      schedDVT: draft.schedDVT || '',
+      schedPVT: draft.schedPVT || '',
+      schedMP: draft.schedMP || 'N/A',
+      schedOnMarket: draft.schedOnMarket || 'N/A',
+      // 圖片每次重新從系統帶入（不從草稿，避免舊 URL 失效）
+      selectedSystemImgIds: systemImages.filter(i => i.isMain).map(i => i.id),
+      uploadedImages: [],
+    };
+  });
   const [savedMsg, setSavedMsg] = useState('');
+  const [resolvedUrls, setResolvedUrls] = useState({}); // { sys_0: 'https://...' }
+
+  // 開啟時自動解析所有系統圖片 URL
+  React.useEffect(() => {
+    systemImages.forEach(async (img) => {
+      if (img.src && !img.src.startsWith('data:')) {
+        // 已有 URL，直接用
+        setResolvedUrls(prev => ({ ...prev, [img.id]: img.src }));
+      }
+      if (img.path) {
+        try {
+          const url = await getStorageUrl(img.path);
+          if (url) setResolvedUrls(prev => ({ ...prev, [img.id]: url }));
+        } catch {}
+      }
+    });
+  }, []);
+
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const subCategories = form.categoryMain ? RFP_CATEGORIES[form.categoryMain] || [] : [];
 
@@ -2856,7 +2905,9 @@ function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
       } catch { return url; }
     };
     const sysImgHtml = (await Promise.all(selectedSysImgs.map(async img => {
-      const src = img.src.startsWith('data:') ? img.src : await toBase64(img.src);
+      // 優先用 resolvedUrls 中的 URL（已解析的 Firebase URL）
+      const url = resolvedUrls[img.id] || img.src;
+      const src = url.startsWith('data:') ? url : await toBase64(url);
       return `<img src="${src}" style="max-width:160px;max-height:110px;object-fit:contain;margin:3px;border-radius:4px;border:1px solid #e2e8f0;" />`;
     }))).join('');
     const upImgHtml = (form.uploadedImages || []).map(img =>
@@ -2944,10 +2995,15 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
                 <div className="flex flex-wrap gap-2">
                   {systemImages.map(img => {
                     const selected = (form.selectedSystemImgIds || []).includes(img.id);
+                    const displaySrc = resolvedUrls[img.id] || img.src;
                     return (
                       <div key={img.id} onClick={() => toggleSystemImg(img.id)}
                         className={`relative cursor-pointer rounded border-2 transition ${selected ? 'border-blue-500' : 'border-slate-200 hover:border-slate-400'}`}>
-                        <StorageImage src={img.src} path={img.path} alt={img.name} className="h-16 w-16 object-contain rounded" />
+                        {displaySrc ? (
+                          <img src={displaySrc} alt={img.name} className="h-16 w-16 object-contain rounded" />
+                        ) : (
+                          <div className="h-16 w-16 flex items-center justify-center bg-slate-100 rounded text-[10px] text-slate-400">載入中</div>
+                        )}
                         {selected && <div className="absolute top-0.5 right-0.5 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center"><span className="text-white text-[9px]">✓</span></div>}
                         {img.isMain && <span className="absolute bottom-0 left-0 text-[8px] bg-blue-600 text-white px-1 rounded-tr">主圖</span>}
                       </div>
@@ -3517,6 +3573,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             onRfpChange={(v) => onUpdateField('rfpAttachments', v)}
             readOnly={isViewer}
             onGenerateRFP={() => setShowRFP(true)}
+            hasDraft={!!project.rfpDraft}
           />
 
           {/* 開發費用摘要 */}
@@ -9295,7 +9352,7 @@ function DevCostSection({ project, isViewer, onUpdateField, samples = [] }) {
   );
 }
 
-function MaterialCodeSection({ status, materialCode, onChange, onCodeChange, rfpAttachments = [], onRfpChange, readOnly, onGenerateRFP }) {
+function MaterialCodeSection({ status, materialCode, onChange, onCodeChange, rfpAttachments = [], onRfpChange, readOnly, onGenerateRFP, hasDraft }) {
   const options = ['未申請', '申請中', '已申請'];
   const colorMap = {
     '未申請': 'bg-slate-100 text-slate-600 border-slate-200',
@@ -9314,9 +9371,10 @@ function MaterialCodeSection({ status, materialCode, onChange, onCodeChange, rfp
       headerExtra={onGenerateRFP && !readOnly && (
         <button
           onClick={(e) => { e.stopPropagation(); onGenerateRFP(); }}
-          className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition"
+          className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition flex items-center gap-1"
         >
           產生 RFP
+          {hasDraft && <span className="w-1.5 h-1.5 bg-amber-400 rounded-full" title="有已儲存的草稿" />}
         </button>
       )}
     >

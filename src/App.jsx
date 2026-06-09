@@ -46,10 +46,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.94.0';
-const BUILD_ID = '20260609-2300';
+const APP_VERSION = 'v0.95.0';
+const BUILD_ID = '20260609-2400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.95.0',
+    date: '2026-06-09',
+    changes: [
+      '🔧 RFP 開啟時自動清除草稿裡舊有的 ol/ul/li 編號清單標籤',
+      '原本已存的格式化內容也會自動轉純文字 + 換行',
+      '保留圖片 img 標籤不動',
+    ],
+  },
   {
     version: 'v0.94.0',
     date: '2026-06-09',
@@ -2927,6 +2936,18 @@ function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
 
   const [form, setForm] = useState(() => {
     const draft = project.rfpDraft || {};
+    // 清理需求欄位的編號清單等格式，只保留 <img> 和換行
+    const cleanReq = (html) => {
+      if (!html) return '';
+      // 移除 <ol> <ul> <li> 編號清單標籤，但保留內容
+      let cleaned = html
+        .replace(/<\/?(ol|ul)[^>]*>/gi, '')
+        .replace(/<li[^>]*>/gi, '')
+        .replace(/<\/li>/gi, '<br>')
+        // 移除其他格式標籤（保留 img, br, p）
+        .replace(/<(?!\/?(img|br|p)\b)[^>]+>/gi, '');
+      return cleaned;
+    };
     return {
       rfpNo: draft.rfpNo || '',
       applicant: draft.applicant || currentUser?.name || 'Nina',
@@ -2940,9 +2961,9 @@ function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
       owner: draft.owner || '徐福威',
       productName: draft.productName || project.name || '',
       targetGroup: draft.targetGroup || '消費者',
-      productReq: draft.productReq || '',
-      designReq: draft.designReq || '',
-      otherReq: draft.otherReq || '',
+      productReq: cleanReq(draft.productReq) || '',
+      designReq: cleanReq(draft.designReq) || '',
+      otherReq: cleanReq(draft.otherReq) || '',
       targetSales: draft.targetSales || '5K',
       amortQty: draft.amortQty || '5K',
       firstBatch: draft.firstBatch || '1K',

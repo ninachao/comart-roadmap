@@ -46,10 +46,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.88.0';
-const BUILD_ID = '20260609-1700';
+const APP_VERSION = 'v0.89.0';
+const BUILD_ID = '20260609-1800';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.89.0',
+    date: '2026-06-09',
+    changes: [
+      '🔧 RFP 圖片全面改版：系統圖片自動全部帶入，滑鼠移上去顯示 ✕ 可刪除不需要的',
+      '新增 Ctrl+V 貼上圖片到 RFP 圖片區',
+      '導出 PDF 包含所有未刪除的系統圖片 + 上傳/貼上的圖片',
+    ],
+  },
   {
     version: 'v0.88.0',
     date: '2026-06-09',
@@ -2853,21 +2862,35 @@ function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
   const [savedMsg, setSavedMsg] = useState('');
   const [resolvedUrls, setResolvedUrls] = useState({}); // { sys_0: 'https://...' }
 
-  // 開啟時自動解析所有系統圖片 URL
+  // 開啟時解析所有系統圖片 URL（優先用 path 取得最新 URL）
   React.useEffect(() => {
     systemImages.forEach(async (img) => {
-      if (img.src && !img.src.startsWith('data:')) {
-        // 已有 URL，直接用
-        setResolvedUrls(prev => ({ ...prev, [img.id]: img.src }));
-      }
       if (img.path) {
+        // 有 path 的用 getStorageUrl 取得最新 URL（最可靠）
         try {
           const url = await getStorageUrl(img.path);
-          if (url) setResolvedUrls(prev => ({ ...prev, [img.id]: url }));
+          if (url) { setResolvedUrls(prev => ({ ...prev, [img.id]: url })); return; }
         } catch {}
+      }
+      // 沒有 path 但有 src（dataUrl 或直接 URL）
+      if (img.src) {
+        setResolvedUrls(prev => ({ ...prev, [img.id]: img.src }));
       }
     });
   }, []);
+
+  // 貼上圖片（Ctrl+V）
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items || [];
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        const reader = new FileReader();
+        reader.onload = ev => setForm(f => ({ ...f, uploadedImages: [...(f.uploadedImages || []), { src: ev.target.result, name: '貼上圖片' }] }));
+        reader.readAsDataURL(file);
+      }
+    }
+  };
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const subCategories = form.categoryMain ? RFP_CATEGORIES[form.categoryMain] || [] : [];
@@ -2896,7 +2919,8 @@ function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
   };
 
   const handleExportPDF = async () => {
-    const selectedSysImgs = systemImages.filter(img => (form.selectedSystemImgIds || []).includes(img.id));
+    const deletedIds = form.deletedSystemImgIds || [];
+    const activeSysImgs = systemImages.filter(img => !deletedIds.includes(img.id));
     const toBase64 = async (url) => {
       try {
         const res = await fetch(url);
@@ -2904,9 +2928,9 @@ function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
         return await new Promise(r => { const rd = new FileReader(); rd.onload = e => r(e.target.result); rd.readAsDataURL(blob); });
       } catch { return url; }
     };
-    const sysImgHtml = (await Promise.all(selectedSysImgs.map(async img => {
-      // 優先用 resolvedUrls 中的 URL（已解析的 Firebase URL）
+    const sysImgHtml = (await Promise.all(activeSysImgs.map(async img => {
       const url = resolvedUrls[img.id] || img.src;
+      if (!url) return '';
       const src = url.startsWith('data:') ? url : await toBase64(url);
       return `<img src="${src}" style="max-width:160px;max-height:110px;object-fit:contain;margin:3px;border-radius:4px;border:1px solid #e2e8f0;" />`;
     }))).join('');
@@ -2969,7 +2993,7 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-start justify-center p-4 overflow-y-auto">
+    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-start justify-center p-4 overflow-y-auto" onPaste={handlePaste}>
       <div className="bg-white w-full max-w-3xl rounded-xl shadow-xl my-4">
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 sticky top-0 bg-white z-10 rounded-t-xl">
           <h2 className="text-sm font-semibold text-slate-800">產生 RFP</h2>
@@ -2987,48 +3011,44 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
             <RFPField label="申請日期" required><RFPInput value={form.applyDate} onChange={e => set('applyDate', e.target.value)} type="date" /></RFPField>
           </div>
 
+          {/* 產品圖片區：系統圖片自動帶入 + 可上傳/貼上 + ✕ 刪除 */}
           <div className="border border-slate-200 rounded-lg p-3">
-            <p className="text-xs font-medium text-slate-600 mb-2">產品圖片（點擊勾選要放入 PDF 的圖片）</p>
-            {systemImages.length > 0 && (
-              <div className="mb-2">
-                <p className="text-[10px] text-slate-400 mb-1.5">系統圖片</p>
-                <div className="flex flex-wrap gap-2">
-                  {systemImages.map(img => {
-                    const selected = (form.selectedSystemImgIds || []).includes(img.id);
-                    const displaySrc = resolvedUrls[img.id] || img.src;
-                    return (
-                      <div key={img.id} onClick={() => toggleSystemImg(img.id)}
-                        className={`relative cursor-pointer rounded border-2 transition ${selected ? 'border-blue-500' : 'border-slate-200 hover:border-slate-400'}`}>
-                        {displaySrc ? (
-                          <img src={displaySrc} alt={img.name} className="h-16 w-16 object-contain rounded" />
-                        ) : (
-                          <div className="h-16 w-16 flex items-center justify-center bg-slate-100 rounded text-[10px] text-slate-400">載入中</div>
-                        )}
-                        {selected && <div className="absolute top-0.5 right-0.5 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center"><span className="text-white text-[9px]">✓</span></div>}
-                        {img.isMain && <span className="absolute bottom-0 left-0 text-[8px] bg-blue-600 text-white px-1 rounded-tr">主圖</span>}
-                      </div>
-                    );
-                  })}
+            <p className="text-xs font-medium text-slate-600 mb-2">產品圖片 <span className="text-slate-400 font-normal">（✕ 刪除不需要的，可 Ctrl+V 貼上截圖）</span></p>
+            <div className="flex flex-wrap gap-2 items-start">
+              {/* 系統圖片（自動帶入，用 resolvedUrls 顯示） */}
+              {systemImages.map(img => {
+                const displaySrc = resolvedUrls[img.id];
+                // 未解析完的先顯示佔位
+                return (
+                  <div key={img.id} className="relative border border-slate-200 rounded group">
+                    {displaySrc ? (
+                      <img src={displaySrc} alt={img.name} className="h-20 w-20 object-contain rounded" />
+                    ) : (
+                      <div className="h-20 w-20 flex items-center justify-center bg-slate-50 rounded text-[10px] text-slate-400">載入中</div>
+                    )}
+                    {img.isMain && <span className="absolute bottom-0 left-0 text-[8px] bg-blue-600 text-white px-1 rounded-tr">主圖</span>}
+                    <button
+                      onClick={() => set('deletedSystemImgIds', [...(form.deletedSystemImgIds || []), img.id])}
+                      className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] items-center justify-center hidden group-hover:flex"
+                    >✕</button>
+                  </div>
+                );
+              }).filter((_, i) => !(form.deletedSystemImgIds || []).includes(systemImages[i]?.id))}
+
+              {/* 上傳/貼上的圖片 */}
+              {(form.uploadedImages || []).map((img, i) => (
+                <div key={i} className="relative border border-slate-200 rounded group">
+                  <img src={img.src} alt={img.name} className="h-20 w-20 object-contain rounded" />
+                  <button onClick={() => setForm(f => ({ ...f, uploadedImages: f.uploadedImages.filter((_, j) => j !== i) }))}
+                    className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] items-center justify-center hidden group-hover:flex">✕</button>
                 </div>
-              </div>
-            )}
-            {(form.uploadedImages || []).length > 0 && (
-              <div className="mb-2">
-                <p className="text-[10px] text-slate-400 mb-1.5">上傳的圖片</p>
-                <div className="flex flex-wrap gap-2">
-                  {(form.uploadedImages || []).map((img, i) => (
-                    <div key={i} className="relative border border-slate-200 rounded">
-                      <img src={img.src} alt={img.name} className="h-16 w-16 object-contain rounded" />
-                      <button onClick={() => setForm(f => ({ ...f, uploadedImages: f.uploadedImages.filter((_, j) => j !== i) }))}
-                        className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] flex items-center justify-center">✕</button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <label className="inline-flex items-center gap-1 text-xs px-3 py-1.5 border border-dashed border-slate-300 rounded cursor-pointer hover:border-blue-400 text-slate-500 hover:text-blue-600 mt-1">
-              + 上傳圖片<input type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
-            </label>
+              ))}
+
+              <label className="h-20 w-20 border-2 border-dashed border-slate-300 rounded flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 text-slate-400 text-[10px] text-center">
+                + 上傳
+                <input type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
+              </label>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

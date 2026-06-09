@@ -46,10 +46,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.86.0';
-const BUILD_ID = '20260609-1500';
+const APP_VERSION = 'v0.87.0';
+const BUILD_ID = '20260609-1600';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.87.0',
+    date: '2026-06-09',
+    changes: [
+      '🎉 RFP 完整重寫：移除 AI 自動填寫，徹底清除所有殘留的衝突程式碼',
+      '產品圖片：系統圖片全部列出，點擊勾選要放入 PDF 的圖片（藍框+✓）',
+      '可額外上傳圖片，可刪除上傳的圖片',
+      'PDF 導出：圖片自動轉 base64 嵌入，確保列印時圖片顯示正確',
+      '儲存草稿：下次開啟自動載入',
+    ],
+  },
   {
     version: 'v0.86.0',
     date: '2026-06-09',
@@ -2764,8 +2775,6 @@ const RFP_CATEGORIES = {
   '_10APPSESSORY': ['FAP01 成品-APPSESSORY','RAP01 零售包-APPSESSORY'],
 };
 
-// ── RFP Modal ──────────────────────────────────────────────────
-// RFP 表單子元件（定義在外部避免 React 崩潰）
 function RFPField({ label, required, children }) {
   return (
     <div className="mb-2">
@@ -2784,355 +2793,245 @@ function RFPInput({ value, onChange, ...props }) {
   );
 }
 
-function RFPTextareaWithAI({ field, label, required, rows = 3, value, onChange, onAIFill, loading }) {
-  return (
-    <div className="mb-3">
-      <div className="flex items-center justify-between mb-0.5">
-        <label className="text-xs text-slate-500">
-          {required && <span className="text-rose-500 mr-0.5">*</span>}{label}
-        </label>
-        <button
-          onClick={() => onAIFill(field)}
-          disabled={loading}
-          className="text-[10px] px-1.5 py-0.5 bg-violet-50 text-violet-700 border border-violet-200 rounded hover:bg-violet-100 disabled:opacity-50 flex items-center gap-1"
-        >
-          {loading ? '⏳ 生成中...' : '✨ AI 自動填寫'}
-        </button>
-      </div>
-      <textarea
-        value={value}
-        onChange={onChange}
-        rows={rows}
-        className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-slate-400 resize-none"
-      />
-    </div>
-  );
-}
-
+// ── RFP Modal ──────────────────────────────────────────────────
 function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
   const today = new Date().toISOString().split('T')[0];
-  const mainImg = (project.images || []).find(i => i.isMain) || (project.images || [])[0];
+  const systemImages = (project.images || []).map((img, i) => ({
+    id: `sys_${i}`,
+    src: img.url || img.dataUrl || '',
+    path: img.path || '',
+    name: img.name || `圖片${i+1}`,
+    isMain: !!img.isMain,
+  }));
 
-  const defaultForm = {
-    rfpNo: '',
-    applicant: currentUser?.name || 'Nina',
-    applyDate: today,
-    categoryMain: '',
-    categorySub: '',
-    devAttr: 'COMART自我開發',
-    client: '',
-    reqDept: '國外業務',
-    execDept: '工程課',
-    owner: '徐福威',
-    productName: project.name || '',
-    targetGroup: '消費者',
-    productReq: '',
-    designReq: '',
-    otherReq: '',
-    targetSales: '5K',
-    amortQty: '5K',
-    firstBatch: '1K',
-    toolingCost: 'N/A',
-    targetCost: 'N/A',
-    fobCost: 'N/A',
-    msrp: 'N/A',
-    schedKickoff: '',
-    schedEVT: '',
-    schedDVT: '',
-    schedPVT: '',
-    schedMP: 'N/A',
-    schedOnMarket: 'N/A',
-    extraImages: [], // 額外圖片（base64）
-  };
-
-  const [form, setForm] = useState(() => ({ ...defaultForm, ...(project.rfpDraft || {}) }));
-  const [aiLoading, setAiLoading] = useState({}); // { productReq: true, ... }
+  const [form, setForm] = useState(() => ({
+    rfpNo: '', applicant: currentUser?.name || 'Nina', applyDate: today,
+    categoryMain: '', categorySub: '', devAttr: 'COMART自我開發', client: '',
+    reqDept: '國外業務', execDept: '工程課', owner: '徐福威',
+    productName: project.name || '', targetGroup: '消費者',
+    productReq: '', designReq: '', otherReq: '',
+    targetSales: '5K', amortQty: '5K', firstBatch: '1K',
+    toolingCost: 'N/A', targetCost: 'N/A', fobCost: 'N/A', msrp: 'N/A',
+    schedKickoff: '', schedEVT: '', schedDVT: '', schedPVT: '', schedMP: 'N/A', schedOnMarket: 'N/A',
+    selectedSystemImgIds: systemImages.filter(i => i.isMain).map(i => i.id),
+    uploadedImages: [],
+    ...(project.rfpDraft || {}),
+    selectedSystemImgIds: systemImages.filter(i => i.isMain).map(i => i.id),
+    uploadedImages: [],
+  }));
   const [savedMsg, setSavedMsg] = useState('');
-
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const subCategories = form.categoryMain ? RFP_CATEGORIES[form.categoryMain] || [] : [];
 
-  // 草稿儲存
   const saveDraft = () => {
     if (onSaveDraft) {
-      onSaveDraft(form);
+      onSaveDraft({ ...form, uploadedImages: [] });
       setSavedMsg('草稿已儲存');
       setTimeout(() => setSavedMsg(''), 2000);
     }
   };
 
-  // AI 自動填寫
-  const aiAutoFill = async (field) => {
-    setAiLoading(l => ({ ...l, [field]: true }));
-    const prompts = {
-      productReq: `根據以下產品資訊，用繁體中文撰寫 RFP 的「產品需求」欄位（100字以上），詳述使用情境、須解決之問題、產品可提供之功能效益。產品名稱：${project.name}，供應商：${project.supplier || ''}，類別：${project.category || ''}。只輸出欄位內容，不要標題。`,
-      designReq: `根據以下產品資訊，用繁體中文撰寫 RFP 的「設計需求」欄位，包含尺寸重量、材質、功能、結構、色彩、風格等資訊。產品名稱：${project.name}，供應商：${project.supplier || ''}。只輸出欄位內容，不要標題。`,
-      otherReq: `根據以下產品資訊，用繁體中文撰寫 RFP 的「其他需求」欄位，包含附註說明、參考資訊等。產品名稱：${project.name}，供應商：${project.supplier || ''}。只輸出欄位內容，不要標題。`,
-    };
-    try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
-          messages: [{ role: 'user', content: prompts[field] }],
-        }),
-      });
-      const data = await res.json();
-      const text = data.content?.find(c => c.type === 'text')?.text || '';
-      if (text) set(field, text.trim());
-    } catch (e) {
-      console.error('AI fill error', e);
-    }
-    setAiLoading(l => ({ ...l, [field]: false }));
-  };
-
-  // 圖片貼上 / 上傳
   const handleImageUpload = (e) => {
-    const files = Array.from(e.target.files || []);
-    files.forEach(file => {
+    Array.from(e.target.files || []).forEach(file => {
       const reader = new FileReader();
-      reader.onload = ev => {
-        set('extraImages', [...(form.extraImages || []), { src: ev.target.result, name: file.name }]);
-      };
+      reader.onload = ev => setForm(f => ({ ...f, uploadedImages: [...(f.uploadedImages || []), { src: ev.target.result, name: file.name }] }));
       reader.readAsDataURL(file);
     });
   };
 
-  const handleImagePaste = (e) => {
-    const items = e.clipboardData?.items || [];
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        const file = item.getAsFile();
-        const reader = new FileReader();
-        reader.onload = ev => {
-          set('extraImages', [...(form.extraImages || []), { src: ev.target.result, name: '貼上圖片' }]);
-        };
-        reader.readAsDataURL(file);
-      }
-    }
+  const toggleSystemImg = (id) => {
+    setForm(f => {
+      const ids = f.selectedSystemImgIds || [];
+      return { ...f, selectedSystemImgIds: ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id] };
+    });
   };
 
-  // 導出 PDF：在新視窗開啟列印頁面
-  const handleExportPDF = () => {
-    const mainImgSrc = mainImg?.url || mainImg?.dataUrl || '';
-    const extraImgHtml = (form.extraImages || []).map(img =>
-      `<img src="${img.src}" style="max-width:200px;max-height:120px;object-fit:contain;margin:4px;border-radius:4px;border:1px solid #e2e8f0;" />`
+  const handleExportPDF = async () => {
+    const selectedSysImgs = systemImages.filter(img => (form.selectedSystemImgIds || []).includes(img.id));
+    const toBase64 = async (url) => {
+      try {
+        const res = await fetch(url);
+        const blob = await res.blob();
+        return await new Promise(r => { const rd = new FileReader(); rd.onload = e => r(e.target.result); rd.readAsDataURL(blob); });
+      } catch { return url; }
+    };
+    const sysImgHtml = (await Promise.all(selectedSysImgs.map(async img => {
+      const src = img.src.startsWith('data:') ? img.src : await toBase64(img.src);
+      return `<img src="${src}" style="max-width:160px;max-height:110px;object-fit:contain;margin:3px;border-radius:4px;border:1px solid #e2e8f0;" />`;
+    }))).join('');
+    const upImgHtml = (form.uploadedImages || []).map(img =>
+      `<img src="${img.src}" style="max-width:160px;max-height:110px;object-fit:contain;margin:3px;border-radius:4px;border:1px solid #e2e8f0;" />`
     ).join('');
+    const allImgHtml = sysImgHtml + upImgHtml;
 
-    const html = `<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-<meta charset="UTF-8"/>
+    const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    const html = `<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"/>
 <title>COMART RFP - ${form.productName}</title>
 <style>
-  body { font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif; font-size: 12px; color: #1e293b; margin: 0; padding: 24px; }
-  h1 { text-align:center; font-size:15px; letter-spacing:2px; margin-bottom:4px; }
-  .subtitle { text-align:center; font-size:10px; color:#64748b; margin-bottom:16px; }
-  .rfp-no { display:flex; justify-content:space-between; margin-bottom:12px; font-size:11px; }
-  table { width:100%; border-collapse:collapse; margin-bottom:10px; }
-  td, th { border:1px solid #cbd5e1; padding:5px 8px; vertical-align:top; }
-  th { background:#f1f5f9; font-weight:600; width:22%; white-space:nowrap; }
-  .section-title { background:#e2e8f0; font-weight:700; font-size:11px; padding:4px 8px; }
-  .grid2 td { width:28%; }
-  .grid3 td { width:16%; }
-  .full td { width:78%; }
-  .textarea-val { white-space:pre-wrap; min-height:40px; }
-  .sign { display:flex; gap:40px; margin-top:16px; }
-  .sign-box { flex:1; border-top:1px solid #cbd5e1; padding-top:6px; font-size:11px; }
-  .note { font-size:10px; color:#94a3b8; margin-top:8px; }
-  .img-area { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0; }
-  .product-img { max-width:160px; max-height:100px; object-fit:contain; border-radius:4px; border:1px solid #e2e8f0; }
-  @media print { body { padding:12px; } }
-</style>
-</head>
-<body>
+body{font-family:'Microsoft JhengHei','PingFang TC',sans-serif;font-size:12px;color:#1e293b;margin:0;padding:20px;}
+h1{text-align:center;font-size:15px;letter-spacing:2px;margin-bottom:3px;}
+.sub{text-align:center;font-size:10px;color:#64748b;margin-bottom:10px;}
+.top{display:flex;justify-content:space-between;font-size:11px;margin-bottom:8px;}
+.imgs{display:flex;flex-wrap:wrap;gap:6px;padding:8px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;margin-bottom:8px;}
+table{width:100%;border-collapse:collapse;margin-bottom:7px;font-size:11px;}
+td,th{border:1px solid #cbd5e1;padding:4px 7px;vertical-align:top;}
+th{background:#f1f5f9;font-weight:600;white-space:nowrap;width:18%;}
+.sec{background:#e2e8f0;font-weight:700;font-size:11px;padding:3px 7px;margin-bottom:0;}
+.pre{white-space:pre-wrap;min-height:32px;}
+.sign{display:flex;gap:24px;margin-top:12px;}
+.sb{flex:1;border-top:1px solid #cbd5e1;padding-top:5px;font-size:11px;}
+.note{font-size:10px;color:#94a3b8;margin-top:5px;}
+@media print{body{padding:12px;}}
+</style></head><body>
 <h1>COMART REQUEST FOR PROPOSAL</h1>
-<div class="subtitle">Request For Proposal 需求建議書</div>
-<div class="rfp-no">
-  <span>RFP# ${form.rfpNo || '－'}</span>
-  <span>申請日期：${form.applyDate}</span>
-  <span>申請人：${form.applicant}</span>
-</div>
-
-${mainImgSrc ? `<div class="img-area"><img src="${mainImgSrc}" class="product-img" /></div>` : ''}
-${extraImgHtml ? `<div class="img-area">${extraImgHtml}</div>` : ''}
-
-<table class="grid2">
-  <tr><th>產品大類</th><td>${form.categoryMain || '－'}</td><th>產品小類</th><td>${form.categorySub || '－'}</td></tr>
-  <tr><th>開發需求屬性</th><td>${form.devAttr || '－'}</td><th>客戶</th><td>${form.client || '－'}</td></tr>
-  <tr><th>需求單位</th><td>${form.reqDept}</td><th>執行單位</th><td>${form.execDept}</td></tr>
-  <tr><th>負責人員</th><td>${form.owner}</td><th>目標族群</th><td>${form.targetGroup}</td></tr>
+<div class="sub">Request For Proposal 需求建議書</div>
+<div class="top"><span>RFP# ${form.rfpNo||'－'}</span><span>申請日期：${form.applyDate}</span><span>申請人：${form.applicant}</span></div>
+${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
+<table>
+<tr><th>產品大類</th><td>${esc(form.categoryMain)||'－'}</td><th>產品小類</th><td>${esc(form.categorySub)||'－'}</td></tr>
+<tr><th>開發需求屬性</th><td>${esc(form.devAttr)||'－'}</td><th>客戶</th><td>${esc(form.client)||'－'}</td></tr>
+<tr><th>需求單位</th><td>${esc(form.reqDept)}</td><th>執行單位</th><td>${esc(form.execDept)}</td></tr>
+<tr><th>負責人員</th><td>${esc(form.owner)}</td><th>目標族群</th><td>${esc(form.targetGroup)}</td></tr>
+<tr><th>產品名稱</th><td colspan="3">${esc(form.productName)}</td></tr>
+<tr><th>產品需求</th><td colspan="3" class="pre">${esc(form.productReq)||'－'}</td></tr>
+<tr><th>設計需求</th><td colspan="3" class="pre">${esc(form.designReq)||'－'}</td></tr>
+<tr><th>其他需求</th><td colspan="3" class="pre">${esc(form.otherReq)||'－'}</td></tr>
 </table>
-
-<table class="full">
-  <tr><th>產品名稱</th><td>${form.productName}</td></tr>
-  <tr><th>產品需求</th><td class="textarea-val">${(form.productReq || '－').replace(/</g,'&lt;')}</td></tr>
-  <tr><th>設計需求</th><td class="textarea-val">${(form.designReq || '－').replace(/</g,'&lt;')}</td></tr>
-  <tr><th>其他需求</th><td class="textarea-val">${(form.otherReq || '－').replace(/</g,'&lt;')}</td></tr>
-</table>
-
-<div class="section-title">數量與成本</div>
-<table class="grid3">
-  <tr><th>目標銷量</th><td>${form.targetSales}</td><th>攤提數量</th><td>${form.amortQty}</td><th>首批單量</th><td>${form.firstBatch}</td></tr>
-  <tr><th>目標模具費</th><td>${form.toolingCost}</td><th>FOB cost</th><td>${form.fobCost}</td><th>MSRP</th><td>${form.msrp}</td></tr>
-</table>
-
-<div class="section-title">時程需求</div>
-<table class="grid3">
-  <tr><th>Kick-off</th><td>${form.schedKickoff||'－'}</td><th>EVT</th><td>${form.schedEVT||'－'}</td><th>DVT</th><td>${form.schedDVT||'－'}</td></tr>
-  <tr><th>PVT</th><td>${form.schedPVT||'－'}</td><th>MP</th><td>${form.schedMP}</td><th>On Market</th><td>${form.schedOnMarket}</td></tr>
-</table>
-
+<div class="sec">數量與成本</div>
+<table><tr><th>目標銷量</th><td>${form.targetSales}</td><th>攤提數量</th><td>${form.amortQty}</td><th>首批單量</th><td>${form.firstBatch}</td></tr>
+<tr><th>目標模具費</th><td>${form.toolingCost}</td><th>FOB cost</th><td>${form.fobCost}</td><th>MSRP</th><td>${form.msrp}</td></tr></table>
+<div class="sec">時程需求</div>
+<table><tr><th>Kick-off</th><td>${form.schedKickoff||'－'}</td><th>EVT</th><td>${form.schedEVT||'－'}</td><th>DVT</th><td>${form.schedDVT||'－'}</td></tr>
+<tr><th>PVT</th><td>${form.schedPVT||'－'}</td><th>MP</th><td>${form.schedMP}</td><th>On Market</th><td>${form.schedOnMarket}</td></tr></table>
 <div class="sign">
-  <div class="sign-box">提案人：${form.applicant}</div>
-  <div class="sign-box">業務主管簽章：</div>
-  <div class="sign-box">總經理簽章：</div>
+<div class="sb">提案人：${form.applicant}</div>
+<div class="sb">業務主管簽章：</div>
+<div class="sb">總經理簽章：</div>
 </div>
 <p class="note">* 前方欄位有「*」者表示必填</p>
 <script>window.onload=()=>{window.print();}</script>
 </body></html>`;
-
     const w = window.open('', '_blank');
+    if (!w) { alert('請允許瀏覽器開啟彈出視窗'); return; }
     w.document.write(html);
     w.document.close();
   };
 
-  const TextareaWithAI = ({ field, label, required, rows = 3 }) => (
-    <RFPTextareaWithAI
-      field={field} label={label} required={required} rows={rows}
-      value={form[field]}
-      onChange={e => set(field, e.target.value)}
-      onAIFill={aiAutoFill}
-      loading={aiLoading[field]}
-    />
-  );
-
-  const Input = ({ field, ...props }) => (
-    <RFPInput value={form[field]} onChange={e => set(field, e.target.value)} {...props} />
-  );
-
-  const Field = ({ label, required, children }) => (
-    <RFPField label={label} required={required}>{children}</RFPField>
-  );
-
   return (
-    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-start justify-center p-4 overflow-y-auto" onPaste={handleImagePaste}>
+    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-start justify-center p-4 overflow-y-auto">
       <div className="bg-white w-full max-w-3xl rounded-xl shadow-xl my-4">
-        {/* 頂部工具列 */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 sticky top-0 bg-white z-10 rounded-t-xl">
           <h2 className="text-sm font-semibold text-slate-800">產生 RFP</h2>
           <div className="flex items-center gap-2">
             {savedMsg && <span className="text-xs text-emerald-600">{savedMsg}</span>}
-            <button onClick={saveDraft} className="px-3 py-1.5 bg-slate-100 text-slate-700 text-sm rounded-lg hover:bg-slate-200">
-              儲存草稿
-            </button>
-            <button onClick={handleExportPDF} className="px-3 py-1.5 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-700 flex items-center gap-1">
-              ↓ 導出 PDF
-            </button>
+            <button onClick={saveDraft} className="px-3 py-1.5 bg-slate-100 text-slate-700 text-sm rounded-lg hover:bg-slate-200">儲存草稿</button>
+            <button onClick={handleExportPDF} className="px-3 py-1.5 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-700">↓ 導出 PDF</button>
             <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded text-slate-500">✕</button>
           </div>
         </div>
-
         <div className="p-5 space-y-3">
-          {/* RFP 編號 + 申請人 */}
-          <div className="flex gap-3">
-            <Field label="RFP#"><Input field="rfpNo" placeholder="自動或手動填入" /></Field>
-            <Field label="申請人" required><Input field="applicant" /></Field>
-            <Field label="申請日期" required><Input field="applyDate" type="date" /></Field>
+          <div className="grid grid-cols-3 gap-3">
+            <RFPField label="RFP#"><RFPInput value={form.rfpNo} onChange={e => set('rfpNo', e.target.value)} placeholder="選填" /></RFPField>
+            <RFPField label="申請人" required><RFPInput value={form.applicant} onChange={e => set('applicant', e.target.value)} /></RFPField>
+            <RFPField label="申請日期" required><RFPInput value={form.applyDate} onChange={e => set('applyDate', e.target.value)} type="date" /></RFPField>
           </div>
 
-          {/* 產品圖片 */}
-          <div>
-            <p className="text-xs text-slate-500 mb-1">產品圖片</p>
-            <div className="flex flex-wrap gap-2 items-center">
-              {mainImg && (
-                <StorageImage src={mainImg.url || mainImg.dataUrl} path={mainImg.path} alt={project.name}
-                  className="h-20 object-contain rounded border border-slate-200" />
-              )}
-              {(form.extraImages || []).map((img, i) => (
-                <div key={i} className="relative">
-                  <img src={img.src} alt={img.name} className="h-20 object-contain rounded border border-slate-200" />
-                  <button onClick={() => set('extraImages', form.extraImages.filter((_, j) => j !== i))}
-                    className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] flex items-center justify-center">✕</button>
+          <div className="border border-slate-200 rounded-lg p-3">
+            <p className="text-xs font-medium text-slate-600 mb-2">產品圖片（點擊勾選要放入 PDF 的圖片）</p>
+            {systemImages.length > 0 && (
+              <div className="mb-2">
+                <p className="text-[10px] text-slate-400 mb-1.5">系統圖片</p>
+                <div className="flex flex-wrap gap-2">
+                  {systemImages.map(img => {
+                    const selected = (form.selectedSystemImgIds || []).includes(img.id);
+                    return (
+                      <div key={img.id} onClick={() => toggleSystemImg(img.id)}
+                        className={`relative cursor-pointer rounded border-2 transition ${selected ? 'border-blue-500' : 'border-slate-200 hover:border-slate-400'}`}>
+                        <StorageImage src={img.src} path={img.path} alt={img.name} className="h-16 w-16 object-contain rounded" />
+                        {selected && <div className="absolute top-0.5 right-0.5 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center"><span className="text-white text-[9px]">✓</span></div>}
+                        {img.isMain && <span className="absolute bottom-0 left-0 text-[8px] bg-blue-600 text-white px-1 rounded-tr">主圖</span>}
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
-              <label className="h-20 w-20 border-2 border-dashed border-slate-300 rounded flex items-center justify-center cursor-pointer hover:border-blue-400 text-slate-400 text-xs text-center p-1">
-                + 上傳圖片
-                <input type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
-              </label>
-            </div>
-            <p className="text-[10px] text-slate-400 mt-1">也可以直接 Ctrl+V 貼上圖片</p>
+              </div>
+            )}
+            {(form.uploadedImages || []).length > 0 && (
+              <div className="mb-2">
+                <p className="text-[10px] text-slate-400 mb-1.5">上傳的圖片</p>
+                <div className="flex flex-wrap gap-2">
+                  {(form.uploadedImages || []).map((img, i) => (
+                    <div key={i} className="relative border border-slate-200 rounded">
+                      <img src={img.src} alt={img.name} className="h-16 w-16 object-contain rounded" />
+                      <button onClick={() => setForm(f => ({ ...f, uploadedImages: f.uploadedImages.filter((_, j) => j !== i) }))}
+                        className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] flex items-center justify-center">✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <label className="inline-flex items-center gap-1 text-xs px-3 py-1.5 border border-dashed border-slate-300 rounded cursor-pointer hover:border-blue-400 text-slate-500 hover:text-blue-600 mt-1">
+              + 上傳圖片<input type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
+            </label>
           </div>
 
-          {/* 分類 */}
           <div className="grid grid-cols-2 gap-3">
-            <Field label="產品大類" required>
+            <RFPField label="產品大類" required>
               <select value={form.categoryMain} onChange={e => { set('categoryMain', e.target.value); set('categorySub', ''); }}
                 className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none bg-white">
                 <option value="">請選擇</option>
                 {Object.keys(RFP_CATEGORIES).map(k => <option key={k} value={k}>{k}</option>)}
               </select>
-            </Field>
-            <Field label="產品小類" required>
+            </RFPField>
+            <RFPField label="產品小類" required>
               <select value={form.categorySub} onChange={e => set('categorySub', e.target.value)}
                 className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none bg-white" disabled={!form.categoryMain}>
                 <option value="">請選擇</option>
                 {subCategories.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-            </Field>
+            </RFPField>
           </div>
-
-          {/* 基本資訊 */}
           <div className="grid grid-cols-2 gap-3">
-            <Field label="開發需求屬性"><Input field="devAttr" /></Field>
-            <Field label="客戶"><Input field="client" placeholder="如 Scosche" /></Field>
+            <RFPField label="開發需求屬性"><RFPInput value={form.devAttr} onChange={e => set('devAttr', e.target.value)} /></RFPField>
+            <RFPField label="客戶"><RFPInput value={form.client} onChange={e => set('client', e.target.value)} placeholder="如 Scosche" /></RFPField>
           </div>
           <div className="grid grid-cols-3 gap-3">
-            <Field label="需求單位" required><Input field="reqDept" /></Field>
-            <Field label="執行單位"><Input field="execDept" /></Field>
-            <Field label="負責人員"><Input field="owner" /></Field>
+            <RFPField label="需求單位" required><RFPInput value={form.reqDept} onChange={e => set('reqDept', e.target.value)} /></RFPField>
+            <RFPField label="執行單位"><RFPInput value={form.execDept} onChange={e => set('execDept', e.target.value)} /></RFPField>
+            <RFPField label="負責人員"><RFPInput value={form.owner} onChange={e => set('owner', e.target.value)} /></RFPField>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="產品名稱" required><Input field="productName" /></Field>
-            <Field label="目標族群" required><Input field="targetGroup" /></Field>
+            <RFPField label="產品名稱" required><RFPInput value={form.productName} onChange={e => set('productName', e.target.value)} /></RFPField>
+            <RFPField label="目標族群" required><RFPInput value={form.targetGroup} onChange={e => set('targetGroup', e.target.value)} /></RFPField>
           </div>
-
-          {/* AI 填寫欄位 */}
-          <TextareaWithAI field="productReq" label="產品需求（詳述使用情境、問題、功能效益，100字以上）" required rows={4} />
-          <TextareaWithAI field="designReq" label="設計需求（尺寸重量、材質、功能、結構、色彩、風格等）" rows={3} />
-          <TextareaWithAI field="otherReq" label="其他需求（附註說明、電器規格、參考圖檔、競品資訊連結等）" rows={2} />
-
-          {/* 數量與成本 */}
+          {[
+            { f: 'productReq', label: '產品需求（詳述使用情境、問題、功能效益，100字以上）', required: true, rows: 4 },
+            { f: 'designReq', label: '設計需求（尺寸重量、材質、功能、結構、色彩、風格等）', rows: 3 },
+            { f: 'otherReq', label: '其他需求（附註說明、電器規格、參考圖檔、競品資訊連結等）', rows: 2 },
+          ].map(({ f, label, required, rows }) => (
+            <RFPField key={f} label={label} required={required}>
+              <textarea value={form[f]} onChange={e => set(f, e.target.value)} rows={rows}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-slate-400 resize-none" />
+            </RFPField>
+          ))}
           <div>
             <p className="text-xs text-slate-500 mb-2 font-medium">數量與成本</p>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-              {[['targetSales','目標銷量'],['amortQty','攤提數量'],['firstBatch','首批單量'],['toolingCost','目標模具費'],['fobCost','FOB cost'],['msrp','MSRP']].map(([field, label]) => (
-                <div key={field}>
-                  <p className="text-[10px] text-slate-400 mb-0.5">{label}</p>
-                  <input value={form[field]} onChange={e => set(field, e.target.value)}
-                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none" />
-                </div>
+              {[['targetSales','目標銷量'],['amortQty','攤提數量'],['firstBatch','首批單量'],['toolingCost','目標模具費'],['fobCost','FOB cost'],['msrp','MSRP']].map(([f,l]) => (
+                <div key={f}><p className="text-[10px] text-slate-400 mb-0.5">{l}</p>
+                <input value={form[f]} onChange={e => set(f, e.target.value)} className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none" /></div>
               ))}
             </div>
           </div>
-
-          {/* 時程 */}
           <div>
             <p className="text-xs text-slate-500 mb-2 font-medium">時程需求</p>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-              {[['schedKickoff','Kick-off'],['schedEVT','EVT'],['schedDVT','DVT'],['schedPVT','PVT'],['schedMP','MP'],['schedOnMarket','On Market']].map(([field, label]) => (
-                <div key={field}>
-                  <p className="text-[10px] text-slate-400 mb-0.5">{label}</p>
-                  <input value={form[field]} onChange={e => set(field, e.target.value)}
-                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none" />
-                </div>
+              {[['schedKickoff','Kick-off'],['schedEVT','EVT'],['schedDVT','DVT'],['schedPVT','PVT'],['schedMP','MP'],['schedOnMarket','On Market']].map(([f,l]) => (
+                <div key={f}><p className="text-[10px] text-slate-400 mb-0.5">{l}</p>
+                <input value={form[f]} onChange={e => set(f, e.target.value)} className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none" /></div>
               ))}
             </div>
           </div>
-
-          {/* 簽章 */}
           <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200">
             <div><p className="text-xs text-slate-500 mb-1">提案人</p><p className="text-sm font-medium">{form.applicant}</p></div>
             <div><p className="text-xs text-slate-500 mb-1">總經理</p><div className="h-8 border-b border-slate-300" /></div>
@@ -3144,56 +3043,6 @@ ${extraImgHtml ? `<div class="img-area">${extraImgHtml}</div>` : ''}
   );
 }
 
-// ── 跟追完成對話框 ─────────────────────────────────────────────
-function FollowUpDialog({ currentUser, onComplete, onCancel }) {
-  const [text, setText] = useState('');
-  const [nextFollowUpDate, setNextFollowUpDate] = useState('');
-
-  return (
-    <div className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-5">
-        <p className="text-sm font-semibold text-slate-800 mb-4">✓ 跟追完成</p>
-
-        <div className="mb-3">
-          <label className="text-xs text-slate-500 mb-1 block">進度備註（選填）</label>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={3}
-            placeholder="記錄這次跟追的結果..."
-            autoFocus
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none"
-          />
-        </div>
-
-        <div className="mb-5">
-          <label className="text-xs text-slate-500 mb-1 block">下次跟追日期（選填）</label>
-          <input
-            type="date"
-            value={nextFollowUpDate}
-            onChange={(e) => setNextFollowUpDate(e.target.value)}
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
-          />
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            onClick={() => onComplete({ text, nextFollowUpDate })}
-            className="flex-1 px-3 py-2 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-700"
-          >
-            完成
-          </button>
-          <button
-            onClick={onCancel}
-            className="flex-1 px-3 py-2 bg-slate-100 text-slate-700 text-sm rounded-lg hover:bg-slate-200"
-          >
-            取消
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, samples = [], withdrawals = [], currentUser, openFrom = null, onReturn, followUpTrigger = null, onFollowUpTriggered }) {
   const [showWizard, setShowWizard] = useState(false);

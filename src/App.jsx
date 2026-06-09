@@ -46,10 +46,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.89.0';
-const BUILD_ID = '20260609-1800';
+const APP_VERSION = 'v0.90.0';
+const BUILD_ID = '20260609-1900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.90.0',
+    date: '2026-06-09',
+    changes: [
+      '🔧 RFP 圖片修正：等所有圖片 URL 解析完畢才顯示（顯示「載入中」），避免空白',
+      '修正 filter 邏輯錯誤導致圖片不顯示的問題',
+    ],
+  },
   {
     version: 'v0.89.0',
     date: '2026-06-09',
@@ -2860,21 +2868,27 @@ function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
     };
   });
   const [savedMsg, setSavedMsg] = useState('');
-  const [resolvedUrls, setResolvedUrls] = useState({}); // { sys_0: 'https://...' }
+  const [resolvedUrls, setResolvedUrls] = useState({});
+  const [imgLoading, setImgLoading] = useState(systemImages.length > 0);
 
-  // 開啟時解析所有系統圖片 URL（優先用 path 取得最新 URL）
+  // 開啟時解析所有系統圖片 URL
   React.useEffect(() => {
+    if (systemImages.length === 0) { setImgLoading(false); return; }
+    const resolved = {};
+    let pending = systemImages.length;
     systemImages.forEach(async (img) => {
-      if (img.path) {
-        // 有 path 的用 getStorageUrl 取得最新 URL（最可靠）
-        try {
+      try {
+        if (img.path) {
           const url = await getStorageUrl(img.path);
-          if (url) { setResolvedUrls(prev => ({ ...prev, [img.id]: url })); return; }
-        } catch {}
-      }
-      // 沒有 path 但有 src（dataUrl 或直接 URL）
-      if (img.src) {
-        setResolvedUrls(prev => ({ ...prev, [img.id]: img.src }));
+          if (url) resolved[img.id] = url;
+        } else if (img.src) {
+          resolved[img.id] = img.src;
+        }
+      } catch {}
+      pending--;
+      if (pending === 0) {
+        setResolvedUrls({ ...resolved });
+        setImgLoading(false);
       }
     });
   }, []);
@@ -3011,31 +3025,30 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
             <RFPField label="申請日期" required><RFPInput value={form.applyDate} onChange={e => set('applyDate', e.target.value)} type="date" /></RFPField>
           </div>
 
-          {/* 產品圖片區：系統圖片自動帶入 + 可上傳/貼上 + ✕ 刪除 */}
+          {/* 產品圖片區 */}
           <div className="border border-slate-200 rounded-lg p-3">
-            <p className="text-xs font-medium text-slate-600 mb-2">產品圖片 <span className="text-slate-400 font-normal">（✕ 刪除不需要的，可 Ctrl+V 貼上截圖）</span></p>
+            <p className="text-xs font-medium text-slate-600 mb-2">產品圖片 <span className="text-slate-400 font-normal">（滑鼠移上去顯示 ✕ 可刪除，可 Ctrl+V 貼上截圖）</span></p>
             <div className="flex flex-wrap gap-2 items-start">
-              {/* 系統圖片（自動帶入，用 resolvedUrls 顯示） */}
-              {systemImages.map(img => {
-                const displaySrc = resolvedUrls[img.id];
-                // 未解析完的先顯示佔位
-                return (
-                  <div key={img.id} className="relative border border-slate-200 rounded group">
-                    {displaySrc ? (
-                      <img src={displaySrc} alt={img.name} className="h-20 w-20 object-contain rounded" />
-                    ) : (
-                      <div className="h-20 w-20 flex items-center justify-center bg-slate-50 rounded text-[10px] text-slate-400">載入中</div>
-                    )}
-                    {img.isMain && <span className="absolute bottom-0 left-0 text-[8px] bg-blue-600 text-white px-1 rounded-tr">主圖</span>}
-                    <button
-                      onClick={() => set('deletedSystemImgIds', [...(form.deletedSystemImgIds || []), img.id])}
-                      className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] items-center justify-center hidden group-hover:flex"
-                    >✕</button>
-                  </div>
-                );
-              }).filter((_, i) => !(form.deletedSystemImgIds || []).includes(systemImages[i]?.id))}
-
-              {/* 上傳/貼上的圖片 */}
+              {imgLoading ? (
+                <div className="text-xs text-slate-400 py-2">圖片載入中...</div>
+              ) : (
+                systemImages
+                  .filter(img => !(form.deletedSystemImgIds || []).includes(img.id))
+                  .map(img => {
+                    const displaySrc = resolvedUrls[img.id];
+                    if (!displaySrc) return null;
+                    return (
+                      <div key={img.id} className="relative border border-slate-200 rounded group">
+                        <img src={displaySrc} alt={img.name} className="h-20 w-20 object-contain rounded" />
+                        {img.isMain && <span className="absolute bottom-0 left-0 text-[8px] bg-blue-600 text-white px-1 rounded-tr">主圖</span>}
+                        <button
+                          onClick={() => set('deletedSystemImgIds', [...(form.deletedSystemImgIds || []), img.id])}
+                          className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] items-center justify-center hidden group-hover:flex"
+                        >✕</button>
+                      </div>
+                    );
+                  })
+              )}
               {(form.uploadedImages || []).map((img, i) => (
                 <div key={i} className="relative border border-slate-200 rounded group">
                   <img src={img.src} alt={img.name} className="h-20 w-20 object-contain rounded" />
@@ -3043,7 +3056,6 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
                     className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] items-center justify-center hidden group-hover:flex">✕</button>
                 </div>
               ))}
-
               <label className="h-20 w-20 border-2 border-dashed border-slate-300 rounded flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 text-slate-400 text-[10px] text-center">
                 + 上傳
                 <input type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />

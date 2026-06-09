@@ -46,10 +46,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.91.0';
-const BUILD_ID = '20260609-2000';
+const APP_VERSION = 'v0.92.0';
+const BUILD_ID = '20260609-2100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.92.0',
+    date: '2026-06-09',
+    changes: [
+      '🎉 RFP 草稿現在包含上傳/貼上的圖片（base64 小截圖）',
+      '🎉 產品需求/設計需求/其他需求欄位支援 Ctrl+V 貼上圖片',
+      '圖片在欄位內顯示，導出 PDF 也會包含',
+    ],
+  },
   {
     version: 'v0.91.0',
     date: '2026-06-09',
@@ -2827,6 +2836,57 @@ function RFPInput({ value, onChange, ...props }) {
   );
 }
 
+// 支援圖片貼上的富文本欄位（用於 RFP 需求欄位）
+function RFPRichField({ value, onChange }) {
+  const ref = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!ref.current) return;
+    // 只在初始化時設定內容（避免游標跳動）
+    if (ref.current.innerHTML !== value) {
+      ref.current.innerHTML = value || '';
+    }
+  }, []);
+
+  const handleInput = () => {
+    onChange(ref.current?.innerHTML || '');
+  };
+
+  const handlePaste = (e) => {
+    // 攔截圖片貼上，轉成 base64 插入
+    const items = e.clipboardData?.items || [];
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        const reader = new FileReader();
+        reader.onload = ev => {
+          document.execCommand('insertHTML', false,
+            `<img src="${ev.target.result}" style="max-width:100%;margin:4px 0;border-radius:4px;" />`
+          );
+          onChange(ref.current?.innerHTML || '');
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+    }
+    // 文字正常貼上
+  };
+
+  return (
+    <div
+      ref={ref}
+      contentEditable
+      suppressContentEditableWarning
+      onInput={handleInput}
+      onPaste={handlePaste}
+      data-placeholder="點此輸入，可貼上文字或圖片..."
+      className="w-full px-3 py-2 text-sm border border-slate-200 rounded focus:outline-none focus:border-slate-400 min-h-[80px] max-h-[300px] overflow-y-auto"
+      style={{ lineHeight: '1.6' }}
+    />
+  );
+}
+
 // ── RFP Modal ──────────────────────────────────────────────────
 function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
   const today = new Date().toISOString().split('T')[0];
@@ -2917,7 +2977,7 @@ function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
 
   const saveDraft = () => {
     if (onSaveDraft) {
-      onSaveDraft({ ...form, uploadedImages: [] });
+      onSaveDraft({ ...form }); // 包含 uploadedImages（base64 小截圖 OK）
       setSavedMsg('草稿已儲存');
       setTimeout(() => setSavedMsg(''), 2000);
     }
@@ -2973,6 +3033,7 @@ td,th{border:1px solid #cbd5e1;padding:4px 7px;vertical-align:top;}
 th{background:#f1f5f9;font-weight:600;white-space:nowrap;width:18%;}
 .sec{background:#e2e8f0;font-weight:700;font-size:11px;padding:3px 7px;margin-bottom:0;}
 .pre{white-space:pre-wrap;min-height:32px;}
+.pre img{max-width:100%;border-radius:4px;margin:2px 0;}
 .sign{display:flex;gap:24px;margin-top:12px;}
 .sb{flex:1;border-top:1px solid #cbd5e1;padding-top:5px;font-size:11px;}
 .note{font-size:10px;color:#94a3b8;margin-top:5px;}
@@ -2988,9 +3049,9 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
 <tr><th>需求單位</th><td>${esc(form.reqDept)}</td><th>執行單位</th><td>${esc(form.execDept)}</td></tr>
 <tr><th>負責人員</th><td>${esc(form.owner)}</td><th>目標族群</th><td>${esc(form.targetGroup)}</td></tr>
 <tr><th>產品名稱</th><td colspan="3">${esc(form.productName)}</td></tr>
-<tr><th>產品需求</th><td colspan="3" class="pre">${esc(form.productReq)||'－'}</td></tr>
-<tr><th>設計需求</th><td colspan="3" class="pre">${esc(form.designReq)||'－'}</td></tr>
-<tr><th>其他需求</th><td colspan="3" class="pre">${esc(form.otherReq)||'－'}</td></tr>
+<tr><th>產品需求</th><td colspan="3" class="pre">${form.productReq||'－'}</td></tr>
+<tr><th>設計需求</th><td colspan="3" class="pre">${form.designReq||'－'}</td></tr>
+<tr><th>其他需求</th><td colspan="3" class="pre">${form.otherReq||'－'}</td></tr>
 </table>
 <div class="sec">數量與成本</div>
 <table><tr><th>目標銷量</th><td>${form.targetSales}</td><th>攤提數量</th><td>${form.amortQty}</td><th>首批單量</th><td>${form.firstBatch}</td></tr>
@@ -3099,13 +3160,15 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
             <RFPField label="目標族群" required><RFPInput value={form.targetGroup} onChange={e => set('targetGroup', e.target.value)} /></RFPField>
           </div>
           {[
-            { f: 'productReq', label: '產品需求（詳述使用情境、問題、功能效益，100字以上）', required: true, rows: 4 },
-            { f: 'designReq', label: '設計需求（尺寸重量、材質、功能、結構、色彩、風格等）', rows: 3 },
-            { f: 'otherReq', label: '其他需求（附註說明、電器規格、參考圖檔、競品資訊連結等）', rows: 2 },
-          ].map(({ f, label, required, rows }) => (
+            { f: 'productReq', label: '產品需求（詳述使用情境、問題、功能效益，100字以上）', required: true },
+            { f: 'designReq', label: '設計需求（尺寸重量、材質、功能、結構、色彩、風格等）' },
+            { f: 'otherReq', label: '其他需求（附註說明、電器規格、參考圖檔、競品資訊連結等）' },
+          ].map(({ f, label, required }) => (
             <RFPField key={f} label={label} required={required}>
-              <textarea value={form[f]} onChange={e => set(f, e.target.value)} rows={rows}
-                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-slate-400 resize-none" />
+              <RFPRichField
+                value={form[f]}
+                onChange={v => set(f, v)}
+              />
             </RFPField>
           ))}
           <div>

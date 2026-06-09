@@ -46,10 +46,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.93.0';
-const BUILD_ID = '20260609-2200';
+const APP_VERSION = 'v0.94.0';
+const BUILD_ID = '20260609-2300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.94.0',
+    date: '2026-06-09',
+    changes: [
+      '🔧 RFP 需求欄位貼文字時自動轉純文字，不再帶入編號清單（1. 2. 3.）或格式',
+      '圖片貼上不受影響，依然會嵌入',
+    ],
+  },
   {
     version: 'v0.93.0',
     date: '2026-06-09',
@@ -2862,12 +2870,12 @@ function RFPRichField({ value, onChange }) {
   };
 
   const handlePaste = (e) => {
-    // 攔截圖片貼上，轉成 base64 插入
     const items = e.clipboardData?.items || [];
+    // 圖片貼上：插入 base64
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         e.preventDefault();
-        e.stopPropagation(); // 阻止外層 modal 的 onPaste 也接收
+        e.stopPropagation();
         const file = item.getAsFile();
         const reader = new FileReader();
         reader.onload = ev => {
@@ -2880,8 +2888,16 @@ function RFPRichField({ value, onChange }) {
         return;
       }
     }
-    // 文字正常貼上，也阻止外層
-    e.stopPropagation();
+    // 文字貼上：去掉所有格式，只保留純文字（避免帶入編號清單、表格等）
+    const plain = e.clipboardData?.getData('text/plain') || '';
+    if (plain) {
+      e.preventDefault();
+      e.stopPropagation();
+      document.execCommand('insertText', false, plain);
+      onChange(ref.current?.innerHTML || '');
+    } else {
+      e.stopPropagation();
+    }
   };
 
   return (

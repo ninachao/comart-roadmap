@@ -46,10 +46,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.90.0';
-const BUILD_ID = '20260609-1900';
+const APP_VERSION = 'v0.91.0';
+const BUILD_ID = '20260609-2000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.91.0',
+    date: '2026-06-09',
+    changes: [
+      '🔧 RFP 圖片真正根本原因修正：改讀 productImages（之前誤讀 images，是空的）',
+    ],
+  },
   {
     version: 'v0.90.0',
     date: '2026-06-09',
@@ -2823,12 +2830,12 @@ function RFPInput({ value, onChange, ...props }) {
 // ── RFP Modal ──────────────────────────────────────────────────
 function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
   const today = new Date().toISOString().split('T')[0];
-  const systemImages = (project.images || []).map((img, i) => ({
+  const systemImages = (project.productImages || []).map((img, i) => ({
     id: `sys_${i}`,
     src: img.url || img.dataUrl || '',
     path: img.path || '',
     name: img.name || `圖片${i+1}`,
-    isMain: !!img.isMain,
+    isMain: i === 0,
   }));
 
   const [form, setForm] = useState(() => {
@@ -2871,25 +2878,24 @@ function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
   const [resolvedUrls, setResolvedUrls] = useState({});
   const [imgLoading, setImgLoading] = useState(systemImages.length > 0);
 
-  // 開啟時解析所有系統圖片 URL
   React.useEffect(() => {
     if (systemImages.length === 0) { setImgLoading(false); return; }
-    const resolved = {};
-    let pending = systemImages.length;
-    systemImages.forEach(async (img) => {
-      try {
-        if (img.path) {
-          const url = await getStorageUrl(img.path);
-          if (url) resolved[img.id] = url;
-        } else if (img.src) {
-          resolved[img.id] = img.src;
-        }
-      } catch {}
-      pending--;
-      if (pending === 0) {
-        setResolvedUrls({ ...resolved });
-        setImgLoading(false);
-      }
+    Promise.all(
+      systemImages.map(async (img) => {
+        try {
+          if (img.path) {
+            const url = await getStorageUrl(img.path);
+            if (url) return [img.id, url];
+          }
+          if (img.src) return [img.id, img.src];
+        } catch {}
+        return [img.id, null];
+      })
+    ).then(results => {
+      const map = {};
+      results.forEach(([id, url]) => { if (url) map[id] = url; });
+      setResolvedUrls(map);
+      setImgLoading(false);
     });
   }, []);
 

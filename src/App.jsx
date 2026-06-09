@@ -46,10 +46,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.79.0';
-const BUILD_ID = '20260608-1200';
+const APP_VERSION = 'v0.80.0';
+const BUILD_ID = '20260608-1300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.80.0',
+    date: '2026-06-08',
+    changes: [
+      '🎉 進度卡片新增「🔔」按鈕：滑鼠移上去顯示，點擊可設定下次跟追日期',
+      '任何狀態的進度都可以用（已跟追、未跟追、逾期都行）',
+      '設了新日期後 followedUp 自動重置，會重新出現在提醒面板',
+      '可清除日期（清除後從提醒消失）',
+    ],
+  },
   {
     version: 'v0.79.0',
     date: '2026-06-08',
@@ -2804,6 +2814,15 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
     onUpdateField('updates', newUpdates);
   };
 
+  // 設定（或清除）進度的下次跟追日期
+  const handleSetFollowUpDate = (update, date) => {
+    const idx = updates.findIndex(u => u === update || (u.date === update.date && u.text === update.text));
+    if (idx < 0) return;
+    const newUpdates = [...updates];
+    newUpdates[idx] = { ...newUpdates[idx], followUpDate: date || null, followedUp: date ? false : newUpdates[idx].followedUp };
+    onUpdateField('updates', newUpdates);
+  };
+
   const startEditField = (field, currentValue) => {
     setEditingField(field);
     setTempValue(currentValue || '');
@@ -3116,6 +3135,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     onDelete={() => onDeleteUpdate(0)}
                     onMarkFollowedUp={isViewer ? null : handleMarkFollowedUp}
                     onAddUpdate={isViewer ? null : onAddUpdate}
+                    onSetFollowUpDate={isViewer ? null : handleSetFollowUpDate}
                     currentUser={currentUser}
                   />
                 )}
@@ -3142,6 +3162,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     onDelete={() => onDeleteUpdate(i + 1)}
                     onMarkFollowedUp={isViewer ? null : handleMarkFollowedUp}
                     onAddUpdate={isViewer ? null : onAddUpdate}
+                    onSetFollowUpDate={isViewer ? null : handleSetFollowUpDate}
                     currentUser={currentUser}
                   />
                 ))}
@@ -9285,10 +9306,12 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
   );
 }
 
-function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete, onMarkFollowedUp, onAddUpdate, currentUser }) {
+function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete, onMarkFollowedUp, onAddUpdate, onSetFollowUpDate, currentUser }) {
   const [previewImg, setPreviewImg] = useState(null);
   const [inlineImgPreview, setInlineImgPreview] = useState(null);
   const [showFollowUpForm, setShowFollowUpForm] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [nextDate, setNextDate] = useState('');
 
   if (isEditing) {
     return <UpdateForm initial={update} onCancel={onCancelEdit} onSave={onSave} currentUser={currentUser} />;
@@ -9349,6 +9372,16 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
                 ✓
               </button>
             )}
+            {/* 設定下次跟追日期（任何狀態都可以用）*/}
+            {onSetFollowUpDate && (
+              <button
+                onClick={() => { setNextDate(update.followUpDate || ''); setShowDatePicker(v => !v); }}
+                title="設定下次跟追日期"
+                className="p-1 text-slate-400 hover:text-amber-600 hover:bg-white rounded text-[10px]"
+              >
+                🔔
+              </button>
+            )}
             <button onClick={onStartEdit} className="p-1 text-slate-400 hover:text-slate-700 hover:bg-white rounded">
               <Edit2 className="w-3 h-3" />
             </button>
@@ -9357,6 +9390,34 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
             </button>
           </div>
         </div>
+
+        {/* 下次跟追日期選擇器（展開） */}
+        {showDatePicker && (
+          <div className="flex items-center gap-2 mt-1.5 mb-1 px-1">
+            <span className="text-[11px] text-amber-700 flex-shrink-0">🔔 下次跟追</span>
+            <input
+              type="date"
+              value={nextDate}
+              onChange={(e) => setNextDate(e.target.value)}
+              className="text-xs px-2 py-0.5 border border-amber-200 rounded bg-white"
+            />
+            <button
+              onClick={() => { onSetFollowUpDate(update, nextDate || null); setShowDatePicker(false); }}
+              className="text-xs px-2 py-0.5 bg-amber-500 text-white rounded hover:bg-amber-600"
+            >
+              確定
+            </button>
+            {update.followUpDate && (
+              <button
+                onClick={() => { onSetFollowUpDate(update, null); setShowDatePicker(false); }}
+                className="text-xs px-2 py-0.5 text-slate-400 hover:text-rose-500 rounded"
+              >
+                清除
+              </button>
+            )}
+            <button onClick={() => setShowDatePicker(false)} className="text-xs text-slate-400 hover:text-slate-600">取消</button>
+          </div>
+        )}
         {update.text && (
           isRichText(update.text) ? (
             <div

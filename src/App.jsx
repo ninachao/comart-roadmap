@@ -46,10 +46,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.92.0';
-const BUILD_ID = '20260609-2100';
+const APP_VERSION = 'v0.93.0';
+const BUILD_ID = '20260609-2200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.93.0',
+    date: '2026-06-09',
+    changes: [
+      '🔧 RFP 草稿圖片真正修正：之前初始化時還是把 uploadedImages 重設為 []，現在從草稿讀回',
+      '🔧 需求欄位貼圖修正：加 stopPropagation 阻止外層 modal 攔截圖片',
+      'deletedSystemImgIds 也從草稿讀回（之前刪掉的系統圖片下次也不會出現）',
+    ],
+  },
   {
     version: 'v0.92.0',
     date: '2026-06-09',
@@ -2858,6 +2867,7 @@ function RFPRichField({ value, onChange }) {
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         e.preventDefault();
+        e.stopPropagation(); // 阻止外層 modal 的 onPaste 也接收
         const file = item.getAsFile();
         const reader = new FileReader();
         reader.onload = ev => {
@@ -2870,7 +2880,8 @@ function RFPRichField({ value, onChange }) {
         return;
       }
     }
-    // 文字正常貼上
+    // 文字正常貼上，也阻止外層
+    e.stopPropagation();
   };
 
   return (
@@ -2929,9 +2940,10 @@ function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
       schedPVT: draft.schedPVT || '',
       schedMP: draft.schedMP || 'N/A',
       schedOnMarket: draft.schedOnMarket || 'N/A',
-      // 圖片每次重新從系統帶入（不從草稿，避免舊 URL 失效）
+      // 圖片從草稿帶回（base64 直接存）
       selectedSystemImgIds: systemImages.filter(i => i.isMain).map(i => i.id),
-      uploadedImages: [],
+      uploadedImages: draft.uploadedImages || [],
+      deletedSystemImgIds: draft.deletedSystemImgIds || [],
     };
   });
   const [savedMsg, setSavedMsg] = useState('');

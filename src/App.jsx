@@ -46,10 +46,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.83.0';
-const BUILD_ID = '20260609-1200';
+const APP_VERSION = 'v0.84.0';
+const BUILD_ID = '20260609-1300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.84.0',
+    date: '2026-06-09',
+    changes: [
+      '🔧 修正 RFP modal 點開頁面全白 bug：移除錯誤的 selectedProject 參照',
+    ],
+  },
   {
     version: 'v0.83.0',
     date: '2026-06-09',
@@ -3659,7 +3666,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
 
       {showRFP && (
         <RFPModal
-          project={selectedProject || project}
+          project={project}
           currentUser={currentUser}
           onClose={() => setShowRFP(false)}
           onSaveDraft={(draft) => onUpdateField('rfpDraft', draft)}

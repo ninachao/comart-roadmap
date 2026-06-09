@@ -46,10 +46,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.84.0';
-const BUILD_ID = '20260609-1300';
+const APP_VERSION = 'v0.85.0';
+const BUILD_ID = '20260609-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.85.0',
+    date: '2026-06-09',
+    changes: [
+      '🔧 修正 RFP 白屏根本原因：將 TextareaWithAI / Input / Field 移出 RFPModal 函數外部，避免 React 在每次 render 重建 component type 導致崩潰',
+    ],
+  },
   {
     version: 'v0.84.0',
     date: '2026-06-09',
@@ -2737,6 +2744,50 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
 }
 
 // ── RFP Modal ──────────────────────────────────────────────────
+// RFP 表單子元件（定義在外部避免 React 崩潰）
+function RFPField({ label, required, children }) {
+  return (
+    <div className="mb-2">
+      <label className="text-xs text-slate-500 mb-0.5 block">
+        {required && <span className="text-rose-500 mr-0.5">*</span>}{label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function RFPInput({ value, onChange, ...props }) {
+  return (
+    <input value={value} onChange={onChange}
+      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-slate-400" {...props} />
+  );
+}
+
+function RFPTextareaWithAI({ field, label, required, rows = 3, value, onChange, onAIFill, loading }) {
+  return (
+    <div className="mb-3">
+      <div className="flex items-center justify-between mb-0.5">
+        <label className="text-xs text-slate-500">
+          {required && <span className="text-rose-500 mr-0.5">*</span>}{label}
+        </label>
+        <button
+          onClick={() => onAIFill(field)}
+          disabled={loading}
+          className="text-[10px] px-1.5 py-0.5 bg-violet-50 text-violet-700 border border-violet-200 rounded hover:bg-violet-100 disabled:opacity-50 flex items-center gap-1"
+        >
+          {loading ? '⏳ 生成中...' : '✨ AI 自動填寫'}
+        </button>
+      </div>
+      <textarea
+        value={value}
+        onChange={onChange}
+        rows={rows}
+        className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-slate-400 resize-none"
+      />
+    </div>
+  );
+}
+
 function RFPModal({ project, currentUser, onClose, onSaveDraft }) {
   const today = new Date().toISOString().split('T')[0];
   const mainImg = (project.images || []).find(i => i.isMain) || (project.images || [])[0];
@@ -2928,38 +2979,21 @@ ${extraImgHtml ? `<div class="img-area">${extraImgHtml}</div>` : ''}
   };
 
   const TextareaWithAI = ({ field, label, required, rows = 3 }) => (
-    <div className="mb-3">
-      <div className="flex items-center justify-between mb-0.5">
-        <label className="text-xs text-slate-500">
-          {required && <span className="text-rose-500 mr-0.5">*</span>}{label}
-        </label>
-        <button
-          onClick={() => aiAutoFill(field)}
-          disabled={aiLoading[field]}
-          className="text-[10px] px-1.5 py-0.5 bg-violet-50 text-violet-700 border border-violet-200 rounded hover:bg-violet-100 disabled:opacity-50 flex items-center gap-1"
-        >
-          {aiLoading[field] ? '⏳ 生成中...' : '✨ AI 自動填寫'}
-        </button>
-      </div>
-      <textarea
-        value={form[field]}
-        onChange={e => set(field, e.target.value)}
-        rows={rows}
-        className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-slate-400 resize-none"
-      />
-    </div>
+    <RFPTextareaWithAI
+      field={field} label={label} required={required} rows={rows}
+      value={form[field]}
+      onChange={e => set(field, e.target.value)}
+      onAIFill={aiAutoFill}
+      loading={aiLoading[field]}
+    />
   );
 
   const Input = ({ field, ...props }) => (
-    <input value={form[field]} onChange={e => set(field, e.target.value)}
-      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-slate-400" {...props} />
+    <RFPInput value={form[field]} onChange={e => set(field, e.target.value)} {...props} />
   );
 
   const Field = ({ label, required, children }) => (
-    <div className="mb-2">
-      <label className="text-xs text-slate-500 mb-0.5 block">{required && <span className="text-rose-500 mr-0.5">*</span>}{label}</label>
-      {children}
-    </div>
+    <RFPField label={label} required={required}>{children}</RFPField>
   );
 
   return (

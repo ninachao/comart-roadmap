@@ -46,10 +46,31 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.80.0';
-const BUILD_ID = '20260608-1300';
+const APP_VERSION = 'v0.82.0';
+const BUILD_ID = '20260609-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.82.0',
+    date: '2026-06-09',
+    changes: [
+      '🎉 料號申請新增「產生 RFP」按鈕',
+      'RFP 表單自動帶入：產品名稱、申請日期、產品圖片、申請人',
+      '產品大類 / 小類下拉選單（連動，與 Excel 相同資料）',
+      '所有欄位可修改，預設值：需求單位-國外業務、執行單位-工程課、負責人員-徐福威、目標族群-消費者',
+      '「導出 PDF」按鈕透過瀏覽器列印功能輸出 PDF',
+    ],
+  },
+  {
+    version: 'v0.81.0',
+    date: '2026-06-09',
+    changes: [
+      '🎉 料號申請新增 RFP 附件欄位',
+      '狀態選「申請中」或「已申請」時自動顯示 RFP 附件上傳區',
+      '狀態為「未申請」時不顯示（保持介面簡潔）',
+      '支援上傳檔案、貼連結，與其他附件欄位一致',
+    ],
+  },
   {
     version: 'v0.80.0',
     date: '2026-06-08',
@@ -2698,6 +2719,263 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
   );
 }
 
+// ── 產品大類 / 小類資料 ────────────────────────────────────────
+const RFP_CATEGORIES = {
+  '_01固定類': ['FAA01 成品-汽車類配件','FMA01 成品-汽車類配件','FMT01 成品-固定類-汽車配件','FMT02 成品-固定類-機車配件','FMT03 成品-固定類-辦公家具配件','RMA01 零售包-機車類配件','RMT01 零售包-固定類-汽車配件','RMT02 零售包-固定類-機踏車配件','RMT03 零售包-固定類-辦公家用配件'],
+  '_02保護類': ['FPT01 成品-保護類','RPT01 零售包-保護類'],
+  '_03電源類': ['FPS01 成品-電源類','RPS01 零售包-電源類'],
+  '_04多媒體類': ['FMM01 成品-多媒體類','RMM01 零售包-多媒體類'],
+  '_05運動類': ['FBA01 成品-自行車類配件','FSP01 成品-運動用品類','RBA01 零售包-自行車類配件','RSP01 零售包-運動用品類'],
+  '_06KC': ['00001 雜項','FBC01 成品-包材類','FQT01 成品-其他','PPA01 零組件-塑膠','PPA02 零組件-電子','PPA03 零組件-五金','PPA04 零組件-包材','PPA05 零組件-半成品','PPA99 零組件-其他','RBC01 包材類','PSB98 收費手板'],
+  '_07傳輸充電類': ['FCD01 成品-傳輸充電類','FXC01 成品-線材相關','RCD01 零售包-傳輸充電類','RXC01 零售包-線材相關'],
+  '_08輸入裝置類': ['FID01 成品-輸入裝置類','RID01 零售包-輸入裝置類'],
+  '_09生活用品類創意週邊': ['FLG01 成品-生活用品類','FSG01 成品-儲存裝置類','RAA01 零售包-汽車類配件','RLG01 零售包-生活用品類','RQT01 零售包-其他','RSG01 零售包-儲存裝置類'],
+  '_10APPSESSORY': ['FAP01 成品-APPSESSORY','RAP01 零售包-APPSESSORY'],
+};
+
+// ── RFP Modal ──────────────────────────────────────────────────
+function RFPModal({ project, currentUser, onClose }) {
+  const today = new Date().toISOString().split('T')[0];
+  const mainImg = (project.images || []).find(i => i.isMain) || (project.images || [])[0];
+
+  const [form, setForm] = useState({
+    rfpNo: '',
+    applicant: currentUser?.name || 'Nina',
+    applyDate: today,
+    categoryMain: '',
+    categorySub: '',
+    devAttr: 'COMART自我開發',
+    client: '',
+    reqDept: '國外業務',
+    execDept: '工程課',
+    owner: '徐福威',
+    productName: project.name || '',
+    targetGroup: '消費者',
+    productReq: '',
+    designReq: '',
+    otherReq: '',
+    targetSales: '5K',
+    amortQty: '5K',
+    firstBatch: '1K',
+    toolingCost: 'N/A',
+    targetCost: 'N/A',
+    fobCost: 'N/A',
+    msrp: 'N/A',
+    schedKickoff: '',
+    schedEVT: '',
+    schedDVT: '',
+    schedPVT: '',
+    schedMP: 'N/A',
+    schedOnMarket: 'N/A',
+  });
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const subCategories = form.categoryMain ? RFP_CATEGORIES[form.categoryMain] || [] : [];
+
+  const Field = ({ label, required, children }) => (
+    <div className="mb-3">
+      <label className="text-xs text-slate-500 mb-0.5 block">
+        {required && <span className="text-rose-500 mr-0.5">*</span>}{label}
+      </label>
+      {children}
+    </div>
+  );
+
+  const Input = ({ field, ...props }) => (
+    <input
+      value={form[field]}
+      onChange={e => set(field, e.target.value)}
+      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-slate-400"
+      {...props}
+    />
+  );
+
+  const Textarea = ({ field, rows = 3, ...props }) => (
+    <textarea
+      value={form[field]}
+      onChange={e => set(field, e.target.value)}
+      rows={rows}
+      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-slate-400 resize-none"
+      {...props}
+    />
+  );
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-start justify-center p-4 overflow-y-auto">
+      <div className="bg-white w-full max-w-3xl rounded-xl shadow-xl my-4">
+        {/* 頂部工具列 */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 sticky top-0 bg-white z-10 rounded-t-xl print:hidden">
+          <h2 className="text-sm font-semibold text-slate-800">產生 RFP</h2>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handlePrint}
+              className="px-3 py-1.5 bg-slate-900 text-white text-sm rounded-lg hover:bg-slate-700 flex items-center gap-1.5"
+            >
+              ↓ 導出 PDF
+            </button>
+            <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">✕</button>
+          </div>
+        </div>
+
+        {/* RFP 內容區 */}
+        <div className="p-6 space-y-4 print:p-4" id="rfp-content">
+          {/* 標題 */}
+          <div className="text-center border-b border-slate-200 pb-3 mb-4">
+            <div className="text-xs text-slate-400 mb-1">COMART REQUEST FOR PROPOSAL</div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">RFP#</span>
+                <input value={form.rfpNo} onChange={e => set('rfpNo', e.target.value)}
+                  placeholder="自動或手動填入"
+                  className="text-xs px-2 py-0.5 border border-slate-200 rounded w-36 focus:outline-none" />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">申請人</span>
+                <input value={form.applicant} onChange={e => set('applicant', e.target.value)}
+                  className="text-xs px-2 py-0.5 border border-slate-200 rounded w-24 focus:outline-none" />
+              </div>
+            </div>
+          </div>
+
+          {/* 產品圖片 */}
+          {mainImg && (
+            <div className="flex justify-center mb-2">
+              <StorageImage
+                src={mainImg.url || mainImg.dataUrl}
+                path={mainImg.path}
+                alt={project.name}
+                className="h-32 object-contain rounded border border-slate-100"
+              />
+            </div>
+          )}
+
+          {/* 第一區：分類與基本資訊 */}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="產品大類" required>
+              <select value={form.categoryMain} onChange={e => { set('categoryMain', e.target.value); set('categorySub', ''); }}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-slate-400 bg-white">
+                <option value="">請選擇</option>
+                {Object.keys(RFP_CATEGORIES).map(k => <option key={k} value={k}>{k}</option>)}
+              </select>
+            </Field>
+            <Field label="產品小類" required>
+              <select value={form.categorySub} onChange={e => set('categorySub', e.target.value)}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-slate-400 bg-white"
+                disabled={!form.categoryMain}>
+                <option value="">請選擇</option>
+                {subCategories.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+            <Field label="申請日期" required>
+              <Input field="applyDate" type="date" />
+            </Field>
+            <Field label="開發需求屬性" required>
+              <Input field="devAttr" />
+            </Field>
+            <Field label="客戶">
+              <Input field="client" placeholder="如 Scosche" />
+            </Field>
+            <Field label="目標族群" required>
+              <Input field="targetGroup" />
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="需求單位" required><Input field="reqDept" /></Field>
+            <Field label="執行單位"><Input field="execDept" /></Field>
+            <Field label="負責人員"><Input field="owner" /></Field>
+          </div>
+
+          <Field label="產品名稱" required>
+            <Input field="productName" />
+          </Field>
+
+          {/* 第二區：需求描述 */}
+          <Field label="產品需求（詳述使用情境、問題、功能效益，100字以上）" required>
+            <Textarea field="productReq" rows={4} placeholder="詳述使用情境，須解決之問題，產品可提供之功能效益等..." />
+          </Field>
+
+          <Field label="設計需求（尺寸重量、材質、功能、結構、色彩、風格等）">
+            <Textarea field="designReq" rows={3} placeholder="設計相關需求..." />
+          </Field>
+
+          <Field label="其他需求（附註說明、電器規格、參考圖檔、競品資訊連結等）">
+            <Textarea field="otherReq" rows={2} placeholder="其他需求..." />
+          </Field>
+
+          {/* 第三區：數量與成本 */}
+          <div>
+            <p className="text-xs text-slate-500 mb-2 font-medium">數量與成本</p>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+              {[
+                { label: '目標銷量', field: 'targetSales' },
+                { label: '攤提數量', field: 'amortQty' },
+                { label: '首批單量', field: 'firstBatch' },
+                { label: '目標模具費', field: 'toolingCost' },
+                { label: 'FOB cost', field: 'fobCost' },
+                { label: 'MSRP', field: 'msrp' },
+              ].map(({ label, field }) => (
+                <div key={field}>
+                  <p className="text-[10px] text-slate-400 mb-0.5">{label}</p>
+                  <input value={form[field]} onChange={e => set(field, e.target.value)}
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:border-slate-400" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 第四區：時程 */}
+          <div>
+            <p className="text-xs text-slate-500 mb-2 font-medium">時程需求</p>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+              {[
+                { label: 'Kick-off', field: 'schedKickoff' },
+                { label: 'EVT', field: 'schedEVT' },
+                { label: 'DVT', field: 'schedDVT' },
+                { label: 'PVT', field: 'schedPVT' },
+                { label: 'MP', field: 'schedMP' },
+                { label: 'On Market', field: 'schedOnMarket' },
+              ].map(({ label, field }) => (
+                <div key={field}>
+                  <p className="text-[10px] text-slate-400 mb-0.5">{label}</p>
+                  <input value={form[field]} onChange={e => set(field, e.target.value)}
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:border-slate-400" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 簽章區 */}
+          <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 mt-4">
+            <div>
+              <p className="text-xs text-slate-500 mb-1">提案人</p>
+              <p className="text-sm font-medium">{form.applicant}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 mb-1">總經理</p>
+              <div className="h-8 border-b border-slate-300" />
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-400">* 前方欄位有「*」者表示必填</p>
+        </div>
+      </div>
+
+      {/* 列印 CSS */}
+      <style>{`
+        @media print {
+          body > * { display: none !important; }
+          #rfp-content { display: block !important; }
+          .print\\:hidden { display: none !important; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 // ── 跟追完成對話框 ─────────────────────────────────────────────
 function FollowUpDialog({ currentUser, onComplete, onCancel }) {
   const [text, setText] = useState('');
@@ -2765,7 +3043,8 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
   };
   const [showAddUpdate, setShowAddUpdate] = useState(false);
   const [followUpInitial, setFollowUpInitial] = useState(null);
-  const [showFollowUpPrompt, setShowFollowUpPrompt] = useState(false); // 小對話框
+  const [showFollowUpPrompt, setShowFollowUpPrompt] = useState(false);
+  const [showRFP, setShowRFP] = useState(false);
   const [showEmailImport, setShowEmailImport] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [editingUpdateIdx, setEditingUpdateIdx] = useState(null);
@@ -3215,8 +3494,12 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           <MaterialCodeSection
             status={project.materialCodeStatus || '未申請'}
             materialCode={project.materialCodeNumber || ''}
+            rfpAttachments={project.rfpAttachments || []}
             onChange={(v) => onUpdateField('materialCodeStatus', v)}
             onCodeChange={(v) => onUpdateField('materialCodeNumber', v)}
+            onRfpChange={(v) => onUpdateField('rfpAttachments', v)}
+            readOnly={isViewer}
+            onGenerateRFP={() => setShowRFP(true)}
           />
 
           {/* 開發費用摘要 */}
@@ -3265,6 +3548,14 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             closeWizard();
           }}
           onClose={closeWizard}
+        />
+      )}
+
+      {showRFP && (
+        <RFPModal
+          project={project}
+          currentUser={currentUser}
+          onClose={() => setShowRFP(false)}
         />
       )}
 
@@ -4219,7 +4510,7 @@ function ProductImagesSection({ images, onChange }) {
     </section>
   );
 }
-function CollapsibleSection({ title, badge, children, defaultOpen = false, accent = 'slate' }) {
+function CollapsibleSection({ title, badge, children, defaultOpen = false, accent = 'slate', headerExtra }) {
   const [open, setOpen] = useState(defaultOpen);
   const accentMap = {
     slate: 'border-slate-200',
@@ -4230,18 +4521,21 @@ function CollapsibleSection({ title, badge, children, defaultOpen = false, accen
   };
   return (
     <section className={`bg-white border ${accentMap[accent] || accentMap.slate} rounded-lg overflow-hidden`}>
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition"
-      >
-        <div className="flex items-center gap-2">
-          {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
-          <h3 className="text-sm font-medium text-slate-800">{title}</h3>
-          {badge !== undefined && badge !== null && (
-            <span className="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{badge}</span>
-          )}
-        </div>
-      </button>
+      <div className="flex items-center justify-between pr-3">
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex-1 flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition text-left"
+        >
+          <div className="flex items-center gap-2">
+            {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+            <h3 className="text-sm font-medium text-slate-800">{title}</h3>
+            {badge !== undefined && badge !== null && (
+              <span className="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{badge}</span>
+            )}
+          </div>
+        </button>
+        {headerExtra && <div className="flex-shrink-0">{headerExtra}</div>}
+      </div>
       {open && <div className="px-4 pb-4 pt-1 border-t border-slate-100">{children}</div>}
     </section>
   );
@@ -8983,7 +9277,7 @@ function DevCostSection({ project, isViewer, onUpdateField, samples = [] }) {
   );
 }
 
-function MaterialCodeSection({ status, materialCode, onChange, onCodeChange }) {
+function MaterialCodeSection({ status, materialCode, onChange, onCodeChange, rfpAttachments = [], onRfpChange, readOnly, onGenerateRFP }) {
   const options = ['未申請', '申請中', '已申請'];
   const colorMap = {
     '未申請': 'bg-slate-100 text-slate-600 border-slate-200',
@@ -8999,6 +9293,14 @@ function MaterialCodeSection({ status, materialCode, onChange, onCodeChange }) {
       badge={materialCode ? `${status} · ${materialCode}` : status}
       defaultOpen={false}
       accent={status === '已申請' ? 'emerald' : status === '申請中' ? 'amber' : 'slate'}
+      headerExtra={onGenerateRFP && !readOnly && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onGenerateRFP(); }}
+          className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition"
+        >
+          產生 RFP
+        </button>
+      )}
     >
       <div className="mt-2 space-y-3">
         <p className="text-xs text-slate-500">通常在 T4 結束後申請正式料號</p>
@@ -9009,18 +9311,30 @@ function MaterialCodeSection({ status, materialCode, onChange, onCodeChange }) {
             {options.map(opt => (
               <button
                 key={opt}
-                onClick={() => onChange(opt)}
+                onClick={() => !readOnly && onChange(opt)}
                 className={`text-xs px-3 py-1.5 rounded border transition ${
                   status === opt
                     ? colorMap[opt] + ' font-medium'
                     : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'
-                }`}
+                } ${readOnly ? 'cursor-default' : ''}`}
               >
                 {status === opt ? '✓ ' : ''}{opt}
               </button>
             ))}
           </div>
         </div>
+
+        {/* RFP 附件（申請中或已申請才顯示）*/}
+        {status !== '未申請' && (
+          <div>
+            <p className="text-xs text-slate-600 mb-1.5">RFP 附件</p>
+            <AttachmentList
+              attachments={rfpAttachments}
+              onChange={readOnly ? null : onRfpChange}
+              readOnly={readOnly}
+            />
+          </div>
+        )}
 
         <div>
           <p className="text-xs text-slate-600 mb-1.5">料號編號</p>
@@ -9049,8 +9363,8 @@ function MaterialCodeSection({ status, materialCode, onChange, onCodeChange }) {
             </div>
           ) : (
             <div
-              onClick={() => { setTempCode(materialCode || ''); setEditing(true); }}
-              className="text-sm cursor-text hover:bg-slate-50 px-2 py-1.5 rounded border border-slate-200 min-h-[2rem]"
+              onClick={() => { if (!readOnly) { setTempCode(materialCode || ''); setEditing(true); } }}
+              className={`text-sm px-2 py-1.5 rounded border border-slate-200 min-h-[2rem] ${readOnly ? '' : 'cursor-text hover:bg-slate-50'}`}
             >
               {materialCode ? (
                 <span className="font-mono text-emerald-700 font-medium">{materialCode}</span>

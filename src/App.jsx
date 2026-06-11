@@ -46,10 +46,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.95.0';
-const BUILD_ID = '20260609-2400';
+const APP_VERSION = 'v0.96.0';
+const BUILD_ID = '20260610-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.96.0',
+    date: '2026-06-10',
+    changes: [
+      '🎨 登入頁全新玻璃擬態（glassmorphism）設計',
+      '深色漸層背景 + 紅／藍／琥珀三色光暈',
+      '毛玻璃半透明卡片（backdrop-blur）',
+      '輸入框聚焦藍色光圈、登入按鈕漸層 + hover 微放大動效',
+    ],
+  },
   {
     version: 'v0.95.0',
     date: '2026-06-09',
@@ -10942,11 +10952,28 @@ function LoginScreen({ onLogin }) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-lg max-w-sm w-full p-8">
+    <div className="min-h-screen relative flex items-center justify-center p-4 overflow-hidden"
+      style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 40%, #334155 100%)' }}>
+      {/* 背景光暈 */}
+      <div className="absolute top-[-10%] left-[-5%] w-96 h-96 rounded-full opacity-30 blur-3xl pointer-events-none"
+        style={{ background: 'radial-gradient(circle, #dc2626 0%, transparent 70%)' }} />
+      <div className="absolute bottom-[-15%] right-[-5%] w-[28rem] h-[28rem] rounded-full opacity-25 blur-3xl pointer-events-none"
+        style={{ background: 'radial-gradient(circle, #3b82f6 0%, transparent 70%)' }} />
+      <div className="absolute top-[40%] right-[20%] w-72 h-72 rounded-full opacity-20 blur-3xl pointer-events-none"
+        style={{ background: 'radial-gradient(circle, #f59e0b 0%, transparent 70%)' }} />
+
+      {/* 玻璃卡片 */}
+      <div className="relative max-w-sm w-full rounded-2xl p-8 transition-transform duration-300"
+        style={{
+          background: 'rgba(255, 255, 255, 0.85)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          border: '1px solid rgba(255, 255, 255, 0.5)',
+          boxShadow: '0 20px 60px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.6)',
+        }}>
         <div className="text-center mb-6">
           <img src={COMART_LOGO_BASE64} alt="COMART" className="h-8 mx-auto mb-3" />
-          <h1 className="text-base font-medium text-slate-900">產品進度管理系統</h1>
+          <h1 className="text-base font-semibold text-slate-900">產品進度管理系統</h1>
           <p className="text-xs text-slate-500 mt-1">請登入以繼續</p>
         </div>
 
@@ -10959,7 +10986,13 @@ function LoginScreen({ onLogin }) {
               onChange={(e) => { setUsername(e.target.value); setError(''); }}
               onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
               autoFocus
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+              className="w-full px-3 py-2 text-sm rounded-lg focus:outline-none transition-all duration-200"
+              style={{
+                background: 'rgba(255, 255, 255, 0.7)',
+                border: '1px solid rgba(148, 163, 184, 0.4)',
+              }}
+              onFocus={(e) => { e.target.style.border = '1px solid rgba(59, 130, 246, 0.6)'; e.target.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.12)'; }}
+              onBlur={(e) => { e.target.style.border = '1px solid rgba(148, 163, 184, 0.4)'; e.target.style.boxShadow = 'none'; }}
             />
           </div>
           <div>
@@ -10970,7 +11003,13 @@ function LoginScreen({ onLogin }) {
                 value={password}
                 onChange={(e) => { setPassword(e.target.value); setError(''); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
-                className="w-full px-3 py-2 pr-9 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+                className="w-full px-3 py-2 pr-9 text-sm rounded-lg focus:outline-none transition-all duration-200"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.7)',
+                  border: '1px solid rgba(148, 163, 184, 0.4)',
+                }}
+                onFocus={(e) => { e.target.style.border = '1px solid rgba(59, 130, 246, 0.6)'; e.target.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.12)'; }}
+                onBlur={(e) => { e.target.style.border = '1px solid rgba(148, 163, 184, 0.4)'; e.target.style.boxShadow = 'none'; }}
               />
               <button
                 onClick={() => setShowPassword(!showPassword)}
@@ -10983,12 +11022,17 @@ function LoginScreen({ onLogin }) {
           </div>
 
           {error && (
-            <p className="text-xs text-rose-600 bg-rose-50 p-2 rounded border border-rose-100">{error}</p>
+            <p className="text-xs text-rose-600 p-2 rounded-lg"
+              style={{ background: 'rgba(254, 226, 226, 0.8)', border: '1px solid rgba(252, 165, 165, 0.5)' }}>{error}</p>
           )}
 
           <button
             onClick={handleSubmit}
-            className="w-full bg-slate-900 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-800 transition"
+            className="w-full text-white py-2.5 rounded-lg text-sm font-medium transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+            style={{
+              background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+              boxShadow: '0 4px 16px rgba(15, 23, 42, 0.4)',
+            }}
           >
             登入
           </button>

@@ -46,10 +46,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.97.0';
-const BUILD_ID = '20260610-1100';
+const APP_VERSION = 'v0.98.0';
+const BUILD_ID = '20260610-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.98.0',
+    date: '2026-06-10',
+    changes: [
+      '🎨 產品詳情頁新增「快速導覽列」：頂部固定一排按鈕（進度/設計圖/DFM/樣品/手板/模具/試模/料號/費用）',
+      '點按鈕平滑捲動到該區塊，不用再滾半天找',
+      '產品詳情 modal 升級：背景毛玻璃模糊 + 開啟淡入縮放動畫 + 更深的陰影質感',
+    ],
+  },
   {
     version: 'v0.97.0',
     date: '2026-06-10',
@@ -3531,8 +3540,15 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
-      <div className="bg-white w-full sm:max-w-3xl sm:rounded-xl min-h-screen sm:min-h-0 sm:max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-40 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
+      style={{ background: 'rgba(15, 23, 42, 0.45)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }}>
+      <div className="bg-white w-full sm:max-w-3xl sm:rounded-xl min-h-screen sm:min-h-0 sm:max-h-[92vh] flex flex-col"
+        style={{
+          animation: 'pdModalIn 0.22s cubic-bezier(0.16, 1, 0.3, 1)',
+          boxShadow: '0 24px 64px rgba(15, 23, 42, 0.3)',
+        }}>
+        <style>{`@keyframes pdModalIn { from { opacity: 0; transform: scale(0.97) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+        #pd-progress, #pd-design, #pd-dfm, #pd-samples, #pd-proto, #pd-mould, #pd-trial, #pd-code, #pd-cost { scroll-margin-top: 52px; }`}</style>
         {/* 返回按鈕列（從其他面板跳來才顯示） */}
         {openFrom && onReturn && (() => {
           const backLabels = {
@@ -3672,6 +3688,34 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* 快速導覽列 */}
+          <div className="sticky top-0 z-20 -mx-5 -mt-5 px-5 pt-3 pb-2.5 flex items-center gap-1.5 overflow-x-auto"
+            style={{
+              background: 'rgba(255, 255, 255, 0.85)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              borderBottom: '1px solid rgba(226, 232, 240, 0.8)',
+            }}>
+            {[
+              ['pd-progress', '進度'],
+              ['pd-design', '設計圖'],
+              ['pd-dfm', 'DFM'],
+              ['pd-samples', '樣品'],
+              ['pd-proto', '手板'],
+              ['pd-mould', '模具'],
+              ['pd-trial', '試模'],
+              ['pd-code', '料號'],
+              ['pd-cost', '費用'],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="text-xs px-2.5 py-1 rounded-full whitespace-nowrap flex-shrink-0 text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-all duration-150"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <section>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3">
               <InfoField label="供應商" value={project.supplier} onSave={(v) => onUpdateField('supplier', v)} />
@@ -3736,7 +3780,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           />
 
 
-          <section>
+          <section id="pd-progress">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide">進度紀錄</h3>
               <div className="flex items-center gap-1.5">
@@ -3843,50 +3887,50 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
               </div>
             )}
           </section>
-          <DesignSection
+          <div id="pd-design"><DesignSection
             designs={project.designs || { ID: [], '3D': [], BOM: [] }}
             onChange={(d) => onUpdateField('designs', d)}
-          />
+          /></div>
 
-          <DFMSection
+          <div id="pd-dfm"><DFMSection
             hasDFM={project.hasDFM || false}
             dfmNotes={project.dfmNotes || ''}
             dfmAttachments={project.dfmAttachments || []}
             onToggle={(v) => onUpdateField('hasDFM', v)}
             onNotesChange={(v) => onUpdateField('dfmNotes', v)}
             onAttachmentsChange={(v) => onUpdateField('dfmAttachments', v)}
-          />
+          /></div>
 
-          <RelatedSamplesSection
+          <div id="pd-samples"><RelatedSamplesSection
             project={project}
             samples={samples}
             withdrawals={withdrawals}
             readOnly={isViewer}
-          />
+          /></div>
 
-          <PrototypeSection
+          <div id="pd-proto"><PrototypeSection
             orders={project.prototypeOrders || []}
             onChange={(o) => onUpdateField('prototypeOrders', o)}
             defaultSupplier={project.supplier}
             readOnly={isViewer}
             designs={project.designs}
-          />
+          /></div>
 
-          <MouldSection
+          <div id="pd-mould"><MouldSection
             orders={project.mouldOrders || []}
             onChange={(o) => onUpdateField('mouldOrders', o)}
             defaultSupplier={project.supplier}
             readOnly={isViewer}
-          />
+          /></div>
 
-          <TrialSection
+          <div id="pd-trial"><TrialSection
             trialRuns={project.trialRuns || []}
             trialNotes={project.trialNotes || ''}
             onChangeRuns={(r) => onUpdateField('trialRuns', r)}
             onChangeNotes={(v) => onUpdateField('trialNotes', v)}
-          />
+          /></div>
 
-          <MaterialCodeSection
+          <div id="pd-code"><MaterialCodeSection
             status={project.materialCodeStatus || '未申請'}
             materialCode={project.materialCodeNumber || ''}
             rfpAttachments={project.rfpAttachments || []}
@@ -3896,15 +3940,15 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             readOnly={isViewer}
             onGenerateRFP={() => setShowRFP(true)}
             hasDraft={!!project.rfpDraft}
-          />
+          /></div>
 
           {/* 開發費用摘要 */}
-          <DevCostSection
+          <div id="pd-cost"><DevCostSection
             project={project}
             isViewer={isViewer}
             onUpdateField={onUpdateField}
             samples={samples}
-          />
+          /></div>
 
           <section>
             <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide mb-2">備註 / 特色</h3>

@@ -46,10 +46,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.00.0';
-const BUILD_ID = '20260610-1400';
+const APP_VERSION = 'v1.01.0';
+const BUILD_ID = '20260610-1500';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.01.0',
+    date: '2026-06-10',
+    changes: [
+      '🎨 進度紀錄時間軸視覺：左側垂直時間線串起所有進度，最新進度藍色發光圓點，歷史紀錄灰色圓點',
+      '🎉 Toast 通知：儲存成功時右下角浮出「✓ 已儲存」自動消失',
+      '儲存失敗也改為 Toast 提示（不再跳 alert）',
+    ],
+  },
   {
     version: 'v1.00.0',
     date: '2026-06-10',
@@ -1521,6 +1530,13 @@ export default function ProductRoadmap() {
   const [withdrawals, setWithdrawals] = useState([]);
   const [exhibitions, setExhibitions] = useState([]);
   const [saveStatus, setSaveStatus] = useState('idle');
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+  const showToast = (msg, icon = '✓') => {
+    setToast({ msg, icon, key: Date.now() });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 1800);
+  };
   const [isLoading, setIsLoading] = useState(true);
 
   // === 攔截全頁拖放，避免使用者把檔案放在拖放區外時瀏覽器跳走 ===
@@ -1766,11 +1782,12 @@ export default function ProductRoadmap() {
       });
       await setDoc(doc(db, PROJECTS_COL, String(cleaned.id)), cleaned);
       setSaveStatus('saved');
+      showToast('已儲存');
       setTimeout(() => setSaveStatus('idle'), 1500);
     } catch (e) {
       console.error('雲端儲存失敗:', e);
       setSaveStatus('idle');
-      alert('雲端儲存失敗：' + e.message);
+      showToast('儲存失敗', '✕');
     }
   };
 
@@ -2277,7 +2294,23 @@ export default function ProductRoadmap() {
         @keyframes modalIn { from { opacity: 0; transform: scale(0.97) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
         .modal-anim { animation: modalFade 0.15s ease-out; }
         .modal-anim > div { animation: modalIn 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes toastIn { from { opacity: 0; transform: translateY(12px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
       `}</style>
+      {toast && (
+        <div key={toast.key}
+          className="fixed bottom-5 right-5 z-[100] flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm pointer-events-none"
+          style={{
+            background: 'rgba(15, 23, 42, 0.88)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            color: 'white',
+            boxShadow: '0 8px 28px rgba(15, 23, 42, 0.3)',
+            animation: 'toastIn 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+          }}>
+          <span className={toast.icon === '✕' ? 'text-rose-400' : 'text-emerald-400'}>{toast.icon}</span>
+          <span>{toast.msg}</span>
+        </div>
+      )}
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
@@ -3843,9 +3876,16 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             {updates.length === 0 && !showAddUpdate ? (
               <p className="text-sm text-slate-400 py-4 text-center bg-slate-50 rounded-lg">尚無更新紀錄</p>
             ) : (
-              <div className="space-y-2.5">
+              <div className="relative pl-6">
+                {/* 時間軸垂直線 */}
+                <div className="absolute left-[7px] top-3 bottom-3 w-px"
+                  style={{ background: 'linear-gradient(to bottom, #93c5fd, #e2e8f0 40%, #f1f5f9)' }} />
+                <div className="space-y-2.5">
                 {latest && (
-                  <UpdateCard
+                  <div className="relative">
+                    <span className="absolute w-[9px] h-[9px] rounded-full bg-blue-500"
+                      style={{ left: '-21px', top: '16px', boxShadow: '0 0 0 3px rgba(191, 219, 254, 0.8), 0 0 10px rgba(59, 130, 246, 0.4)' }} />
+                    <UpdateCard
                     update={latest}
                     isLatest
                     isEditing={editingUpdateIdx === 0}
@@ -3857,7 +3897,8 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     onAddUpdate={isViewer ? null : onAddUpdate}
                     onSetFollowUpDate={isViewer ? null : handleSetFollowUpDate}
                     currentUser={currentUser}
-                  />
+                    />
+                  </div>
                 )}
 
                 {history.length > 0 && (
@@ -3871,8 +3912,10 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                 )}
 
                 {showHistory && history.map((u, i) => (
-                  <UpdateCard
-                    key={i}
+                  <div key={i} className="relative">
+                    <span className="absolute w-[7px] h-[7px] rounded-full bg-slate-300"
+                      style={{ left: '-20px', top: '17px', boxShadow: '0 0 0 2px rgba(241, 245, 249, 1)' }} />
+                    <UpdateCard
                     update={u}
                     isLatest={false}
                     isEditing={editingUpdateIdx === i + 1}
@@ -3884,8 +3927,10 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     onAddUpdate={isViewer ? null : onAddUpdate}
                     onSetFollowUpDate={isViewer ? null : handleSetFollowUpDate}
                     currentUser={currentUser}
-                  />
+                    />
+                  </div>
                 ))}
+                </div>
               </div>
             )}
           </section>

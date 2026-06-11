@@ -46,10 +46,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.98.0';
-const BUILD_ID = '20260610-1200';
+const APP_VERSION = 'v0.99.0';
+const BUILD_ID = '20260610-1300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.99.0',
+    date: '2026-06-10',
+    changes: [
+      '🎨 主頁產品卡片質感升級：柔和多層陰影、滑過浮起 + 陰影加深',
+      '產品圖滑過微放大（zoom 動效）',
+      '產品名加大加粗、料號改等寬字體，視覺層次更清晰',
+      '移除產品詳情頁快速導覽列（v0.98 加入，使用回饋後移除）',
+    ],
+  },
   {
     version: 'v0.98.0',
     date: '2026-06-10',
@@ -2929,16 +2939,22 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
     >
     <button
       onClick={onClick}
-      className={`w-full text-left bg-white rounded-xl border border-slate-200 p-4 hover:border-slate-300 hover:shadow-sm transition group ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+      className={`w-full text-left bg-white rounded-2xl p-4 transition-all duration-200 ease-out group hover:-translate-y-0.5 ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+      style={{
+        border: '1px solid rgba(226, 232, 240, 0.9)',
+        boxShadow: '0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.03)',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 12px 28px rgba(15, 23, 42, 0.1), 0 2px 8px rgba(15, 23, 42, 0.06)'; e.currentTarget.style.border = '1px solid rgba(203, 213, 225, 1)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.03)'; e.currentTarget.style.border = '1px solid rgba(226, 232, 240, 0.9)'; }}
     >
       <div className="flex items-start gap-3">
-        <div className="flex-shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-lg bg-white border border-slate-200 overflow-hidden flex items-center justify-center">
+        <div className="flex-shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-white border border-slate-100 overflow-hidden flex items-center justify-center">
           {mainImage ? (
             <StorageImage
               src={mainImage.url || mainImage.dataUrl}
               path={mainImage.path}
               alt={project.name}
-              className="w-full h-full object-contain"
+              className="w-full h-full object-contain transition-transform duration-300 ease-out group-hover:scale-110"
               style={mainImage.fit === 'cover' ? { objectFit: 'cover' } : undefined}
             />
           ) : (
@@ -2950,8 +2966,8 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
           <div className="flex items-start justify-between gap-3 mb-2">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap mb-1">
-                <h3 className="text-sm font-medium text-slate-900 line-clamp-1">{project.name}</h3>
-                {project.code && <span className="text-xs text-slate-400">{project.code}</span>}
+                <h3 className="text-[15px] font-semibold text-slate-900 line-clamp-1 tracking-tight">{project.name}</h3>
+                {project.code && <span className="text-[11px] font-mono text-slate-400">{project.code}</span>}
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className={`text-xs px-2 py-0.5 rounded border ${cfg}`}>{project.status}</span>
@@ -3547,8 +3563,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           animation: 'pdModalIn 0.22s cubic-bezier(0.16, 1, 0.3, 1)',
           boxShadow: '0 24px 64px rgba(15, 23, 42, 0.3)',
         }}>
-        <style>{`@keyframes pdModalIn { from { opacity: 0; transform: scale(0.97) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-        #pd-progress, #pd-design, #pd-dfm, #pd-samples, #pd-proto, #pd-mould, #pd-trial, #pd-code, #pd-cost { scroll-margin-top: 52px; }`}</style>
+        <style>{`@keyframes pdModalIn { from { opacity: 0; transform: scale(0.97) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }`}</style>
         {/* 返回按鈕列（從其他面板跳來才顯示） */}
         {openFrom && onReturn && (() => {
           const backLabels = {
@@ -3688,34 +3703,6 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          {/* 快速導覽列 */}
-          <div className="sticky top-0 z-20 -mx-5 -mt-5 px-5 pt-3 pb-2.5 flex items-center gap-1.5 overflow-x-auto"
-            style={{
-              background: 'rgba(255, 255, 255, 0.85)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
-              borderBottom: '1px solid rgba(226, 232, 240, 0.8)',
-            }}>
-            {[
-              ['pd-progress', '進度'],
-              ['pd-design', '設計圖'],
-              ['pd-dfm', 'DFM'],
-              ['pd-samples', '樣品'],
-              ['pd-proto', '手板'],
-              ['pd-mould', '模具'],
-              ['pd-trial', '試模'],
-              ['pd-code', '料號'],
-              ['pd-cost', '費用'],
-            ].map(([id, label]) => (
-              <button
-                key={id}
-                onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                className="text-xs px-2.5 py-1 rounded-full whitespace-nowrap flex-shrink-0 text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-all duration-150"
-              >
-                {label}
-              </button>
-            ))}
-          </div>
           <section>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3">
               <InfoField label="供應商" value={project.supplier} onSave={(v) => onUpdateField('supplier', v)} />

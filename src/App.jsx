@@ -46,10 +46,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.99.0';
-const BUILD_ID = '20260610-1300';
+const APP_VERSION = 'v1.00.0';
+const BUILD_ID = '20260610-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.00.0',
+    date: '2026-06-10',
+    changes: [
+      '🎨 全系統 26 個彈窗統一升級：背景毛玻璃模糊 + 淡入動畫',
+      '彈窗卡片開啟時平滑縮放進場（提醒、樣品庫、RFP、新增產品、標籤管理等全部適用）',
+      '🎉 系統正式邁入 v1.0！',
+    ],
+  },
   {
     version: 'v0.99.0',
     date: '2026-06-10',
@@ -2263,6 +2272,12 @@ export default function ProductRoadmap() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 antialiased">
+      <style>{`
+        @keyframes modalFade { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes modalIn { from { opacity: 0; transform: scale(0.97) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+        .modal-anim { animation: modalFade 0.15s ease-out; }
+        .modal-anim > div { animation: modalIn 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+      `}</style>
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
@@ -3320,7 +3335,7 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-start justify-center p-4 overflow-y-auto" onPaste={handlePaste}>
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/60 z-50 flex items-start justify-center p-4 overflow-y-auto" onPaste={handlePaste}>
       <div className="bg-white w-full max-w-3xl rounded-xl shadow-xl my-4">
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 sticky top-0 bg-white z-10 rounded-t-xl">
           <h2 className="text-sm font-semibold text-slate-800">產生 RFP</h2>
@@ -4480,7 +4495,7 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/80 z-[80] flex items-center justify-center p-4">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/80 z-[80] flex items-center justify-center p-4">
       <div className="bg-white rounded-xl max-w-2xl w-full p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-medium">裁剪圖片</h3>
@@ -4522,7 +4537,7 @@ function SampleImageGalleryModal({ images, initialIndex = 0, onClose }) {
   const img = images[current];
   const isVid = img?.isVideo || (img?.type && img.type.startsWith('video/'));
   return (
-    <div className="fixed inset-0 bg-slate-900/90 z-[70] flex flex-col items-center justify-center" onClick={onClose}>
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/90 z-[70] flex flex-col items-center justify-center" onClick={onClose}>
       {/* 關閉 */}
       <button onClick={onClose} className="absolute top-4 right-4 p-2 text-white/70 hover:text-white bg-slate-800/50 rounded-full">
         <X className="w-5 h-5" />
@@ -4921,7 +4936,7 @@ function ProductImagesSection({ images, onChange }) {
 
       {previewIdx !== null && images[previewIdx] && (
         <div
-          className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
+          className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
           onClick={() => setPreviewIdx(null)}
         >
           <StorageImage src={getImgUrl(images[previewIdx])} path={images[previewIdx].path} alt={images[previewIdx].name} className="max-w-full max-h-full rounded" />
@@ -5070,7 +5085,7 @@ function PhaseTimeline({ project, onOverride }) {
 
 function PhasePickerModal({ currentPhase, autoPhase, onSelect, onClose }) {
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl max-w-md w-full p-5">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-medium">選擇階段</h3>
@@ -5260,7 +5275,7 @@ function FilePreviewModal({ file, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/80 z-[60] flex items-center justify-center p-4" onClick={onClose}>
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/80 z-[60] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-xl max-w-5xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between p-3 border-b border-slate-100">
           <div className="flex items-center gap-2 min-w-0">
@@ -5900,7 +5915,7 @@ function DesignSection({ designs, onChange }) {
 
 function DesignVersionForm({ type, data, onChange, onCancel, onSave }) {
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl max-w-md w-full p-5">
         <h3 className="text-sm font-medium mb-4">新增 / 編輯 {type} 版本</h3>
         <div className="space-y-3">
@@ -6587,7 +6602,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-5xl w-full p-4 sm:p-5 my-auto max-h-[95vh] flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -7141,7 +7156,7 @@ function ExhibitionEditModal({ exhibition, onSave, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/70 z-[60] flex items-center justify-center p-3">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/70 z-[60] flex items-center justify-center p-3">
       <div className="bg-white rounded-xl max-w-sm w-full p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-base font-medium">{exhibition.isNew ? '新增' : '編輯'}展覽專案</h3>
@@ -7226,7 +7241,7 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose }
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/70 z-[60] flex items-start sm:items-center justify-center p-3 overflow-y-auto">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/70 z-[60] flex items-start sm:items-center justify-center p-3 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-md w-full p-4 my-auto max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-base font-medium">加入樣品到「{exhibition?.name}」</h3>
@@ -7484,7 +7499,7 @@ function CreateBundleModal({ exhibition, samples, onConfirm, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/70 z-[60] flex items-start sm:items-center justify-center p-3 overflow-y-auto">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/70 z-[60] flex items-start sm:items-center justify-center p-3 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-md w-full p-4 my-auto max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-base font-medium">建立組合品</h3>
@@ -7660,7 +7675,7 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/70 z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/70 z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div
         className="bg-white rounded-xl max-w-lg w-full p-4 sm:p-5 my-auto max-h-[95vh] overflow-y-auto"
         onMouseEnter={() => setPasteHint(true)}
@@ -8102,7 +8117,7 @@ function WithdrawalModal({ sample, currentUser, onSave, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/70 z-[60] flex items-center justify-center p-3">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/70 z-[60] flex items-center justify-center p-3">
       <div className="bg-white rounded-xl max-w-sm w-full p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-base font-medium">領用樣品</h3>
@@ -8210,7 +8225,7 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-40 flex items-center justify-center p-2 sm:p-4">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-40 flex items-center justify-center p-2 sm:p-4">
       <div className="bg-white rounded-xl max-w-2xl w-full p-4 sm:p-5 flex flex-col" style={{height:'min(90vh,640px)'}}>
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -8626,7 +8641,7 @@ function EmailImportModal({ project, onImport, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/70 z-[60] flex items-center justify-center p-3">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/70 z-[60] flex items-center justify-center p-3">
       <div className="bg-white rounded-xl max-w-lg w-full p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -8776,7 +8791,7 @@ function PrototypeOverviewModal({ projects, onClose, onJumpToProject }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-5xl w-full p-4 sm:p-5 my-auto max-h-[95vh] flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -9108,7 +9123,7 @@ function OrderForm({ kind, data, onChange, onCancel, onSave, showStorage, showRe
   const idVersions = (designs?.ID || []).map(v => v.version).filter(Boolean);
   const threeDVersions = (designs?.['3D'] || []).map(v => v.version).filter(Boolean);
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-lg w-full p-5 my-auto">
         <h3 className="text-sm font-medium mb-4">新增 / 編輯 {kind}訂單</h3>
         <div className="space-y-3">
@@ -9419,7 +9434,7 @@ function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes }) {
 
 function TrialRunForm({ data, availableRounds, onChange, onCancel, onSave }) {
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl max-w-md w-full p-5">
         <h3 className="text-sm font-medium mb-4">試模紀錄</h3>
         <div className="space-y-3">
@@ -10221,7 +10236,7 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
 
       {previewImg && (
         <div
-          className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
+          className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
           onClick={() => setPreviewImg(null)}
         >
           <StorageImage src={previewImg.url || previewImg.dataUrl} path={previewImg.path} alt={previewImg.name} className="max-w-full max-h-full rounded" />
@@ -10229,7 +10244,7 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
       )}
       {inlineImgPreview && (
         <div
-          className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
+          className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4"
           onClick={() => setInlineImgPreview(null)}
         >
           <img src={inlineImgPreview} alt="預覽" className="max-w-full max-h-full rounded shadow-lg" />
@@ -10325,7 +10340,7 @@ function CodeEditModal({ kind, item, existingCodes, onSave, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/70 z-[70] flex items-center justify-center p-3">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/70 z-[70] flex items-center justify-center p-3">
       <div className="bg-white rounded-xl max-w-md w-full p-5">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-base font-medium">
@@ -10496,7 +10511,7 @@ function ProductCodeWizard({ existingCodes, categoryCodes = DEFAULT_CATEGORY_COD
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 z-[60] flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/60 z-[60] flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-2xl w-full p-5 my-auto max-h-[95vh] flex flex-col">
         {/* 標題 */}
         <div className="flex items-center justify-between mb-2">
@@ -10883,7 +10898,7 @@ function NewProjectModal({ onSave, onClose, existingCodes = [], categoryCodes = 
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
       <div className="bg-white w-full sm:max-w-xl sm:rounded-xl min-h-screen sm:min-h-0 sm:max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <h2 className="text-base font-medium">新增專案</h2>
@@ -11078,7 +11093,7 @@ function VersionHistoryModal({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-lg w-full p-5 my-auto max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -11245,7 +11260,7 @@ function TagManagerModal({ allTags, projects, onDelete, onClose }) {
   });
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-md w-full p-5 my-auto max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -11316,7 +11331,7 @@ function TagManagerModal({ allTags, projects, onDelete, onClose }) {
 
 function ConfirmDialog({ message, onConfirm, onCancel }) {
   return (
-    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl max-w-sm w-full p-5">
         <div className="flex items-start gap-3 mb-4">
           <div className="w-9 h-9 rounded-full bg-rose-100 flex items-center justify-center flex-shrink-0">

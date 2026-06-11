@@ -46,10 +46,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v0.96.0';
-const BUILD_ID = '20260610-1000';
+const APP_VERSION = 'v0.97.0';
+const BUILD_ID = '20260610-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v0.97.0',
+    date: '2026-06-10',
+    changes: [
+      '🎉 全新「看板檢視」：頂部 ▦ 看板按鈕切換',
+      '五個階段欄（規劃/EVT/DVT/PVT/MP），玻璃擬態設計，各階段專屬色彩光暈',
+      '管理員可直接拖拉卡片到其他欄位改變階段（= 設定手動階段覆蓋）',
+      '卡片懸浮上浮動效、顯示產品圖/料號/狀態/最新更新日期',
+      '點卡片開啟產品詳情；看板偏好記憶在瀏覽器',
+    ],
+  },
   {
     version: 'v0.96.0',
     date: '2026-06-10',
@@ -1773,6 +1784,15 @@ export default function ProductRoadmap() {
   const [groupMode, setGroupMode] = useState(() => {
     try { return localStorage.getItem('comart_groupMode') || 'none'; } catch { return 'none'; }
   });
+  const [kanbanMode, setKanbanMode] = useState(() => {
+    try { return localStorage.getItem('comart_kanbanMode') === '1'; } catch { return false; }
+  });
+  const toggleKanban = () => {
+    setKanbanMode(v => {
+      try { localStorage.setItem('comart_kanbanMode', v ? '0' : '1'); } catch {}
+      return !v;
+    });
+  };
   // 已折疊的群組 key set
   const [collapsedGroups, setCollapsedGroups] = useState(new Set());
   const [selectedProject, setSelectedProject] = useState(null);
@@ -2392,7 +2412,20 @@ export default function ProductRoadmap() {
               )}
             </div>
 
-            <div className="flex-shrink-0">
+            <div className="flex-shrink-0 flex items-center gap-1.5">
+              <button
+                onClick={toggleKanban}
+                title={kanbanMode ? '切回列表檢視' : '切換到看板檢視（可拖拉改階段）'}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border transition whitespace-nowrap ${
+                  kanbanMode
+                    ? 'bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100'
+                    : 'text-slate-500 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span className="text-base leading-none">▦</span>
+                <span className="text-xs">{kanbanMode ? '看板' : '看板'}</span>
+              </button>
+              {!kanbanMode && (
               <button
                 onClick={cycleGroupMode}
                 title={`目前：${groupModeLabel[groupMode]}，點擊切換`}
@@ -2405,6 +2438,7 @@ export default function ProductRoadmap() {
                 <span className="text-base leading-none">⊞</span>
                 <span className="text-xs">{groupModeLabel[groupMode]}</span>
               </button>
+              )}
             </div>
           </div>
 
@@ -2448,6 +2482,15 @@ export default function ProductRoadmap() {
           <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
             <p className="text-slate-400 text-sm">沒有符合條件的專案</p>
           </div>
+        ) : kanbanMode ? (
+          <KanbanBoard
+            projects={filteredProjects}
+            onCardClick={(p) => setSelectedProject(p)}
+            onPhaseChange={isAdmin ? (projectId, phase) => {
+              const target = projects.find(p => String(p.id) === String(projectId));
+              if (target) handleUpdateProjectField(target.id, 'phaseOverride', phase);
+            } : null}
+          />
         ) : (
           <div className="space-y-3">
             {groupedProjects.map(group => {
@@ -2623,6 +2666,125 @@ export default function ProductRoadmap() {
           onClose={() => setShowTagManager(false)}
         />
       )}
+    </div>
+  );
+}
+
+// ── 看板檢視（拖拉改階段）────────────────────────────────────
+const KANBAN_PHASES = ['規劃', 'EVT', 'DVT', 'PVT', 'MP'];
+const KANBAN_COLORS = {
+  '規劃': { glow: 'rgba(148, 163, 184, 0.5)', accent: '#64748b', bg: 'rgba(241, 245, 249, 0.6)' },
+  'EVT':  { glow: 'rgba(59, 130, 246, 0.5)',  accent: '#3b82f6', bg: 'rgba(219, 234, 254, 0.5)' },
+  'DVT':  { glow: 'rgba(139, 92, 246, 0.5)',  accent: '#8b5cf6', bg: 'rgba(237, 233, 254, 0.5)' },
+  'PVT':  { glow: 'rgba(245, 158, 11, 0.5)',  accent: '#f59e0b', bg: 'rgba(254, 243, 199, 0.5)' },
+  'MP':   { glow: 'rgba(16, 185, 129, 0.5)',  accent: '#10b981', bg: 'rgba(209, 250, 229, 0.5)' },
+};
+
+function KanbanCard({ project, onClick, draggable, onDragStart }) {
+  const mainImg = (project.productImages || [])[0];
+  const latest = (project.updates || [])[0];
+  return (
+    <div
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onClick={onClick}
+      className="group rounded-xl p-3 cursor-pointer transition-all duration-200 hover:-translate-y-1"
+      style={{
+        background: 'rgba(255, 255, 255, 0.8)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        border: '1px solid rgba(255, 255, 255, 0.7)',
+        boxShadow: '0 2px 10px rgba(15, 23, 42, 0.06)',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 10px 28px rgba(15, 23, 42, 0.14)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 10px rgba(15, 23, 42, 0.06)'; }}
+    >
+      <div className="flex gap-2.5">
+        {mainImg && (
+          <StorageImage
+            src={mainImg.url || mainImg.dataUrl}
+            path={mainImg.path}
+            alt={project.name}
+            className="w-12 h-12 object-contain rounded-lg flex-shrink-0 bg-white"
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-medium text-slate-800 leading-snug line-clamp-2">{project.name}</p>
+          {project.code && <p className="text-[10px] font-mono text-slate-400 mt-0.5">{project.code}</p>}
+        </div>
+      </div>
+      <div className="flex items-center justify-between mt-2">
+        {project.status && (
+          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${STATUS_COLORS[project.status] || 'bg-slate-100 text-slate-500 border-slate-200'}`}>{project.status}</span>
+        )}
+        {latest && <span className="text-[10px] text-slate-400">{latest.date}</span>}
+      </div>
+    </div>
+  );
+}
+
+function KanbanBoard({ projects, onCardClick, onPhaseChange }) {
+  const [dragOver, setDragOver] = useState(null);
+
+  const columns = KANBAN_PHASES.map(phase => ({
+    phase,
+    items: projects.filter(p => getCurrentPhase(p) === phase),
+  }));
+
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: '60vh' }}>
+      {columns.map(({ phase, items }) => {
+        const c = KANBAN_COLORS[phase];
+        const isOver = dragOver === phase;
+        return (
+          <div
+            key={phase}
+            className="flex-shrink-0 w-64 rounded-2xl transition-all duration-200"
+            style={{
+              background: isOver ? c.bg : 'rgba(248, 250, 252, 0.7)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              border: isOver ? `1.5px dashed ${c.accent}` : '1px solid rgba(226, 232, 240, 0.8)',
+              boxShadow: isOver ? `0 0 24px ${c.glow}` : '0 1px 4px rgba(15, 23, 42, 0.04)',
+            }}
+            onDragOver={(e) => { if (onPhaseChange) { e.preventDefault(); setDragOver(phase); } }}
+            onDragLeave={() => setDragOver(null)}
+            onDrop={(e) => {
+              if (!onPhaseChange) return;
+              e.preventDefault();
+              const projectId = e.dataTransfer.getData('text/kanban-project');
+              if (projectId) onPhaseChange(projectId, phase);
+              setDragOver(null);
+            }}
+          >
+            {/* 欄位標題 */}
+            <div className="px-3.5 py-3 flex items-center justify-between sticky top-0">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full" style={{ background: c.accent, boxShadow: `0 0 8px ${c.glow}` }} />
+                <span className="text-sm font-semibold text-slate-700">{phase}</span>
+              </div>
+              <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+                style={{ background: c.bg, color: c.accent }}>{items.length}</span>
+            </div>
+            {/* 卡片 */}
+            <div className="px-2.5 pb-3 space-y-2 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 320px)' }}>
+              {items.length === 0 ? (
+                <div className="text-center py-8 text-[11px] text-slate-300">
+                  {onPhaseChange ? '拖拉卡片到這裡' : '無產品'}
+                </div>
+              ) : items.map(p => (
+                <KanbanCard
+                  key={p.id}
+                  project={p}
+                  draggable={!!onPhaseChange}
+                  onDragStart={(e) => e.dataTransfer.setData('text/kanban-project', String(p.id))}
+                  onClick={() => onCardClick(p)}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

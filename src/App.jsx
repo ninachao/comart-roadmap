@@ -46,10 +46,26 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.01.0';
-const BUILD_ID = '20260610-1500';
+const APP_VERSION = 'v1.03.0';
+const BUILD_ID = '20260615-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.03.0',
+    date: '2026-06-15',
+    changes: [
+      '🔧 修正已跟追對話框白屏：z-index 從 60 提升到 999，確保蓋過所有 stacking context',
+    ],
+  },
+  {
+    version: 'v1.02.0',
+    date: '2026-06-10',
+    changes: [
+      '🔧 修正提醒面板「已跟追」白屏：FollowUpDialog 元件在 v0.87 重寫 RFP 時被誤刪，已重建',
+      '對話框功能不變：標記已跟追 + 進度備註（選填）+ 下次跟追日期（選填）',
+      '全面掃描確認其他元件皆完整',
+    ],
+  },
   {
     version: 'v1.01.0',
     date: '2026-06-10',
@@ -4087,6 +4103,60 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           }}
         />
       )}
+    </div>
+  );
+}
+
+// ── 跟追完成對話框 ─────────────────────────────────────────────
+function FollowUpDialog({ currentUser, onComplete, onCancel }) {
+  const [text, setText] = useState('');
+  const [nextDate, setNextDate] = useState('');
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/40 z-[999] flex items-center justify-center p-4" style={{ backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', animation: 'modalFade 0.15s ease-out' }}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5"
+        style={{ boxShadow: '0 24px 64px rgba(15, 23, 42, 0.3)' }}>
+        <h3 className="text-sm font-semibold text-slate-800 mb-1">標記已跟追</h3>
+        <p className="text-xs text-slate-500 mb-4">有新進度可以順便記錄，沒有就直接按完成。</p>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-slate-600 mb-1 block">進度備註（選填）</label>
+            <textarea
+              value={text}
+              onChange={e => setText(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="例如：已寄信詢問 T2 樣品狀況..."
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-slate-600 mb-1 block">下次跟追日期（選填）</label>
+            <input
+              type="date"
+              value={nextDate}
+              onChange={e => setNextDate(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg transition"
+          >
+            取消
+          </button>
+          <button
+            onClick={() => onComplete({ text, nextFollowUpDate: nextDate })}
+            className="px-4 py-2 text-sm bg-slate-900 text-white rounded-lg hover:bg-slate-700 transition"
+          >
+            完成
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -46,10 +46,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.03.0';
-const BUILD_ID = '20260615-1000';
+const APP_VERSION = 'v1.04.0';
+const BUILD_ID = '20260615-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.04.0',
+    date: '2026-06-15',
+    changes: [
+      '🎉 已跟追流程全面重設計：按下後先選「有進度/沒進度」',
+      '選「有進度」→ 填進度後儲存，同步到產品進度紀錄，從提醒消失',
+      '選「沒進度」→ 直接標記完成，從提醒消失',
+      '對話框在提醒面板內直接操作，不需要跳到產品詳情',
+    ],
+  },
   {
     version: 'v1.03.0',
     date: '2026-06-15',
@@ -2697,12 +2707,24 @@ export default function ProductRoadmap() {
             if (targetUpdate) setFollowUpTrigger(targetUpdate);
             setShowReminders(false);
           }}
-          onMarkFollowedUp={(p, u) => {
-            const idx = (p.updates || []).findIndex(x => x.date === u.date && x.text === u.text);
-            if (idx < 0) return;
-            const newUpdates = [...(p.updates || [])];
-            newUpdates[idx] = { ...u, followedUp: true };
-            saveProjectToCloud({ ...p, updates: newUpdates });
+          onMarkFollowedUp={(p, u, text, nextFollowUpDate) => {
+            const allUpdates = [...(p.updates || [])];
+            const idx = allUpdates.findIndex(x => x.date === u.date && x.text === u.text);
+            if (idx >= 0) {
+              allUpdates[idx] = { ...allUpdates[idx], followedUp: true };
+            }
+            // 有填進度就新增一筆
+            if (text) {
+              allUpdates.unshift({
+                date: new Date().toISOString().split('T')[0],
+                text,
+                author: currentUser?.name || '',
+                followUpDate: nextFollowUpDate || null,
+                followedUp: false,
+              });
+            }
+            saveProjectToCloud({ ...p, updates: allUpdates });
+            setProjects(prev => prev.map(pr => pr.id === p.id ? { ...pr, updates: allUpdates } : pr));
           }}
           onClose={() => setShowReminders(false)}
           isAdmin={isAdmin}
@@ -4109,53 +4131,89 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
 
 // ── 跟追完成對話框 ─────────────────────────────────────────────
 function FollowUpDialog({ currentUser, onComplete, onCancel }) {
+  const [step, setStep] = useState('choose'); // 'choose' | 'update'
   const [text, setText] = useState('');
   const [nextDate, setNextDate] = useState('');
+  const today = new Date().toISOString().split('T')[0];
 
   return (
-    <div className="fixed inset-0 bg-slate-900/40 z-[999] flex items-center justify-center p-4" style={{ backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', animation: 'modalFade 0.15s ease-out' }}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5"
-        style={{ boxShadow: '0 24px 64px rgba(15, 23, 42, 0.3)' }}>
-        <h3 className="text-sm font-semibold text-slate-800 mb-1">標記已跟追</h3>
-        <p className="text-xs text-slate-500 mb-4">有新進度可以順便記錄，沒有就直接按完成。</p>
+    <div className="fixed inset-0 bg-slate-900/40 z-[999] flex items-center justify-center p-4"
+      style={{ backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', animation: 'modalFade 0.15s ease-out' }}>
+      <div className="bg-white rounded-xl w-full max-w-sm"
+        style={{ boxShadow: '0 24px 64px rgba(15, 23, 42, 0.3)', animation: 'modalIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
 
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-slate-600 mb-1 block">進度備註（選填）</label>
-            <textarea
-              value={text}
-              onChange={e => setText(e.target.value)}
-              rows={3}
-              autoFocus
-              placeholder="例如：已寄信詢問 T2 樣品狀況..."
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none"
-            />
+        {step === 'choose' ? (
+          /* ── 第一步：選擇有沒有進度 ── */
+          <div className="p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-slate-800">已跟追</h3>
+              <button onClick={onCancel} className="p-1 hover:bg-slate-100 rounded text-slate-400">✕</button>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">這次跟追有沒有新進度要記錄？</p>
+            <div className="space-y-2">
+              <button
+                onClick={() => setStep('update')}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-left transition-all duration-150 group"
+              >
+                <span className="text-xl">📝</span>
+                <div>
+                  <p className="text-sm font-medium text-slate-800 group-hover:text-blue-700">有，記錄進度</p>
+                  <p className="text-xs text-slate-400">新增一筆進度後標記已跟追</p>
+                </div>
+              </button>
+              <button
+                onClick={() => onComplete({ text: '', nextFollowUpDate: '' })}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 text-left transition-all duration-150 group"
+              >
+                <span className="text-xl">✓</span>
+                <div>
+                  <p className="text-sm font-medium text-slate-800 group-hover:text-emerald-700">沒有，直接完成</p>
+                  <p className="text-xs text-slate-400">標記已跟追，從提醒消失</p>
+                </div>
+              </button>
+            </div>
           </div>
-          <div>
-            <label className="text-xs text-slate-600 mb-1 block">下次跟追日期（選填）</label>
-            <input
-              type="date"
-              value={nextDate}
-              onChange={e => setNextDate(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
-            />
+        ) : (
+          /* ── 第二步：填進度 ── */
+          <div className="p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <button onClick={() => setStep('choose')} className="p-1 hover:bg-slate-100 rounded text-slate-400 text-xs">← 返回</button>
+              <h3 className="text-sm font-semibold text-slate-800">記錄進度</h3>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-slate-600 mb-1 block">進度內容 <span className="text-rose-500">*</span></label>
+                <textarea
+                  value={text}
+                  onChange={e => setText(e.target.value)}
+                  rows={4}
+                  autoFocus
+                  placeholder="例如：已寄樣品、T2 確認OK、等廠商報價..."
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-600 mb-1 block">下次跟追日期（選填）</label>
+                <input
+                  type="date"
+                  value={nextDate}
+                  onChange={e => setNextDate(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={onCancel} className="px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 rounded-lg transition">取消</button>
+              <button
+                onClick={() => { if (text.trim()) onComplete({ text: text.trim(), nextFollowUpDate: nextDate }); }}
+                disabled={!text.trim()}
+                className="px-4 py-2 text-sm bg-slate-900 text-white rounded-lg hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                儲存並完成
+              </button>
+            </div>
           </div>
-        </div>
-
-        <div className="flex justify-end gap-2 mt-5">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg transition"
-          >
-            取消
-          </button>
-          <button
-            onClick={() => onComplete({ text, nextFollowUpDate: nextDate })}
-            className="px-4 py-2 text-sm bg-slate-900 text-white rounded-lg hover:bg-slate-700 transition"
-          >
-            完成
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -8434,12 +8492,27 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
                       {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
                       <span className="text-xs text-slate-600 flex-1 truncate">— {u.text}</span>
                       {isAdmin && (
-                        <button onClick={() => { onJumpToProject(p, u); onClose(); }} className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0">
+                        <button
+                          onClick={() => setFollowUpTarget({ project: p, update: u })}
+                          className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0">
                           ✓ 已跟追
                         </button>
                       )}
                     </div>
                   ))}
+
+                  {/* 已跟追對話框（在提醒面板內直接操作） */}
+                  {followUpTarget && (
+                    <FollowUpDialog
+                      currentUser={null}
+                      onComplete={({ text, nextFollowUpDate }) => {
+                        const { project: p, update: u } = followUpTarget;
+                        onMarkFollowedUp(p, u, text.trim(), nextFollowUpDate);
+                        setFollowUpTarget(null);
+                      }}
+                      onCancel={() => setFollowUpTarget(null)}
+                    />
+                  )}
                 </div>
               )}
             </div>

@@ -46,10 +46,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.05.0';
-const BUILD_ID = '20260615-1200';
+const APP_VERSION = 'v1.06.0';
+const BUILD_ID = '20260615-1300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.06.0',
+    date: '2026-06-15',
+    changes: [
+      '🎉 提醒面板大幅簡化：刪除「久未更新進度」「管理」「跟蹤日曆」三個分頁',
+      '提醒面板現在只有一頁：上方跟追到期列表 + 下方整合的跟追日曆',
+      '🔧 修正重要 bug：在產品卡片直接更新進度後，該產品的舊跟追提醒會自動消失（有新進度=已追過）',
+      '鈴鐺紅點數字只計算跟追到期項目',
+    ],
+  },
   {
     version: 'v1.05.0',
     date: '2026-06-15',
@@ -2137,7 +2147,14 @@ export default function ProductRoadmap() {
     if (!isAdmin) return;
     const target = projects.find(p => p.id === projectId);
     if (!target) return;
-    const updated = { ...target, updates: [update, ...(target.updates || [])] };
+    const today = new Date().toISOString().split('T')[0];
+    // 既有進度中，所有「已到期、還沒標記跟追」的，因為現在有新進度了，自動標記為已跟追
+    const cleanedOld = (target.updates || []).map(u =>
+      (u.followUpDate && u.followUpDate <= today && !u.followedUp)
+        ? { ...u, followedUp: true }
+        : u
+    );
+    const updated = { ...target, updates: [update, ...cleanedOld] };
     saveProjectToCloud(updated);
     setSelectedProject(prev => prev && prev.id === projectId ? updated : prev);
   };
@@ -2401,9 +2418,9 @@ export default function ProductRoadmap() {
             >
               <span>🔔</span>
               <span className="hidden sm:inline text-xs">提醒</span>
-              {(staleProjects.length + overdueFollowUps.length) > 0 && (
+              {overdueFollowUps.length > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-[16px] h-4 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-0.5">
-                  {staleProjects.length + overdueFollowUps.length}
+                  {overdueFollowUps.length}
                 </span>
               )}
             </button>
@@ -8458,7 +8475,7 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
             <h3 className="text-base font-medium flex items-center gap-2">
               <span>🔔</span>提醒
               <span className="text-xs text-slate-400 font-normal">
-                ({staleProjects.length} 個久未更新進度 · {overdueFollowUps.length} 個跟蹤到期)
+                ({overdueFollowUps.length} 個跟追到期)
               </span>
             </h3>
           </div>
@@ -8467,322 +8484,186 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
           </button>
         </div>
 
-        {/* 分頁 */}
-        <div className="flex gap-1 mb-3 border-b border-slate-100 overflow-x-auto">
-          <button onClick={() => setTab('followup')} className={`px-3 py-2 text-sm font-medium transition border-b-2 whitespace-nowrap ${tab === 'followup' ? 'border-orange-500 text-orange-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-            🔔 跟追到期 ({overdueFollowUps.length})
-          </button>
-          <button onClick={() => setTab('calendar')} className={`px-3 py-2 text-sm font-medium transition border-b-2 whitespace-nowrap ${tab === 'calendar' ? 'border-blue-500 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-            📅 跟蹤日曆
-          </button>
-          <button onClick={() => setTab('stale')} className={`px-3 py-2 text-sm font-medium transition border-b-2 whitespace-nowrap ${tab === 'stale' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-            ⏰ 久未更新進度 ({staleProjects.length})
-          </button>
-          <button onClick={() => setTab('manage')} className={`px-3 py-2 text-sm font-medium transition border-b-2 whitespace-nowrap ${tab === 'manage' ? 'border-slate-500 text-slate-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-            ⚙ 管理
-          </button>
-        </div>
-
         <div className="flex-1 overflow-y-auto -mx-1 px-1">
-
-          {/* 需更新進度分頁 */}
-          {tab === 'stale' && (
-            <div>
-              <div className="flex justify-between items-center mb-2">
-                <p className="text-xs text-slate-500">以下產品超過 14 天沒有新增進度紀錄，可能有資訊沒有同步回來</p>
-                {staleProjects.length > 0 && (
-                  <button onClick={copyToWeChat} className="text-xs px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded hover:bg-amber-50 inline-flex items-center gap-1 flex-shrink-0">
-                    📋 複製傳 WeChat
-                  </button>
-                )}
-              </div>
-              {staleProjects.length === 0 ? (
-                <p className="text-center text-sm text-slate-400 py-8">目前沒有需要追蹤的產品 🎉</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {staleProjects.map(({ project: p, days, override }, i) => (
-                    <div key={i} className="bg-white border border-slate-200 rounded-lg px-3 py-2.5 flex items-center gap-2 flex-wrap">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium flex-shrink-0 ${
-                        override === 'include' ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                        (days || 0) >= 30 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-amber-50 text-amber-700 border-amber-200'
-                      }`}>
-                        {override === 'include' ? '手動追蹤' : days ? `${days}天` : '無紀錄'}
-                      </span>
-                      <button onClick={() => { onJumpToProject(p); onClose(); }} className="text-sm text-slate-800 hover:text-blue-700 hover:underline font-medium flex-1 min-w-0 truncate text-left">
-                        {p.name}
+          {/* 跟追到期列表 */}
+          <div>
+            <p className="text-xs text-slate-500 mb-2">以下是已到期、需要跟追的項目</p>
+            {overdueFollowUps.length === 0 ? (
+              <p className="text-center text-sm text-slate-400 py-6">沒有跟追到期的項目 🎉</p>
+            ) : (
+              <div className="space-y-1.5">
+                {overdueFollowUps.map(({ project: p, update: u }, i) => (
+                  <div key={i} className="bg-white border border-orange-200 bg-orange-50/30 rounded-lg px-3 py-2.5 flex items-baseline gap-2 flex-wrap">
+                    <span className="text-xs font-medium text-orange-700 flex-shrink-0">{u.followUpDate}</span>
+                    <button onClick={() => { onJumpToProject(p); onClose(); }} className="text-sm text-slate-800 hover:underline font-medium">
+                      {p.name}
+                    </button>
+                    {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
+                    <span className="text-xs text-slate-600 flex-1 truncate">— {u.text}</span>
+                    {isAdmin && (
+                      <button
+                        onClick={() => setFollowUpTarget({ project: p, update: u })}
+                        className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0">
+                        ✓ 已跟追
                       </button>
-                      {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
-                      <span className="text-xs text-slate-400">{p.status}</span>
-                      {isAdmin && (
-                        <button
-                          onClick={() => onSetOverride(p.id, 'exclude')}
-                          title="從追蹤清單移除"
-                          className="text-[10px] px-1.5 py-0.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded border border-transparent hover:border-rose-200 flex-shrink-0"
-                        >
-                          移除
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 跟追到期分頁 */}
-          {tab === 'followup' && (
-            <div>
-              {overdueFollowUps.length === 0 ? (
-                <p className="text-center text-sm text-slate-400 py-8">沒有跟追到期的項目 🎉</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {overdueFollowUps.map(({ project: p, update: u }, i) => (
-                    <div key={i} className="bg-white border border-orange-200 bg-orange-50/30 rounded-lg px-3 py-2.5 flex items-baseline gap-2 flex-wrap">
-                      <span className="text-xs font-medium text-orange-700 flex-shrink-0">{u.followUpDate}</span>
-                      <button onClick={() => { onJumpToProject(p); onClose(); }} className="text-sm text-slate-800 hover:underline font-medium">
-                        {p.name}
-                      </button>
-                      {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
-                      <span className="text-xs text-slate-600 flex-1 truncate">— {u.text}</span>
-                      {isAdmin && (
-                        <button
-                          onClick={() => setFollowUpTarget({ project: p, update: u })}
-                          className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0">
-                          ✓ 已跟追
-                        </button>
-                      )}
-                    </div>
-                  ))}
-
-                  {/* 已跟追對話框（在提醒面板內直接操作） */}
-                  {followUpTarget && (
-                    <FollowUpDialog
-                      currentUser={null}
-                      onComplete={({ text, nextFollowUpDate }) => {
-                        const { project: p, update: u } = followUpTarget;
-                        onMarkFollowedUp(p, u, text.trim(), nextFollowUpDate);
-                        setFollowUpTarget(null);
-                      }}
-                      onCancel={() => setFollowUpTarget(null)}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 管理清單分頁 */}
-          {/* 月曆分頁 */}
-          {tab === 'calendar' && (
-            <div>
-              {/* 月份導航 */}
-              <div className="flex items-center justify-between mb-3">
-                <button
-                  onClick={() => { const d = new Date(calYear, calMonth - 1); setCalYear(d.getFullYear()); setCalMonth(d.getMonth()); setSelectedDate(null); }}
-                  className="p-1.5 hover:bg-slate-100 rounded"
-                >
-                  <ChevronLeft className="w-4 h-4 text-slate-500" />
-                </button>
-                <span className="text-sm font-medium text-slate-700">
-                  {calYear} 年 {calMonth + 1} 月
-                </span>
-                <button
-                  onClick={() => { const d = new Date(calYear, calMonth + 1); setCalYear(d.getFullYear()); setCalMonth(d.getMonth()); setSelectedDate(null); }}
-                  className="p-1.5 hover:bg-slate-100 rounded"
-                >
-                  <ChevronRight className="w-4 h-4 text-slate-500" />
-                </button>
-              </div>
-
-              {/* 星期標題 */}
-              <div className="grid grid-cols-7 mb-1">
-                {['日','一','二','三','四','五','六'].map(d => (
-                  <div key={d} className="text-center text-[10px] text-slate-400 font-medium py-1">{d}</div>
+                    )}
+                  </div>
                 ))}
               </div>
+            )}
 
-              {/* 日期格子 */}
-              {(() => {
-                const firstDay = new Date(calYear, calMonth, 1).getDay();
-                const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-                const todayStr = new Date().toISOString().split('T')[0];
-                const cells = [];
+            {followUpTarget && (
+              <FollowUpDialog
+                currentUser={null}
+                onComplete={({ text, nextFollowUpDate }) => {
+                  const { project: p, update: u } = followUpTarget;
+                  onMarkFollowedUp(p, u, text.trim(), nextFollowUpDate);
+                  setFollowUpTarget(null);
+                }}
+                onCancel={() => setFollowUpTarget(null)}
+              />
+            )}
+          </div>
 
-                // 空格
-                for (let i = 0; i < firstDay; i++) cells.push(null);
-                // 日期
-                for (let d = 1; d <= daysInMonth; d++) {
-                  const dateStr = `${calYear}-${String(calMonth + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-                  cells.push(dateStr);
-                }
+          {/* 跟追日曆 */}
+          <div className="mt-5 pt-4 border-t border-slate-100">
+            <p className="text-xs font-medium text-slate-600 mb-3">📅 跟追日曆</p>
+            <div className="flex items-center justify-between mb-3">
+              <button
+                onClick={() => { const d = new Date(calYear, calMonth - 1); setCalYear(d.getFullYear()); setCalMonth(d.getMonth()); setSelectedDate(null); }}
+                className="p-1.5 hover:bg-slate-100 rounded"
+              >
+                <ChevronLeft className="w-4 h-4 text-slate-500" />
+              </button>
+              <span className="text-sm font-medium text-slate-700">
+                {calYear} 年 {calMonth + 1} 月
+              </span>
+              <button
+                onClick={() => { const d = new Date(calYear, calMonth + 1); setCalYear(d.getFullYear()); setCalMonth(d.getMonth()); setSelectedDate(null); }}
+                className="p-1.5 hover:bg-slate-100 rounded"
+              >
+                <ChevronRight className="w-4 h-4 text-slate-500" />
+              </button>
+            </div>
 
-                return (
-                  <div className="grid grid-cols-7 gap-0.5">
-                    {cells.map((dateStr, i) => {
-                      if (!dateStr) return <div key={`empty-${i}`} />;
-                      const items = followUpByDate[dateStr] || [];
-                      const isToday = dateStr === todayStr;
-                      const isPast = dateStr < todayStr;
-                      const isSelected = dateStr === selectedDate;
-                      const hasItems = items.length > 0;
-                      const dayNum = parseInt(dateStr.split('-')[2]);
+            <div className="grid grid-cols-7 mb-1">
+              {['日','一','二','三','四','五','六'].map(d => (
+                <div key={d} className="text-center text-[10px] text-slate-400 font-medium py-1">{d}</div>
+              ))}
+            </div>
 
-                      return (
-                        <button
-                          key={dateStr}
-                          onClick={() => setSelectedDate(isSelected ? null : dateStr)}
-                          className={`relative flex flex-col items-center py-1 rounded-lg text-xs transition ${
-                            isSelected ? 'bg-blue-100 ring-2 ring-blue-400' :
-                            isToday ? 'bg-orange-50 ring-1 ring-orange-300' :
-                            hasItems ? 'bg-blue-50 hover:bg-blue-100' :
-                            'hover:bg-slate-50'
-                          }`}
-                        >
-                          <span className={`font-medium ${
-                            isToday ? 'text-orange-600' :
-                            isPast && hasItems ? 'text-rose-600' :
-                            hasItems ? 'text-blue-700' :
-                            'text-slate-600'
+            {(() => {
+              const firstDay = new Date(calYear, calMonth, 1).getDay();
+              const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+              const todayStr = new Date().toISOString().split('T')[0];
+              const cells = [];
+              for (let i = 0; i < firstDay; i++) cells.push(null);
+              for (let d = 1; d <= daysInMonth; d++) {
+                const dateStr = `${calYear}-${String(calMonth + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                cells.push(dateStr);
+              }
+              return (
+                <div className="grid grid-cols-7 gap-0.5">
+                  {cells.map((dateStr, i) => {
+                    if (!dateStr) return <div key={`empty-${i}`} />;
+                    const items = followUpByDate[dateStr] || [];
+                    const isToday = dateStr === todayStr;
+                    const isPast = dateStr < todayStr;
+                    const isSelected = dateStr === selectedDate;
+                    const hasItems = items.length > 0;
+                    const dayNum = parseInt(dateStr.split('-')[2]);
+                    return (
+                      <button
+                        key={dateStr}
+                        onClick={() => setSelectedDate(isSelected ? null : dateStr)}
+                        className={`relative flex flex-col items-center py-1 rounded-lg text-xs transition ${
+                          isSelected ? 'bg-blue-100 ring-2 ring-blue-400' :
+                          isToday ? 'bg-orange-50 ring-1 ring-orange-300' :
+                          hasItems ? 'bg-blue-50 hover:bg-blue-100' :
+                          'hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className={`font-medium ${
+                          isToday ? 'text-orange-600' :
+                          isPast && hasItems ? 'text-rose-600' :
+                          hasItems ? 'text-blue-700' :
+                          'text-slate-600'
+                        }`}>
+                          {dayNum}
+                        </span>
+                        {hasItems && (
+                          <span className={`text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center mt-0.5 ${
+                            isPast ? 'bg-rose-500 text-white' : 'bg-blue-500 text-white'
                           }`}>
-                            {dayNum}
+                            {items.length}
                           </span>
-                          {hasItems && (
-                            <span className={`text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center mt-0.5 ${
-                              isPast ? 'bg-rose-500 text-white' : 'bg-blue-500 text-white'
-                            }`}>
-                              {items.length}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              {(() => {
+                const todayStr = new Date().toISOString().split('T')[0];
+                const monthStr = `${calYear}-${String(calMonth + 1).padStart(2,'0')}`;
+                const datesToShow = selectedDate
+                  ? (followUpByDate[selectedDate] ? [selectedDate] : [])
+                  : Object.keys(followUpByDate).filter(d => d.startsWith(monthStr)).sort();
+                const title = selectedDate
+                  ? `${selectedDate} 的跟追項目（${(followUpByDate[selectedDate] || []).length} 筆）`
+                  : '點日期查看當天項目 · 🔴 紅色 = 已逾期 · 🔵 藍色 = 尚未到期';
+                if (datesToShow.length === 0) {
+                  return <p className="text-xs text-slate-400">{selectedDate ? '這天沒有跟追項目' : '本月沒有跟追提醒'}</p>;
+                }
+                return (
+                  <>
+                    <p className="text-xs text-slate-500 mb-2">{title}</p>
+                    <div className="space-y-3">
+                      {datesToShow.map(dateStr => {
+                        const items = followUpByDate[dateStr] || [];
+                        const isPast = dateStr < todayStr;
+                        return (
+                          <div key={dateStr}>
+                            {!selectedDate && (
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className={`text-xs font-semibold ${isPast ? 'text-rose-600' : 'text-blue-600'}`}>{dateStr}</span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isPast ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}`}>{items.length} 筆</span>
+                              </div>
+                            )}
+                            <div className="space-y-1">
+                              {items.map(({ project: p, update: u }, i) => (
+                                <div key={i} className={`bg-white border rounded-lg px-3 py-2 flex items-baseline gap-2 flex-wrap ${isPast ? 'border-rose-200' : 'border-blue-200'}`}>
+                                  <button
+                                    onClick={() => { onJumpToProject(p); onClose(); }}
+                                    className="text-sm text-slate-800 hover:text-blue-700 hover:underline font-medium"
+                                  >
+                                    {p.name}
+                                  </button>
+                                  {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
+                                  <span className="text-xs text-slate-600 flex-1 truncate">— {u.text}</span>
+                                  {isAdmin && (
+                                    <button
+                                      onClick={() => setFollowUpTarget({ project: p, update: u })}
+                                      className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0"
+                                    >
+                                      ✓ 已跟追
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
                 );
               })()}
-
-              {/* 日期清單：統一用同一個格式，選了日期就篩選那天，否則顯示本月 */}
-              <div className="mt-3 pt-3 border-t border-slate-100 flex-1 overflow-y-auto">
-                {(() => {
-                  const todayStr = new Date().toISOString().split('T')[0];
-                  const monthStr = `${calYear}-${String(calMonth + 1).padStart(2,'0')}`;
-
-                  // 決定要顯示哪些日期
-                  const datesToShow = selectedDate
-                    ? (followUpByDate[selectedDate] ? [selectedDate] : [])
-                    : Object.keys(followUpByDate).filter(d => d.startsWith(monthStr)).sort();
-
-                  // 標題
-                  const title = selectedDate
-                    ? `${selectedDate} 的跟蹤項目（${(followUpByDate[selectedDate] || []).length} 筆）`
-                    : '點日期查看當天項目 · 🔴 紅色 = 已逾期 · 🔵 藍色 = 尚未到期';
-
-                  if (datesToShow.length === 0) {
-                    return <p className="text-xs text-slate-400">{selectedDate ? '這天沒有跟蹤項目' : '本月沒有跟蹤提醒'}</p>;
-                  }
-
-                  return (
-                    <>
-                      <p className="text-xs text-slate-500 mb-2">{title}</p>
-                      <div className="space-y-3">
-                        {datesToShow.map(dateStr => {
-                          const items = followUpByDate[dateStr] || [];
-                          const isPast = dateStr < todayStr;
-                          return (
-                            <div key={dateStr}>
-                              {/* 日期標題列 */}
-                              {!selectedDate && (
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className={`text-xs font-semibold ${isPast ? 'text-rose-600' : 'text-blue-600'}`}>{dateStr}</span>
-                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isPast ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}`}>{items.length} 筆</span>
-                                </div>
-                              )}
-                              {/* 項目卡片 */}
-                              <div className="space-y-1">
-                                {items.map(({ project: p, update: u }, i) => (
-                                  <div key={i} className={`bg-white border rounded-lg px-3 py-2 flex items-baseline gap-2 flex-wrap ${isPast ? 'border-rose-200' : 'border-blue-200'}`}>
-                                    <button
-                                      onClick={() => { onJumpToProject(p); onClose(); }}
-                                      className="text-sm text-slate-800 hover:text-blue-700 hover:underline font-medium"
-                                    >
-                                      {p.name}
-                                    </button>
-                                    {p.code && <span className="text-xs text-slate-400 font-mono">{p.code}</span>}
-                                    <span className="text-xs text-slate-600 flex-1 truncate">— {u.text}</span>
-                                    {isAdmin && (
-                                      <button
-                                        onClick={() => { onJumpToProject(p, u); onClose(); }}
-                                        className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 flex-shrink-0"
-                                      >
-                                        ✓ 已跟追
-                                      </button>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
             </div>
-          )}
-
-          {tab === 'manage' && (
-            <div>
-              <p className="text-xs text-slate-500 mb-3">手動加入不在清單的產品，或查看已排除的產品</p>
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="搜尋產品名稱或料號..."
-                className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded mb-2"
-              />
-
-              {/* 已手動排除的產品 */}
-              {Object.entries(trackingOverrides).filter(([, v]) => v === 'exclude').length > 0 && (
-                <div className="mb-3">
-                  <p className="text-xs text-slate-500 mb-1">已手動排除（不在追蹤清單）：</p>
-                  <div className="space-y-1">
-                    {Object.entries(trackingOverrides).filter(([, v]) => v === 'exclude').map(([id]) => {
-                      const p = projects.find(p => String(p.id) === id);
-                      if (!p) return null;
-                      return (
-                        <div key={id} className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded border border-slate-200">
-                          <span className="text-xs text-slate-500 flex-1">{p.name} {p.code && <span className="font-mono text-slate-400">{p.code}</span>}</span>
-                          <button onClick={() => onSetOverride(p.id, null)} className="text-xs text-blue-600 hover:underline">恢復追蹤</button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* 可手動加入的產品 */}
-              <p className="text-xs text-slate-500 mb-1">手動加入追蹤（目前不在清單的產品）：</p>
-              {notTracked.length === 0 ? (
-                <p className="text-xs text-slate-400 py-2">沒有可加入的產品</p>
-              ) : (
-                <div className="space-y-1">
-                  {notTracked.map(p => (
-                    <div key={p.id} className="flex items-center gap-2 px-3 py-2 bg-white rounded border border-slate-200 hover:border-slate-300">
-                      <span className="text-sm text-slate-800 flex-1 truncate">{p.name}</span>
-                      {p.code && <span className="text-xs font-mono text-slate-400">{p.code}</span>}
-                      <span className="text-xs text-slate-400">{p.status}</span>
-                      <button
-                        onClick={() => onSetOverride(p.id, 'include')}
-                        className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 flex-shrink-0"
-                      >
-                        + 加入追蹤
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          </div>
         </div>
       </div>
     </div>

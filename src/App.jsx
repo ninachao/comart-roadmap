@@ -46,10 +46,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.04.0';
-const BUILD_ID = '20260615-1100';
+const APP_VERSION = 'v1.05.0';
+const BUILD_ID = '20260615-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.05.0',
+    date: '2026-06-15',
+    changes: [
+      '🔧 已跟追流程修正：「沒有進度」改為「沒有，設定下次跟追日期」（必填日期）',
+      '兩條路都會在產品進度紀錄留下一筆記錄並串連下次跟追',
+      '沒進度時自動記錄「（無新進度，已排定下次跟追：日期）」保留追蹤軌跡',
+    ],
+  },
   {
     version: 'v1.04.0',
     date: '2026-06-15',
@@ -2710,16 +2719,27 @@ export default function ProductRoadmap() {
           onMarkFollowedUp={(p, u, text, nextFollowUpDate) => {
             const allUpdates = [...(p.updates || [])];
             const idx = allUpdates.findIndex(x => x.date === u.date && x.text === u.text);
+            // 把舊的這筆標記已跟追（從提醒消失）
             if (idx >= 0) {
               allUpdates[idx] = { ...allUpdates[idx], followedUp: true };
             }
-            // 有填進度就新增一筆
+            const todayStr = new Date().toISOString().split('T')[0];
             if (text) {
+              // 有進度：新增一筆進度紀錄，掛上下次跟追日期
               allUpdates.unshift({
-                date: new Date().toISOString().split('T')[0],
+                date: todayStr,
                 text,
                 author: currentUser?.name || '',
                 followUpDate: nextFollowUpDate || null,
+                followedUp: false,
+              });
+            } else if (nextFollowUpDate) {
+              // 沒進度但設了下次日期：也新增一筆記錄保留軌跡，並讓下次跟追生效
+              allUpdates.unshift({
+                date: todayStr,
+                text: `（無新進度，已排定下次跟追：${nextFollowUpDate}）`,
+                author: currentUser?.name || '',
+                followUpDate: nextFollowUpDate,
                 followedUp: false,
               });
             }
@@ -4091,30 +4111,35 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           currentUser={currentUser}
           onComplete={({ text, nextFollowUpDate }) => {
             const trigger = followUpInitial._triggerUpdate;
-            // 如果有填備註，新增一筆進度
-            if (text.trim()) {
-              onAddUpdate({
-                date: new Date().toISOString().split('T')[0],
-                text: text.trim(),
-                author: currentUser?.name || '',
-                followUpDate: nextFollowUpDate || null,
-                followedUp: false,
-              });
-            }
-            // 標記舊的已跟追（如果沒有新進度但有設下次日期，更新舊進度的 followUpDate）
+            const todayStr = new Date().toISOString().split('T')[0];
+            // 先把觸發的舊進度標記已跟追
             if (trigger) {
               const allUpdates = project.updates || [];
               const idx = allUpdates.findIndex(x => x.date === trigger.date && x.text === trigger.text);
               if (idx >= 0) {
                 const newUpdates = [...allUpdates];
-                newUpdates[idx] = {
-                  ...newUpdates[idx],
-                  followedUp: true,
-                  // 如果沒有新進度但有下次日期，把下次日期掛在舊進度上
-                  ...(!text.trim() && nextFollowUpDate ? { followUpDate: nextFollowUpDate, followedUp: false } : {}),
-                };
+                newUpdates[idx] = { ...newUpdates[idx], followedUp: true };
                 onUpdateField('updates', newUpdates);
               }
+            }
+            // 有進度：新增一筆
+            if (text.trim()) {
+              onAddUpdate({
+                date: todayStr,
+                text: text.trim(),
+                author: currentUser?.name || '',
+                followUpDate: nextFollowUpDate || null,
+                followedUp: false,
+              });
+            } else if (nextFollowUpDate) {
+              // 沒進度但設了下次日期：新增記錄保留軌跡
+              onAddUpdate({
+                date: todayStr,
+                text: `（無新進度，已排定下次跟追：${nextFollowUpDate}）`,
+                author: currentUser?.name || '',
+                followUpDate: nextFollowUpDate,
+                followedUp: false,
+              });
             }
             setFollowUpInitial(null);
             setShowFollowUpPrompt(false);
@@ -4131,10 +4156,9 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
 
 // ── 跟追完成對話框 ─────────────────────────────────────────────
 function FollowUpDialog({ currentUser, onComplete, onCancel }) {
-  const [step, setStep] = useState('choose'); // 'choose' | 'update'
+  const [step, setStep] = useState('choose'); // 'choose' | 'update' | 'dateonly'
   const [text, setText] = useState('');
   const [nextDate, setNextDate] = useState('');
-  const today = new Date().toISOString().split('T')[0];
 
   return (
     <div className="fixed inset-0 bg-slate-900/40 z-[999] flex items-center justify-center p-4"
@@ -4158,23 +4182,23 @@ function FollowUpDialog({ currentUser, onComplete, onCancel }) {
                 <span className="text-xl">📝</span>
                 <div>
                   <p className="text-sm font-medium text-slate-800 group-hover:text-blue-700">有，記錄進度</p>
-                  <p className="text-xs text-slate-400">新增一筆進度後標記已跟追</p>
+                  <p className="text-xs text-slate-400">新增進度並設定下次跟追日期</p>
                 </div>
               </button>
               <button
-                onClick={() => onComplete({ text: '', nextFollowUpDate: '' })}
-                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 text-left transition-all duration-150 group"
+                onClick={() => setStep('dateonly')}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-slate-200 hover:border-amber-300 hover:bg-amber-50 text-left transition-all duration-150 group"
               >
-                <span className="text-xl">✓</span>
+                <span className="text-xl">📅</span>
                 <div>
-                  <p className="text-sm font-medium text-slate-800 group-hover:text-emerald-700">沒有，直接完成</p>
-                  <p className="text-xs text-slate-400">標記已跟追，從提醒消失</p>
+                  <p className="text-sm font-medium text-slate-800 group-hover:text-amber-700">沒有，設定下次跟追日期</p>
+                  <p className="text-xs text-slate-400">這次沒進度，排定下次再追的時間</p>
                 </div>
               </button>
             </div>
           </div>
-        ) : (
-          /* ── 第二步：填進度 ── */
+        ) : step === 'update' ? (
+          /* ── 有進度：填進度 + 下次日期 ── */
           <div className="p-5">
             <div className="flex items-center gap-2 mb-4">
               <button onClick={() => setStep('choose')} className="p-1 hover:bg-slate-100 rounded text-slate-400 text-xs">← 返回</button>
@@ -4210,6 +4234,35 @@ function FollowUpDialog({ currentUser, onComplete, onCancel }) {
                 className="px-4 py-2 text-sm bg-slate-900 text-white rounded-lg hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
               >
                 儲存並完成
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* ── 沒進度：只設下次日期（必填）── */
+          <div className="p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <button onClick={() => setStep('choose')} className="p-1 hover:bg-slate-100 rounded text-slate-400 text-xs">← 返回</button>
+              <h3 className="text-sm font-semibold text-slate-800">設定下次跟追日期</h3>
+            </div>
+            <p className="text-xs text-slate-500 mb-3">這次沒有新進度，請排定下次要再追蹤的日期，到期會再次提醒你。</p>
+            <div>
+              <label className="text-xs text-slate-600 mb-1 block">下次跟追日期 <span className="text-rose-500">*</span></label>
+              <input
+                type="date"
+                value={nextDate}
+                onChange={e => setNextDate(e.target.value)}
+                autoFocus
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+              />
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={onCancel} className="px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 rounded-lg transition">取消</button>
+              <button
+                onClick={() => { if (nextDate) onComplete({ text: '', nextFollowUpDate: nextDate }); }}
+                disabled={!nextDate}
+                className="px-4 py-2 text-sm bg-slate-900 text-white rounded-lg hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                完成
               </button>
             </div>
           </div>

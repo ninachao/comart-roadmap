@@ -46,10 +46,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.07.0';
-const BUILD_ID = '20260615-1400';
+const APP_VERSION = 'v1.08.0';
+const BUILD_ID = '20260615-1500';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.08.0',
+    date: '2026-06-15',
+    changes: [
+      '🎉 領用紀錄新增搜尋框（可搜領用人、樣品名稱、用途、原因）',
+      '🎉 領用紀錄每筆顯示對應樣品的圖片，一眼辨識是哪個產品',
+    ],
+  },
   {
     version: 'v1.07.0',
     date: '2026-06-15',
@@ -6650,6 +6658,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [groupByProduct, setGroupByProduct] = useState(false); // 依產品分組
   const [locationFilter, setLocationFilter] = useState('全部');
   const [searchTerm, setSearchTerm] = useState('');
+  const [withdrawalSearch, setWithdrawalSearch] = useState('');
   const [editingSample, setEditingSample] = useState(null);
   const [withdrawingSample, setWithdrawingSample] = useState(null);
   const [viewingGallery, setViewingGallery] = useState(null); // {images, index}
@@ -7013,13 +7022,47 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
 
         {tab === 'withdrawals' && (
           <div className="flex-1 overflow-y-auto -mx-1 px-1">
-            {withdrawals.length === 0 ? (
-              <p className="text-center text-sm text-slate-400 py-8">尚無領用紀錄</p>
-            ) : (
+            {/* 搜尋框 */}
+            <div className="relative mb-3">
+              <Search className="w-4 h-4 text-slate-300 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={withdrawalSearch}
+                onChange={e => setWithdrawalSearch(e.target.value)}
+                placeholder="搜尋領用人、樣品名稱、用途..."
+                className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+              />
+            </div>
+            {(() => {
+              // 建立 sampleId → sample 對照（取圖片）
+              const sampleMap = {};
+              samples.forEach(s => { sampleMap[s.id] = s; });
+              const kw = withdrawalSearch.trim().toLowerCase();
+              const filteredW = withdrawals.filter(w => !kw || [w.personName, w.sampleName, w.purpose, w.noReturnReason].some(v => (v || '').toLowerCase().includes(kw)));
+
+              if (withdrawals.length === 0) {
+                return <p className="text-center text-sm text-slate-400 py-8">尚無領用紀錄</p>;
+              }
+              if (filteredW.length === 0) {
+                return <p className="text-center text-sm text-slate-400 py-8">找不到符合的領用紀錄</p>;
+              }
+              return (
               <div className="space-y-1.5">
-                {withdrawals.map(w => (
+                {filteredW.map(w => {
+                  const linkedSample = sampleMap[w.sampleId];
+                  const sampleImg = (linkedSample?.images || [])[0];
+                  return (
                   <div key={w.id} className={`bg-white border rounded-lg p-3 group ${w.returned || w.noReturn ? 'opacity-60 border-slate-200' : 'border-amber-200 bg-amber-50/30'}`}>
-                    <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start gap-3">
+                      {/* 樣品圖片 */}
+                      <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-slate-50 border border-slate-100 overflow-hidden flex items-center justify-center">
+                        {sampleImg ? (
+                          <StorageImage src={sampleImg.url || sampleImg.dataUrl} path={sampleImg.path} alt={w.sampleName}
+                            className="w-full h-full object-contain" />
+                        ) : (
+                          <ImageIcon className="w-4 h-4 text-slate-300" />
+                        )}
+                      </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
                           <span className="text-sm font-medium text-slate-900">{w.personName}</span>
@@ -7089,9 +7132,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
-            )}
+              );
+            })()}
           </div>
         )}
 

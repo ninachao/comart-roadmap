@@ -46,10 +46,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.08.0';
-const BUILD_ID = '20260615-1500';
+const APP_VERSION = 'v1.09.0';
+const BUILD_ID = '20260615-1600';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.09.0',
+    date: '2026-06-15',
+    changes: [
+      '🎉 在料號申請填寫的正式料號編號，現在會同步顯示在主頁產品卡片上（綠色標籤）',
+    ],
+  },
   {
     version: 'v1.08.0',
     date: '2026-06-15',
@@ -3110,6 +3117,11 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
               <div className="flex items-center gap-2 flex-wrap mb-1">
                 <h3 className="text-[15px] font-semibold text-slate-900 line-clamp-1 tracking-tight">{project.name}</h3>
                 {project.code && <span className="text-[11px] font-mono text-slate-400">{project.code}</span>}
+                {project.materialCodeNumber && (
+                  <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200" title="正式料號">
+                    料號 {project.materialCodeNumber}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className={`text-xs px-2 py-0.5 rounded border ${cfg}`}>{project.status}</span>

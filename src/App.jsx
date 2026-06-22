@@ -46,10 +46,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.09.0';
-const BUILD_ID = '20260615-1600';
+const APP_VERSION = 'v1.10.0';
+const BUILD_ID = '20260615-1700';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.10.0',
+    date: '2026-06-15',
+    changes: [
+      '🎨 提醒項目改顯示產品圖片，逾期天數改成圖片右上角的小角標（紅/橙/藍）',
+    ],
+  },
   {
     version: 'v1.09.0',
     date: '2026-06-15',
@@ -8556,19 +8563,28 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
                   onMouseEnter={e => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.border = '1px solid #e5e7eb'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(15,23,42,0.06)'; }}
                   onMouseLeave={e => { e.currentTarget.style.background = '#f9fafb'; e.currentTarget.style.border = '1px solid transparent'; e.currentTarget.style.boxShadow = 'none'; }}>
                   <div className="flex items-start gap-3">
-                    {/* 逾期天數標示 */}
-                    <div className="flex-shrink-0 mt-0.5">
-                      <div className="flex flex-col items-center justify-center w-11 h-11 rounded-xl"
-                        style={{ background: days >= 7 ? '#fef2f2' : days >= 1 ? '#fff7ed' : '#f0f9ff' }}>
-                        <span className="text-[15px] font-semibold leading-none"
-                          style={{ color: days >= 7 ? '#dc2626' : days >= 1 ? '#ea580c' : '#0284c7' }}>
-                          {days > 0 ? days : '今'}
-                        </span>
-                        <span className="text-[9px] leading-none mt-0.5"
-                          style={{ color: days >= 7 ? '#f87171' : days >= 1 ? '#fb923c' : '#38bdf8' }}>
-                          {days > 0 ? '天' : '日'}
-                        </span>
+                    {/* 產品圖片 + 逾期天數角標 */}
+                    <div className="flex-shrink-0 mt-0.5 relative">
+                      <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center">
+                        {(p.productImages || [])[0] ? (
+                          <StorageImage
+                            src={(p.productImages[0].url) || (p.productImages[0].dataUrl)}
+                            path={p.productImages[0].path}
+                            alt={p.name}
+                            className="w-full h-full object-contain"
+                          />
+                        ) : (
+                          <ImageIcon className="w-5 h-5 text-slate-300" />
+                        )}
                       </div>
+                      {/* 逾期天數角標 */}
+                      <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full flex items-center justify-center text-[10px] font-semibold border-2 border-white"
+                        style={{
+                          background: days >= 7 ? '#dc2626' : days >= 1 ? '#ea580c' : '#0284c7',
+                          color: '#fff',
+                        }}>
+                        {days > 0 ? `${days}天` : '今'}
+                      </span>
                     </div>
 
                     {/* 內容 */}

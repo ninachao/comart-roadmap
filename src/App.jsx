@@ -8508,14 +8508,19 @@ function WithdrawalModal({ sample, currentUser, onSave, onClose }) {
 
 // ============= 提醒頁面 Modal =============
 function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOverrides, onSetOverride, onJumpToProject, onMarkFollowedUp, onClose, isAdmin }) {
-  const [followUpTarget, setFollowUpTarget] = useState(null); // { project, update }
-  const [showCalendar, setShowCalendar] = useState(false);
+  const [activeTab, setActiveTab] = useState('followup'); // 'followup' | 'stale' | 'calendar'
+  const [followUpTarget, setFollowUpTarget] = useState(null);
 
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
   const [calYear, setCalYear] = useState(today.getFullYear());
   const [calMonth, setCalMonth] = useState(today.getMonth());
   const [selectedDate, setSelectedDate] = useState(null);
+
+  // 本週結束（今天起 7 天內）
+  const weekEnd = new Date(today);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+  const weekEndStr = weekEnd.toISOString().split('T')[0];
 
   // 所有跟追日期 → Map<date, [{project, update}]>
   const followUpByDate = useMemo(() => {
@@ -8530,7 +8535,7 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
     return map;
   }, [projects]);
 
-  // 計算每筆逾期天數，排序：最逾期的在最上面
+  // 逾期 + 今天（followUpDate <= today）加上逾期天數，最久的排前面
   const sortedOverdue = useMemo(() => {
     return [...overdueFollowUps].map(item => {
       const d = item.update.followUpDate;
@@ -8539,122 +8544,278 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
     }).sort((a, b) => b.days - a.days);
   }, [overdueFollowUps, todayStr]);
 
+  const overdueItems = sortedOverdue.filter(x => x.days > 0);
+  const todayItems = sortedOverdue.filter(x => x.days === 0);
+
+  // 本週（今天之後 7 天內，最近的排前面）
+  const upcomingItems = useMemo(() => {
+    const result = [];
+    Object.entries(followUpByDate).forEach(([date, items]) => {
+      if (date > todayStr && date <= weekEndStr) {
+        const daysUntil = Math.floor((new Date(date) - new Date(todayStr)) / 86400000);
+        items.forEach(item => result.push({ ...item, daysUntil }));
+      }
+    });
+    return result.sort((a, b) => a.daysUntil - b.daysUntil);
+  }, [followUpByDate, todayStr, weekEndStr]);
+
+  const urgentCount = overdueItems.length + todayItems.length;
+
+  // 跟追卡片（逾期 & 今天共用）
+  const FollowUpCard = ({ project: p, update: u, days }) => (
+    <div className="group rounded-2xl px-4 py-3.5 transition-all duration-150"
+      style={{ background: '#f9fafb', border: '1px solid transparent' }}
+      onMouseEnter={e => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.border = '1px solid #e5e7eb'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(15,23,42,0.06)'; }}
+      onMouseLeave={e => { e.currentTarget.style.background = '#f9fafb'; e.currentTarget.style.border = '1px solid transparent'; e.currentTarget.style.boxShadow = 'none'; }}>
+      <div className="flex items-start gap-3">
+        <div className="flex-shrink-0 mt-0.5 relative">
+          <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center">
+            {(p.productImages || [])[0] ? (
+              <StorageImage
+                src={(p.productImages[0].url) || (p.productImages[0].dataUrl)}
+                path={p.productImages[0].path}
+                alt={p.name}
+                className="w-full h-full object-contain"
+              />
+            ) : (
+              <ImageIcon className="w-5 h-5 text-slate-300" />
+            )}
+          </div>
+          <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full flex items-center justify-center text-[10px] font-semibold border-2 border-white"
+            style={{ background: days >= 7 ? '#dc2626' : days >= 1 ? '#ea580c' : '#0284c7', color: '#fff' }}>
+            {days > 0 ? `${days}天` : '今'}
+          </span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <button onClick={() => { onJumpToProject(p); onClose(); }}
+            className="text-[15px] font-medium text-slate-800 hover:text-blue-600 transition text-left leading-snug">
+            {p.name}
+          </button>
+          {p.code && <span className="text-[11px] text-slate-300 font-mono ml-2">{p.code}</span>}
+          <p className="text-[13px] text-slate-500 mt-1 leading-relaxed line-clamp-2">{u.text}</p>
+          <p className="text-[11px] text-slate-300 mt-1">跟追日 {u.followUpDate}</p>
+        </div>
+        {isAdmin && (
+          <button
+            onClick={() => setFollowUpTarget({ project: p, update: u })}
+            className="flex-shrink-0 self-center px-3.5 py-2 rounded-full text-[13px] font-medium transition-all duration-150"
+            style={{ background: '#1e293b', color: '#fff' }}
+            onMouseEnter={e => e.currentTarget.style.background = '#0f172a'}
+            onMouseLeave={e => e.currentTarget.style.background = '#1e293b'}>
+            已跟追
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="modal-anim fixed inset-0 z-40 flex items-center justify-center p-2 sm:p-4"
       style={{ background: 'rgba(15, 23, 42, 0.4)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}>
       <div className="bg-white w-full max-w-lg flex flex-col"
-        style={{ height: 'min(88vh, 620px)', borderRadius: '20px', boxShadow: '0 24px 64px rgba(15,23,42,0.24)' }}>
+        style={{ height: 'min(92vh, 680px)', borderRadius: '20px', boxShadow: '0 24px 64px rgba(15,23,42,0.24)' }}>
 
         {/* 標題列 */}
-        <div className="flex items-center justify-between px-6 pt-5 pb-3">
-          <div>
-            <h2 className="text-[19px] font-semibold text-slate-900 tracking-tight">提醒</h2>
-            <p className="text-[13px] text-slate-400 mt-0.5">
-              {sortedOverdue.length > 0 ? `${sortedOverdue.length} 項需要跟追` : '目前沒有待跟追項目'}
-            </p>
-          </div>
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 flex-shrink-0">
+          <h2 className="text-[19px] font-semibold text-slate-900 tracking-tight">提醒</h2>
           <button onClick={onClose}
             className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100 transition">
             <X className="w-[18px] h-[18px]" />
           </button>
         </div>
 
-        {/* 跟追到期列表（主體） */}
-        <div className="flex-1 overflow-y-auto px-6">
-          {sortedOverdue.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center -mt-8">
-              <div className="w-14 h-14 rounded-full bg-slate-50 flex items-center justify-center mb-3">
-                <span className="text-2xl">✓</span>
-              </div>
-              <p className="text-[15px] text-slate-500">全部跟進完畢</p>
-              <p className="text-[13px] text-slate-300 mt-1">沒有到期的跟追項目</p>
-            </div>
-          ) : (
-            <div className="space-y-2 pb-2">
-              {sortedOverdue.map(({ project: p, update: u, days }, i) => (
-                <div key={i}
-                  className="group rounded-2xl px-4 py-3.5 transition-all duration-150"
-                  style={{ background: '#f9fafb', border: '1px solid transparent' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.border = '1px solid #e5e7eb'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(15,23,42,0.06)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = '#f9fafb'; e.currentTarget.style.border = '1px solid transparent'; e.currentTarget.style.boxShadow = 'none'; }}>
-                  <div className="flex items-start gap-3">
-                    {/* 產品圖片 + 逾期天數角標 */}
-                    <div className="flex-shrink-0 mt-0.5 relative">
-                      <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center">
-                        {(p.productImages || [])[0] ? (
-                          <StorageImage
-                            src={(p.productImages[0].url) || (p.productImages[0].dataUrl)}
-                            path={p.productImages[0].path}
-                            alt={p.name}
-                            className="w-full h-full object-contain"
-                          />
-                        ) : (
-                          <ImageIcon className="w-5 h-5 text-slate-300" />
-                        )}
-                      </div>
-                      {/* 逾期天數角標 */}
-                      <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full flex items-center justify-center text-[10px] font-semibold border-2 border-white"
-                        style={{
-                          background: days >= 7 ? '#dc2626' : days >= 1 ? '#ea580c' : '#0284c7',
-                          color: '#fff',
-                        }}>
-                        {days > 0 ? `${days}天` : '今'}
-                      </span>
-                    </div>
-
-                    {/* 內容 */}
-                    <div className="flex-1 min-w-0">
-                      <button onClick={() => { onJumpToProject(p); onClose(); }}
-                        className="text-[15px] font-medium text-slate-800 hover:text-blue-600 transition text-left leading-snug">
-                        {p.name}
-                      </button>
-                      {p.code && <span className="text-[11px] text-slate-300 font-mono ml-2">{p.code}</span>}
-                      <p className="text-[13px] text-slate-500 mt-1 leading-relaxed line-clamp-2">{u.text}</p>
-                      <p className="text-[11px] text-slate-300 mt-1">跟追日 {u.followUpDate}</p>
-                    </div>
-
-                    {/* 已跟追按鈕 */}
-                    {isAdmin && (
-                      <button
-                        onClick={() => setFollowUpTarget({ project: p, update: u })}
-                        className="flex-shrink-0 self-center px-3.5 py-2 rounded-full text-[13px] font-medium transition-all duration-150"
-                        style={{ background: '#1e293b', color: '#fff' }}
-                        onMouseEnter={e => e.currentTarget.style.background = '#0f172a'}
-                        onMouseLeave={e => e.currentTarget.style.background = '#1e293b'}>
-                        已跟追
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {followUpTarget && (
-            <FollowUpDialog
-              currentUser={null}
-              onComplete={({ text, nextFollowUpDate }) => {
-                const { project: p, update: u } = followUpTarget;
-                onMarkFollowedUp(p, u, text.trim(), nextFollowUpDate);
-                setFollowUpTarget(null);
-              }}
-              onCancel={() => setFollowUpTarget(null)}
-            />
-          )}
+        {/* Tab 列 */}
+        <div className="flex gap-1 px-6 pb-3 flex-shrink-0">
+          {[
+            { key: 'followup', label: '待跟追', count: urgentCount, urgentColor: urgentCount > 0 },
+            { key: 'stale',    label: '久未更新', count: staleProjects.length, urgentColor: false },
+            { key: 'calendar', label: '日曆', count: 0, urgentColor: false },
+          ].map(tab => (
+            <button key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-medium transition-all duration-150"
+              style={{
+                background: activeTab === tab.key ? '#1e293b' : '#f1f5f9',
+                color: activeTab === tab.key ? '#fff' : '#64748b',
+              }}>
+              {tab.label}
+              {tab.count > 0 && (
+                <span className="min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center text-[10px] font-semibold"
+                  style={{
+                    background: activeTab === tab.key
+                      ? 'rgba(255,255,255,0.25)'
+                      : tab.urgentColor ? '#dc2626' : '#94a3b8',
+                    color: '#fff',
+                  }}>
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
 
-        {/* 底部：日曆收合按鈕 */}
-        <div className="px-6 pt-2 pb-4 border-t border-slate-100 flex-shrink-0">
-          <button
-            onClick={() => setShowCalendar(!showCalendar)}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-[13px] text-slate-500 hover:bg-slate-50 transition">
-            <span>📅</span>
-            <span>{showCalendar ? '收起日曆' : '查看跟追日曆'}</span>
-            <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${showCalendar ? 'rotate-180' : ''}`} />
-          </button>
+        {/* 內容區 */}
+        <div className="flex-1 overflow-y-auto px-6 pb-4">
 
-          {showCalendar && (
-            <div className="mt-3 overflow-y-auto" style={{ animation: 'modalFade 0.2s ease-out', maxHeight: '38vh' }}>
+          {/* ── Tab：待跟追 ── */}
+          {activeTab === 'followup' && (
+            <div>
+              {urgentCount === 0 && upcomingItems.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-48 text-center">
+                  <div className="w-14 h-14 rounded-full bg-slate-50 flex items-center justify-center mb-3">
+                    <span className="text-2xl">✓</span>
+                  </div>
+                  <p className="text-[15px] text-slate-500">全部跟進完畢</p>
+                  <p className="text-[13px] text-slate-300 mt-1">本週也沒有待跟追項目</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* 逾期 */}
+                  {overdueItems.length > 0 && (
+                    <div>
+                      <p className="text-[11px] font-semibold text-rose-500 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 inline-block" />
+                        逾期未跟追 · {overdueItems.length} 項
+                      </p>
+                      <div className="space-y-2">
+                        {overdueItems.map((item, i) => <FollowUpCard key={i} {...item} />)}
+                      </div>
+                    </div>
+                  )}
+                  {/* 今天 */}
+                  {todayItems.length > 0 && (
+                    <div>
+                      <p className="text-[11px] font-semibold text-sky-500 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-sky-500 inline-block" />
+                        今天到期 · {todayItems.length} 項
+                      </p>
+                      <div className="space-y-2">
+                        {todayItems.map((item, i) => <FollowUpCard key={i} {...item} />)}
+                      </div>
+                    </div>
+                  )}
+                  {/* 本週 */}
+                  {upcomingItems.length > 0 && (
+                    <div>
+                      <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-300 inline-block" />
+                        本週即將到期 · {upcomingItems.length} 項
+                      </p>
+                      <div className="space-y-2">
+                        {upcomingItems.map(({ project: p, update: u, daysUntil }, i) => (
+                          <div key={i} className="group rounded-2xl px-4 py-3.5 transition-all duration-150"
+                            style={{ background: '#f9fafb', border: '1px solid transparent' }}
+                            onMouseEnter={e => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.border = '1px solid #e5e7eb'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(15,23,42,0.06)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = '#f9fafb'; e.currentTarget.style.border = '1px solid transparent'; e.currentTarget.style.boxShadow = 'none'; }}>
+                            <div className="flex items-start gap-3">
+                              <div className="flex-shrink-0 mt-0.5 relative">
+                                <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center">
+                                  {(p.productImages || [])[0] ? (
+                                    <StorageImage
+                                      src={(p.productImages[0].url) || (p.productImages[0].dataUrl)}
+                                      path={p.productImages[0].path}
+                                      alt={p.name}
+                                      className="w-full h-full object-contain"
+                                    />
+                                  ) : (
+                                    <ImageIcon className="w-5 h-5 text-slate-300" />
+                                  )}
+                                </div>
+                                <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full flex items-center justify-center text-[10px] font-semibold border-2 border-white"
+                                  style={{ background: '#64748b', color: '#fff' }}>
+                                  {daysUntil}天
+                                </span>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <button onClick={() => { onJumpToProject(p); onClose(); }}
+                                  className="text-[15px] font-medium text-slate-800 hover:text-blue-600 transition text-left leading-snug">
+                                  {p.name}
+                                </button>
+                                {p.code && <span className="text-[11px] text-slate-300 font-mono ml-2">{p.code}</span>}
+                                <p className="text-[13px] text-slate-500 mt-1 leading-relaxed line-clamp-2">{u.text}</p>
+                                <p className="text-[11px] text-slate-300 mt-1">跟追日 {u.followUpDate}</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Tab：久未更新 ── */}
+          {activeTab === 'stale' && (
+            <div>
+              {staleProjects.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-48 text-center">
+                  <div className="w-14 h-14 rounded-full bg-slate-50 flex items-center justify-center mb-3">
+                    <span className="text-2xl">👍</span>
+                  </div>
+                  <p className="text-[15px] text-slate-500">所有產品都有近期更新</p>
+                  <p className="text-[13px] text-slate-300 mt-1">14 天內有進度的產品不會出現在這裡</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[12px] text-slate-400 pb-1">超過 14 天未記錄進度的產品</p>
+                  {staleProjects.map(({ project: p, days, override }, i) => (
+                    <div key={i} className="group rounded-2xl px-4 py-3.5 transition-all duration-150"
+                      style={{ background: '#f9fafb', border: '1px solid transparent' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.border = '1px solid #e5e7eb'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(15,23,42,0.06)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = '#f9fafb'; e.currentTarget.style.border = '1px solid transparent'; e.currentTarget.style.boxShadow = 'none'; }}>
+                      <div className="flex items-center gap-3">
+                        <div className="flex-shrink-0 relative">
+                          <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center">
+                            {(p.productImages || [])[0] ? (
+                              <StorageImage
+                                src={(p.productImages[0].url) || (p.productImages[0].dataUrl)}
+                                path={p.productImages[0].path}
+                                alt={p.name}
+                                className="w-full h-full object-contain"
+                              />
+                            ) : (
+                              <ImageIcon className="w-5 h-5 text-slate-300" />
+                            )}
+                          </div>
+                          {days !== null && (
+                            <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full flex items-center justify-center text-[10px] font-semibold border-2 border-white"
+                              style={{ background: days >= 30 ? '#dc2626' : '#f59e0b', color: '#fff' }}>
+                              {days}天
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <button onClick={() => { onJumpToProject(p); onClose(); }}
+                            className="text-[15px] font-medium text-slate-800 hover:text-blue-600 transition text-left leading-snug">
+                            {p.name}
+                          </button>
+                          {p.code && <span className="text-[11px] text-slate-300 font-mono ml-2">{p.code}</span>}
+                          <p className="text-[12px] text-slate-400 mt-0.5">{p.status}</p>
+                        </div>
+                        {isAdmin && (
+                          <button
+                            onClick={() => onSetOverride && onSetOverride(p.id, override === 'exclude' ? null : 'exclude')}
+                            className="flex-shrink-0 px-3 py-1.5 rounded-full text-[12px] font-medium transition-all duration-150"
+                            style={{ background: '#f1f5f9', color: '#94a3b8' }}
+                            onMouseEnter={e => { e.currentTarget.style.background = '#e2e8f0'; e.currentTarget.style.color = '#64748b'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.color = '#94a3b8'; }}
+                            title="從追蹤清單移除">
+                            忽略
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Tab：日曆 ── */}
+          {activeTab === 'calendar' && (
+            <div>
               {/* 月份導航 */}
               <div className="flex items-center justify-between mb-3 px-1">
                 <button onClick={() => { const d = new Date(calYear, calMonth - 1); setCalYear(d.getFullYear()); setCalMonth(d.getMonth()); setSelectedDate(null); }}
@@ -8667,13 +8828,11 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
                   <ChevronRight className="w-4 h-4 text-slate-400" />
                 </button>
               </div>
-
               <div className="grid grid-cols-7 mb-1">
                 {['日','一','二','三','四','五','六'].map(d => (
                   <div key={d} className="text-center text-[10px] text-slate-300 font-medium py-1">{d}</div>
                 ))}
               </div>
-
               {(() => {
                 const firstDay = new Date(calYear, calMonth, 1).getDay();
                 const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
@@ -8715,10 +8874,8 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
                   </div>
                 );
               })()}
-
-              {/* 選定日期的項目 */}
               {selectedDate && (
-                <div className="mt-3 pt-3 border-t border-slate-100">
+                <div className="mt-4 pt-3 border-t border-slate-100">
                   <p className="text-[12px] text-slate-400 mb-2">{selectedDate}</p>
                   {(followUpByDate[selectedDate] || []).length === 0 ? (
                     <p className="text-[13px] text-slate-300 py-2 text-center">這天沒有跟追項目</p>
@@ -8740,6 +8897,18 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
           )}
         </div>
       </div>
+
+      {followUpTarget && (
+        <FollowUpDialog
+          currentUser={null}
+          onComplete={({ text, nextFollowUpDate }) => {
+            const { project: p, update: u } = followUpTarget;
+            onMarkFollowedUp(p, u, text.trim(), nextFollowUpDate);
+            setFollowUpTarget(null);
+          }}
+          onCancel={() => setFollowUpTarget(null)}
+        />
+      )}
     </div>
   );
 }

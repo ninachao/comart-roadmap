@@ -46,10 +46,25 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.10.0';
-const BUILD_ID = '20260615-1700';
+const APP_VERSION = 'v1.12.0';
+const BUILD_ID = '20260616-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.12.0',
+    date: '2026-06-16',
+    changes: [
+      '🔧 修正郵件主旨「搜尋」按鈕：改用正確的 Outlook 深層搜尋連結（deeplink/search），點了會自動在 Outlook Web 執行該主旨搜尋',
+      '註：受 Outlook 限制，連結只能自動執行搜尋，無法直接開啟特定信件，需在搜尋結果中點選',
+    ],
+  },
+  {
+    version: 'v1.11.0',
+    date: '2026-06-15',
+    changes: [
+      '🔧 修正提醒日曆展開後文字溢出卡片：日曆區改為可滾動，限制最大高度',
+    ],
+  },
   {
     version: 'v1.10.0',
     date: '2026-06-15',
@@ -4343,7 +4358,7 @@ function EmailSubjectSection({ project, onChange }) {
   const [tempKind, setTempKind] = useState('內部');
   const [tempSubject, setTempSubject] = useState('');
 
-  const buildSearchUrl = (s) => `https://outlook.office.com/mail/inbox/?search=${encodeURIComponent(s)}`;
+  const buildSearchUrl = (s) => `https://outlook.office.com/mail/deeplink/search?query=${encodeURIComponent(s)}`;
 
   const KIND_STYLES = {
     '內部': 'bg-blue-50 text-blue-700 border-blue-200',
@@ -8629,7 +8644,7 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
         </div>
 
         {/* 底部：日曆收合按鈕 */}
-        <div className="px-6 pt-2 pb-4 border-t border-slate-100">
+        <div className="px-6 pt-2 pb-4 border-t border-slate-100 flex-shrink-0">
           <button
             onClick={() => setShowCalendar(!showCalendar)}
             className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-[13px] text-slate-500 hover:bg-slate-50 transition">
@@ -8639,7 +8654,7 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
           </button>
 
           {showCalendar && (
-            <div className="mt-3" style={{ animation: 'modalFade 0.2s ease-out' }}>
+            <div className="mt-3 overflow-y-auto" style={{ animation: 'modalFade 0.2s ease-out', maxHeight: '38vh' }}>
               {/* 月份導航 */}
               <div className="flex items-center justify-between mb-3 px-1">
                 <button onClick={() => { const d = new Date(calYear, calMonth - 1); setCalYear(d.getFullYear()); setCalMonth(d.getMonth()); setSelectedDate(null); }}

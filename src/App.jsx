@@ -4564,23 +4564,11 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
 
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
+  const drawParamsRef = useRef({ drawX: 0, drawY: 0, drawW: 0, drawH: 0, size: 420 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragType, setDragType] = useState(null); // 'move' | 'nw'|'ne'|'sw'|'se'
-  const [crop, setCrop] = useState({ x: 20, y: 20, w: 60, h: 60 }); // 暫時預設，載入圖片後重算
+  const [crop, setCrop] = useState({ x: 0, y: 0, w: 100, h: 100 });
   const [saving, setSaving] = useState(false);
-
-  // 計算正方形裁剪框（以 canvas 像素空間計算，確保輸出是正方形）
-  const initSquareCrop = (canvasW, canvasH) => {
-    // 取短邊的 85% 作為正方形邊長
-    const shortSide = Math.min(canvasW, canvasH);
-    const sizePx = shortSide * 0.85;
-    // 轉換成百分比（x% 是相對 canvasW，y% 是相對 canvasH）
-    const wPct = sizePx / canvasW * 100;
-    const hPct = sizePx / canvasH * 100;
-    const x = (100 - wPct) / 2;
-    const y = (100 - hPct) / 2;
-    return { x, y, w: wPct, h: hPct };
-  };
   const startRef = useRef(null);
   const cropRef = useRef(crop);
   cropRef.current = crop;
@@ -4594,7 +4582,11 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
     ctx.clearRect(0, 0, W, H);
-    ctx.drawImage(img, 0, 0, W, H);
+    // 白色背景 + letterbox 置中繪製（不拉伸）
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+    const { drawX, drawY, drawW, drawH } = drawParamsRef.current;
+    ctx.drawImage(img, drawX, drawY, drawW, drawH);
 
     const { x, y, w, h } = cropRef.current;
     const cx = x / 100 * W, cy = y / 100 * H;
@@ -4648,13 +4640,17 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
           imgRef.current = img;
           const canvas = canvasRef.current;
           if (!canvas) return;
-          const maxW = 600, maxH = 420;
-          let w = img.naturalWidth, h = img.naturalHeight;
-          if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
-          if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
-          canvas.width = w; canvas.height = h;
-          // 自動設定正方形裁剪框（以 canvas 像素空間計算）
-          const sq = initSquareCrop(w, h);
+          // 畫布固定為正方形，圖片 letterbox 置中（不拉伸，不裁切）
+          const size = 420;
+          const scale = Math.min(size / img.naturalWidth, size / img.naturalHeight);
+          const drawW = Math.round(img.naturalWidth * scale);
+          const drawH = Math.round(img.naturalHeight * scale);
+          const drawX = Math.round((size - drawW) / 2);
+          const drawY = Math.round((size - drawH) / 2);
+          drawParamsRef.current = { drawX, drawY, drawW, drawH, size };
+          canvas.width = size; canvas.height = size;
+          // 裁剪框預設包住整張圖（全選）
+          const sq = { x: 0, y: 0, w: 100, h: 100 };
           setCrop(sq);
           cropRef.current = sq;
           draw();
@@ -4765,16 +4761,24 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
     const img = imgRef.current;
     if (!img) return;
     setSaving(true);
+    // 先在乾淨畫布重繪 letterbox 圖（無裁剪框遮罩）
+    const { drawX, drawY, drawW, drawH, size } = drawParamsRef.current;
+    const clean = document.createElement('canvas');
+    clean.width = size; clean.height = size;
+    const cctx = clean.getContext('2d');
+    cctx.fillStyle = '#ffffff';
+    cctx.fillRect(0, 0, size, size);
+    cctx.drawImage(img, drawX, drawY, drawW, drawH);
+    // 再從乾淨畫布上依裁剪框取出正方形
     const { x, y, w, h } = crop;
-    const sx = x / 100 * img.naturalWidth;
-    const sy = y / 100 * img.naturalHeight;
-    const sw = w / 100 * img.naturalWidth;
-    const sh = h / 100 * img.naturalHeight;
-    // 強制正方形輸出（取較小的邊）
+    const sx = x / 100 * size;
+    const sy = y / 100 * size;
+    const sw = w / 100 * size;
+    const sh = h / 100 * size;
     const sizePx = Math.round(Math.min(sw, sh));
     const out = document.createElement('canvas');
     out.width = sizePx; out.height = sizePx;
-    out.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sizePx, sizePx);
+    out.getContext('2d').drawImage(clean, sx, sy, sw, sh, 0, 0, sizePx, sizePx);
     out.toBlob(async (blob) => {
       const croppedFile = new File([blob], `crop_${Date.now()}.jpg`, { type: 'image/jpeg' });
       const compressed = await compressImageFile(croppedFile);

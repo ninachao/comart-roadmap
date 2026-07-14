@@ -47,10 +47,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.17.1';
-const BUILD_ID = '20260714-1300';
+const APP_VERSION = 'v1.18.0';
+const BUILD_ID = '20260714-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.18.0',
+    date: '2026-07-14',
+    changes: [
+      '🖼 備料申請匯出 PDF：自動帶入連結產品的圖片（之前只有手動附加的圖）',
+      '📊 匯出 Excel 升級：從 CSV 改為真正的 .xlsx 檔案，每筆申請內嵌產品圖片（exceljs）',
+    ],
+  },
   {
     version: 'v1.17.1',
     date: '2026-07-14',
@@ -6792,14 +6800,24 @@ async function reqImageToDataUrl(file) {
   });
 }
 
+// 取圖片的 src 字串（支援字串 / {dataUrl} / {url} 三種格式）
+function reqImgSrc(img) {
+  if (!img) return '';
+  if (typeof img === 'string') return img;
+  return img.dataUrl || img.url || '';
+}
+
 // === 備料申請：匯出 PDF ===
+// 每筆 request 需先帶 _exportImg（getReqDisplayImage 的結果，含連結產品的圖）
 function exportSampleRequestsPDF(requests) {
   const today = new Date().toLocaleDateString('zh-TW');
   const STATUS_COLOR = { '待備料': '#f59e0b', '備料中': '#3b82f6', '已完成': '#22c55e' };
   let rows = '';
   requests.forEach((r, idx) => {
-    const imgs = (r.images || []).map(img =>
-      `<img src="${img.dataUrl || img.url || ''}" style="width:56px;height:56px;object-fit:contain;border:1px solid #e2e8f0;border-radius:4px;background:#fff;margin-right:4px;" />`
+    const mainSrc = reqImgSrc(r._exportImg);
+    const srcs = [mainSrc, ...(r.images || []).map(reqImgSrc)].filter((s, i, arr) => s && arr.indexOf(s) === i);
+    const imgs = srcs.map(s =>
+      `<img src="${s}" style="width:56px;height:56px;object-fit:contain;border:1px solid #e2e8f0;border-radius:4px;background:#fff;margin-right:4px;" />`
     ).join('');
     rows += `<tr style="background:${idx % 2 === 0 ? '#fff' : '#f8fafc'}">
       <td style="padding:10px 8px;font-weight:600;font-size:13px;">${r.productName || '—'}<br/><span style="font-size:11px;color:#94a3b8;font-weight:400;">${r.productCode || ''}</span></td>
@@ -6823,18 +6841,62 @@ function exportSampleRequestsPDF(requests) {
   if (w) { w.document.write(html); w.document.close(); }
 }
 
-// === 備料申請：匯出 CSV ===
-function exportSampleRequestsCSV(requests) {
-  const headers = ['產品名稱', '產品代碼', '數量', '單位', '用途', '希望完成日', '備註', '狀態', '申請人', '申請日期'];
-  const escape = (v) => `"${String(v || '').replace(/"/g, '""')}"`;
-  const rows = requests.map(r => [
-    r.productName, r.productCode, r.quantity, r.unit || '個',
-    r.purpose, r.neededBy, r.note, r.status, r.requestedBy, r.requestedAt,
-  ].map(escape).join(','));
-  const csv = '﻿' + [headers.join(','), ...rows].join('\r\n');
+// === 備料申請：匯出 Excel（真正的 .xlsx，含內嵌圖片） ===
+// exceljs 用動態 import，避免拖慢主程式載入
+async function exportSampleRequestsXLSX(requests) {
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('備料申請');
+
+  ws.columns = [
+    { header: '圖片', width: 14 },
+    { header: '產品名稱', width: 32 },
+    { header: '產品代碼', width: 16 },
+    { header: '數量', width: 8 },
+    { header: '單位', width: 6 },
+    { header: '用途', width: 20 },
+    { header: '希望完成日', width: 14 },
+    { header: '備註', width: 30 },
+    { header: '狀態', width: 10 },
+    { header: '申請人', width: 10 },
+    { header: '申請日期', width: 12 },
+  ];
+  const headerRow = ws.getRow(1);
+  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+  headerRow.height = 20;
+
+  // 圖片轉 base64：dataUrl 直接用；url 嘗試 fetch（失敗就略過圖片）
+  const toBase64 = async (img) => {
+    const src = reqImgSrc(img);
+    if (!src) return null;
+    if (src.startsWith('data:')) return src;
+    try {
+      const blob = await fetch(src).then(x => x.blob());
+      return await new Promise(res => { const rd = new FileReader(); rd.onload = e => res(e.target.result); rd.readAsDataURL(blob); });
+    } catch { return null; }
+  };
+
+  for (let i = 0; i < requests.length; i++) {
+    const r = requests[i];
+    const row = ws.getRow(i + 2);
+    row.values = ['', r.productName || '', r.productCode || '', r.quantity || 1, r.unit || '個',
+      r.purpose || '', r.neededBy || '', r.note || '', r.status || '待備料', r.requestedBy || '', r.requestedAt || ''];
+    row.height = 64;
+    row.alignment = { vertical: 'middle', wrapText: true };
+
+    const b64 = await toBase64(r._exportImg || (r.images || [])[0]);
+    if (b64) {
+      const ext = b64.includes('image/png') ? 'png' : 'jpeg';
+      const imgId = wb.addImage({ base64: b64, extension: ext });
+      ws.addImage(imgId, { tl: { col: 0.1, row: i + 1.05 }, ext: { width: 78, height: 78 } });
+    }
+  }
+
+  const buf = await wb.xlsx.writeBuffer();
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
-  a.download = `備料申請清單_${new Date().toISOString().split('T')[0]}.csv`;
+  a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  a.download = `備料申請清單_${new Date().toISOString().split('T')[0]}.xlsx`;
   a.click();
 }
 
@@ -7748,11 +7810,15 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                 ))}
               </div>
               <div className="flex-1" />
-              <button onClick={() => exportSampleRequestsPDF(filteredRequests)}
+              <button onClick={() => exportSampleRequestsPDF(filteredRequests.map(r => ({ ...r, _exportImg: getReqDisplayImage(r) })))}
                 className="flex items-center gap-1 px-3 py-1.5 text-xs text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition">
                 🖨 匯出 PDF
               </button>
-              <button onClick={() => exportSampleRequestsCSV(filteredRequests)}
+              <button onClick={async () => {
+                try {
+                  await exportSampleRequestsXLSX(filteredRequests.map(r => ({ ...r, _exportImg: getReqDisplayImage(r) })));
+                } catch (e) { console.error('匯出 Excel 失敗:', e); alert('匯出 Excel 失敗，請再試一次'); }
+              }}
                 className="flex items-center gap-1 px-3 py-1.5 text-xs text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition">
                 📊 匯出 Excel
               </button>

@@ -12,6 +12,7 @@
     "deploy": "gh-pages -d dist"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "firebase": "^12.12.1",
     "lucide-react": "^1.14.0",
     "react": "^19.2.5",

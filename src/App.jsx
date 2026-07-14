@@ -47,10 +47,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.17.0';
-const BUILD_ID = '20260714-1200';
+const APP_VERSION = 'v1.17.1';
+const BUILD_ID = '20260714-1300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.17.1',
+    date: '2026-07-14',
+    changes: [
+      '🔧 修正備料申請「儲存失敗」：從產品庫選產品時不再複製產品圖進產品文件（圖片太大會超過 Firestore 1MB 文件上限），顯示與匯出時自動從連結產品取圖',
+    ],
+  },
   {
     version: 'v1.17.0',
     date: '2026-07-14',
@@ -6956,18 +6963,19 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       status: '待備料',
       requestedBy: currentUser?.name || '',
       requestedAt: today,
-      images: newReq.coverImage ? [newReq.coverImage] : [],
+      images: [],
     };
     if (newReq.isManual) {
-      // 手動申請：存到獨立 collection
+      // 手動申請：存到獨立 collection（圖片已壓縮，體積小）
       if (!newReq.productName.trim()) return;
       const req = { ...base, productName: newReq.productName.trim(), productCode: newReq.productCode.trim(), coverImage: newReq.coverImage || null };
       if (onAddManualRequest) onAddManualRequest(req);
     } else {
-      // 從產品庫選的
+      // 從產品庫選的：不複製產品圖進 project 文件（避免超過 Firestore 1MB 上限），
+      // 顯示時 getReqDisplayImage 會自動從連結產品取圖
       const p = projects.find(x => String(x.id) === String(newReq.projectId));
       if (!p || !onUpdateProject) return;
-      const req = { ...base, productName: p.name, productCode: p.code || '', coverImage: newReq.coverImage || null };
+      const req = { ...base, productName: p.name, productCode: p.code || '', coverImage: null };
       onUpdateProject(p.id, 'sampleRequests', [...(p.sampleRequests || []), req]);
     }
     setShowNewReqForm(false);

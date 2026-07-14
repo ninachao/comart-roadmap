@@ -47,10 +47,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.18.3';
-const BUILD_ID = '20260714-1700';
+const APP_VERSION = 'v1.18.4';
+const BUILD_ID = '20260714-1800';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.18.4',
+    date: '2026-07-14',
+    changes: [
+      '🗑 樣品申請移除「用途」欄位：新增表單、申請卡片、PDF、Excel 匯出全部拿掉（領用紀錄的用途欄不受影響）',
+    ],
+  },
   {
     version: 'v1.18.3',
     date: '2026-07-14',
@@ -6845,7 +6852,6 @@ function exportSampleRequestsPDF(requests) {
       <td class="c-name"><b>${r.productName || '—'}</b>${r.productCode ? `<br/><span class="code">${r.productCode}</span>` : ''}</td>
       <td class="c-qty">${r.quantity || 1}&nbsp;${r.unit || '個'}</td>
       <td class="c-date">${r.neededBy || '—'}</td>
-      <td class="c-purpose">${r.purpose || '—'}</td>
       <td class="c-note">${r.note || ''}</td>
       <td class="c-status"><span class="pill" style="background:${STATUS_COLOR[r.status] || '#94a3b8'};">${r.status || '待備料'}</span></td>
     </tr>`;
@@ -6860,7 +6866,7 @@ function exportSampleRequestsPDF(requests) {
     td{border-bottom:1px solid #e2e8f0;vertical-align:middle;padding:8px 6px;font-size:12px;word-break:break-word;}
     .c-img{width:70px;} .c-qty{width:52px;text-align:center;white-space:nowrap;}
     .c-date{width:88px;white-space:nowrap;} .c-status{width:64px;text-align:center;}
-    .c-name{width:22%;} .c-purpose{width:14%;}
+    .c-name{width:26%;}
     .c-name b{font-size:13px;font-weight:600;}
     .code{font-size:11px;color:#94a3b8;font-family:Consolas,monospace;}
     .c-note{color:#475569;}
@@ -6873,7 +6879,7 @@ function exportSampleRequestsPDF(requests) {
   <h1>樣品申請清單</h1>
   <p class="meta">匯出日期：${today}　共 ${requests.length} 筆</p>
   <table>
-    <thead><tr><th class="c-img">圖片</th><th class="c-name">產品</th><th class="c-qty">數量</th><th class="c-date">完成日</th><th class="c-purpose">用途</th><th>備註</th><th class="c-status">狀態</th></tr></thead>
+    <thead><tr><th class="c-img">圖片</th><th class="c-name">產品</th><th class="c-qty">數量</th><th class="c-date">完成日</th><th>備註</th><th class="c-status">狀態</th></tr></thead>
   <tbody>${rows}</tbody></table>
   <script>window.onload=()=>window.print();<\/script></body></html>`;
   const w = window.open('', '_blank');
@@ -6893,7 +6899,6 @@ async function exportSampleRequestsXLSX(requests) {
     { header: '產品代碼', width: 16 },
     { header: '數量', width: 8 },
     { header: '單位', width: 6 },
-    { header: '用途', width: 20 },
     { header: '希望完成日', width: 14 },
     { header: '備註', width: 30 },
     { header: '狀態', width: 10 },
@@ -6920,7 +6925,7 @@ async function exportSampleRequestsXLSX(requests) {
     const r = requests[i];
     const row = ws.getRow(i + 2);
     row.values = ['', r.productName || '', r.productCode || '', r.quantity || 1, r.unit || '個',
-      r.purpose || '', r.neededBy || '', r.note || '', r.status || '待備料', r.requestedBy || '', r.requestedAt || ''];
+      r.neededBy || '', r.note || '', r.status || '待備料', r.requestedBy || '', r.requestedAt || ''];
     row.height = 64;
     row.alignment = { vertical: 'middle', wrapText: true };
 
@@ -6946,7 +6951,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [reqStatusFilter, setReqStatusFilter] = useState('全部');
   const [showNewReqForm, setShowNewReqForm] = useState(false);
   const [showProductPicker, setShowProductPicker] = useState(false);
-  const BLANK_REQ = { isManual: false, projectId: '', productName: '', productCode: '', coverImage: null, quantity: 1, unit: '個', purpose: '', neededBy: '', note: '' };
+  const BLANK_REQ = { isManual: false, projectId: '', productName: '', productCode: '', coverImage: null, quantity: 1, unit: '個', neededBy: '', note: '' };
   const [newReq, setNewReq] = useState(BLANK_REQ);
   const [reqImageUploading, setReqImageUploading] = useState(null);
 
@@ -7040,7 +7045,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       name: r.productName || '',
       sampleNo: r.productCode || '',
       initialQuantity: Number(r.quantity) || 1,
-      notes: ['由樣品申請轉入', r.purpose, r.note].filter(Boolean).join('｜'),
+      notes: ['由樣品申請轉入', r.note].filter(Boolean).join('｜'),
       images: img ? [img] : [],
       createdAt: Date.now(),
     };
@@ -7058,7 +7063,6 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       id: 'sr_' + Date.now(),
       quantity: newReq.quantity || 1,
       unit: newReq.unit || '個',
-      purpose: newReq.purpose,
       neededBy: newReq.neededBy,
       note: newReq.note,
       status: '待備料',
@@ -8033,12 +8037,6 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                       className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
                   </div>
                   <div className="col-span-2">
-                    <label className="text-xs text-slate-500 mb-1 block">用途</label>
-                    <input type="text" value={newReq.purpose} placeholder="展覽用 / 送樣 / 測試..."
-                      onChange={e => setNewReq(v => ({ ...v, purpose: e.target.value }))}
-                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
-                  </div>
-                  <div className="col-span-2">
                     <label className="text-xs text-slate-500 mb-1 block">備註</label>
                     <textarea value={newReq.note} rows={2} placeholder="規格說明、特殊要求..."
                       onChange={e => setNewReq(v => ({ ...v, note: e.target.value }))}
@@ -8155,7 +8153,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                               className="w-24 text-xs text-slate-400 font-mono bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 disabled:cursor-default" />
                           </div>
 
-                          {/* 數量 + 用途 */}
+                          {/* 數量 + 完成日 */}
                           <div className="flex items-center gap-2 flex-wrap text-sm text-slate-600">
                             <span className="text-xs text-slate-400">數量</span>
                             <input type="number" min="1" value={r.quantity || 1}
@@ -8166,16 +8164,6 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                               onChange={e => updateReqField(r, 'unit', e.target.value)}
                               disabled={!canEdit}
                               className="w-10 text-sm border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
-                            <span className="text-xs text-slate-400">用途</span>
-                            <input value={r.purpose || ''}
-                              onChange={e => updateReqField(r, 'purpose', e.target.value)}
-                              placeholder="展覽 / 送樣 / 測試..."
-                              disabled={!canEdit}
-                              className="flex-1 min-w-0 text-sm border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 bg-transparent disabled:cursor-default" />
-                          </div>
-
-                          {/* 完成日 */}
-                          <div className="flex items-center gap-2">
                             <span className="text-xs text-slate-400">完成日</span>
                             <input type="date" value={r.neededBy || ''}
                               onChange={e => updateReqField(r, 'neededBy', e.target.value)}

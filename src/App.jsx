@@ -47,10 +47,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.18.4';
-const BUILD_ID = '20260714-1800';
+const APP_VERSION = 'v1.18.5';
+const BUILD_ID = '20260714-1900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.18.5',
+    date: '2026-07-14',
+    changes: [
+      '🔧 樣品申請 PDF 匯出：備註保留分行（white-space:pre-line），多行文字不再擠成一行',
+    ],
+  },
   {
     version: 'v1.18.4',
     date: '2026-07-14',
@@ -6869,7 +6876,7 @@ function exportSampleRequestsPDF(requests) {
     .c-name{width:26%;}
     .c-name b{font-size:13px;font-weight:600;}
     .code{font-size:11px;color:#94a3b8;font-family:Consolas,monospace;}
-    .c-note{color:#475569;}
+    .c-note{color:#475569;white-space:pre-line;}
     .pill{color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;white-space:nowrap;display:inline-block;}
     .pimg{width:56px;height:56px;object-fit:contain;border:1px solid #e2e8f0;border-radius:4px;background:#fff;margin:1px;}
     tr{page-break-inside:avoid;}

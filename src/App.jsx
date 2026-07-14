@@ -47,10 +47,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.18.0';
-const BUILD_ID = '20260714-1400';
+const APP_VERSION = 'v1.18.1';
+const BUILD_ID = '20260714-1500';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.18.1',
+    date: '2026-07-14',
+    changes: [
+      '✨ 樣品申請狀態可退回：新增「← 上一狀態」按鈕（備料中→待備料、已完成→備料中），按錯可救',
+      '📝 「備料申請」更名為「樣品申請」（分頁、表單、匯出檔名與標題）',
+    ],
+  },
   {
     version: 'v1.18.0',
     date: '2026-07-14',
@@ -6829,10 +6837,10 @@ function exportSampleRequestsPDF(requests) {
       <td style="padding:10px 8px;text-align:center;"><span style="background:${STATUS_COLOR[r.status] || '#94a3b8'};color:#fff;font-size:11px;padding:2px 10px;border-radius:99px;">${r.status || '待備料'}</span></td>
     </tr>`;
   });
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>備料申請清單</title>
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>樣品申請清單</title>
   <style>body{font-family:'Noto Sans TC',Arial,sans-serif;padding:24px;color:#1e293b;}h1{font-size:18px;margin-bottom:4px;}p.meta{font-size:12px;color:#94a3b8;margin-bottom:20px;}table{width:100%;border-collapse:collapse;}th{background:#1e293b;color:#fff;padding:8px;font-size:12px;text-align:left;}td{border-bottom:1px solid #e2e8f0;vertical-align:middle;}@media print{body{padding:12px;}}</style>
   </head><body>
-  <h1>備料申請清單</h1>
+  <h1>樣品申請清單</h1>
   <p class="meta">匯出日期：${today}　共 ${requests.length} 筆</p>
   <table><thead><tr><th>產品</th><th>數量</th><th>用途</th><th>希望完成日</th><th>備註</th><th>圖片</th><th>狀態</th></tr></thead>
   <tbody>${rows}</tbody></table>
@@ -6846,7 +6854,7 @@ function exportSampleRequestsPDF(requests) {
 async function exportSampleRequestsXLSX(requests) {
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('備料申請');
+  const ws = wb.addWorksheet('樣品申請');
 
   ws.columns = [
     { header: '圖片', width: 14 },
@@ -6896,7 +6904,7 @@ async function exportSampleRequestsXLSX(requests) {
   const buf = await wb.xlsx.writeBuffer();
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-  a.download = `備料申請清單_${new Date().toISOString().split('T')[0]}.xlsx`;
+  a.download = `樣品申請清單_${new Date().toISOString().split('T')[0]}.xlsx`;
   a.click();
 }
 
@@ -6990,7 +6998,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const completeRequest = async (r) => {
     updateReqField(r, 'status', '已完成');
     const linkMsg = r._project ? `，並連結到「${r._project.name}」的相關樣品（含手板）` : '';
-    if (!window.confirm(`「${r.productName}」備料完成 🎉\n\n要同時新增到樣品庫嗎？${linkMsg}`)) return;
+    if (!window.confirm(`「${r.productName}」樣品完成 🎉\n\n要同時新增到樣品庫嗎？${linkMsg}`)) return;
     const sampleId = `s${Date.now()}`;
     const img = getReqDisplayImage(r);
     const sample = {
@@ -7001,7 +7009,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       name: r.productName || '',
       sampleNo: r.productCode || '',
       initialQuantity: Number(r.quantity) || 1,
-      notes: ['由備料申請轉入', r.purpose, r.note].filter(Boolean).join('｜'),
+      notes: ['由樣品申請轉入', r.purpose, r.note].filter(Boolean).join('｜'),
       images: img ? [img] : [],
       createdAt: Date.now(),
     };
@@ -7310,7 +7318,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             onClick={() => setTab('requests')}
             className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'requests' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
           >
-            📋 備料申請 {allRequests.filter(r => r.status !== '已完成').length > 0 && <span className="ml-1 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{allRequests.filter(r => r.status !== '已完成').length}</span>}
+            📋 樣品申請 {allRequests.filter(r => r.status !== '已完成').length > 0 && <span className="ml-1 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{allRequests.filter(r => r.status !== '已完成').length}</span>}
           </button>
         </div>
 
@@ -7835,7 +7843,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             {showNewReqForm && (
               <div className="mb-4 p-4 rounded-xl border border-slate-200 bg-slate-50 relative">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-sm font-medium text-slate-700">新增備料申請</p>
+                  <p className="text-sm font-medium text-slate-700">新增樣品申請</p>
                   {/* 模式切換 */}
                   <div className="flex rounded-lg overflow-hidden border border-slate-200 text-xs">
                     <button
@@ -8024,16 +8032,16 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             {filteredRequests.length === 0 ? (
               <div className="flex flex-col items-center justify-center flex-1 text-center py-16 text-slate-400">
                 <p className="text-4xl mb-3">📋</p>
-                <p className="text-sm">目前沒有{reqStatusFilter !== '全部' ? reqStatusFilter + '的' : ''}備料申請</p>
+                <p className="text-sm">目前沒有{reqStatusFilter !== '全部' ? reqStatusFilter + '的' : ''}樣品申請</p>
                 {canEdit && <button onClick={() => setShowNewReqForm(true)} className="mt-3 text-xs text-amber-600 hover:underline">+ 新增第一筆</button>}
               </div>
             ) : (
               <div className="space-y-3 flex-1 overflow-y-auto pb-2">
                 {filteredRequests.map((r) => {
                   const STATUS_STYLE = {
-                    '待備料': { bg: '#fef3c7', color: '#92400e', next: '備料中' },
-                    '備料中': { bg: '#dbeafe', color: '#1e40af', next: '已完成' },
-                    '已完成': { bg: '#dcfce7', color: '#166534', next: null },
+                    '待備料': { bg: '#fef3c7', color: '#92400e', next: '備料中', prev: null },
+                    '備料中': { bg: '#dbeafe', color: '#1e40af', next: '已完成', prev: '待備料' },
+                    '已完成': { bg: '#dcfce7', color: '#166534', next: null, prev: '備料中' },
                   };
                   const st = STATUS_STYLE[r.status] || STATUS_STYLE['待備料'];
                   const displayImg = getReqDisplayImage(r);
@@ -8043,6 +8051,13 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                       {/* 頂部狀態列 */}
                       <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50">
                         <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: st.bg, color: st.color }}>{r.status}</span>
+                        {st.prev && canEdit && (
+                          <button onClick={() => updateReqField(r, 'status', st.prev)}
+                            title="退回上一狀態"
+                            className="text-[11px] text-slate-400 hover:text-slate-700 border border-slate-200 px-2 py-0.5 rounded-full transition">
+                            ← {st.prev}
+                          </button>
+                        )}
                         {st.next && canEdit && (
                           <button onClick={() => st.next === '已完成' ? completeRequest(r) : updateReqField(r, 'status', st.next)}
                             className="text-[11px] text-slate-400 hover:text-slate-700 border border-slate-200 px-2 py-0.5 rounded-full transition">

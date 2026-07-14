@@ -47,10 +47,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.16.0';
-const BUILD_ID = '20260714-1000';
+const APP_VERSION = 'v1.16.1';
+const BUILD_ID = '20260714-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.16.1',
+    date: '2026-07-14',
+    changes: [
+      '🎨 備料申請新增表單改為左右兩欄：左邊選產品（縮小圖片格不再遮擋），右邊填數量、完成日、用途、備註，視覺更平衡',
+    ],
+  },
   {
     version: 'v1.16.0',
     date: '2026-07-14',
@@ -7736,9 +7743,12 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                   </div>
                 </div>
 
+                <div className="flex flex-col sm:flex-row gap-4">
+                {/* 左欄：選產品 / 手動輸入 */}
+                <div className="sm:w-1/2 min-w-0">
                 {/* 從產品庫選：視覺化圖片格 */}
                 {!newReq.isManual && (
-                  <div className="mb-3">
+                  <div>
                     {newReq.projectId ? (
                       /* 已選產品：顯示選中狀態 */
                       <div className="flex items-center gap-3 p-2 rounded-lg border border-amber-300 bg-amber-50">
@@ -7765,7 +7775,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                           className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg mb-2 focus:outline-none focus:border-amber-400 bg-white"
                           autoFocus
                         />
-                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-52 overflow-y-auto pr-1">
+                        <div className="grid grid-cols-3 gap-1.5 max-h-64 overflow-y-auto pr-1">
                           {projects
                             .filter(p => p.status !== '取消' && (
                               !pickerSearch ||
@@ -7781,11 +7791,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                     const img = (p.productImages || [])[0] || null;
                                     setNewReq(v => ({ ...v, projectId: p.id, productName: p.name, productCode: p.code || '', coverImage: img }));
                                   }}
-                                  className="flex flex-col items-center p-2 rounded-lg border border-slate-200 bg-white hover:border-amber-400 hover:bg-amber-50 transition text-left group">
+                                  className="flex flex-col items-center p-1.5 rounded-lg border border-slate-200 bg-white hover:border-amber-400 hover:bg-amber-50 transition text-left group">
                                   {thumbSrc ? (
-                                    <img src={thumbSrc} alt="" className="w-full aspect-square object-contain rounded mb-1 bg-slate-50" />
+                                    <img src={thumbSrc} alt="" className="w-14 h-14 object-contain rounded mb-1 bg-slate-50" />
                                   ) : (
-                                    <div className="w-full aspect-square rounded mb-1 bg-slate-100 flex items-center justify-center text-slate-300 text-2xl">📦</div>
+                                    <div className="w-14 h-14 rounded mb-1 bg-slate-100 flex items-center justify-center text-slate-300 text-xl">📦</div>
                                   )}
                                   <p className="text-[11px] text-slate-700 text-center leading-tight line-clamp-2 group-hover:text-amber-800">{p.name}</p>
                                   {p.code && <p className="text-[10px] text-slate-400 font-mono mt-0.5">{p.code}</p>}
@@ -7800,7 +7810,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
 
                 {/* 手動輸入模式 */}
                 {newReq.isManual && (
-                  <div className="mb-3 grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     <div className="col-span-2">
                       <label className="text-xs text-slate-500 mb-1 block">產品名稱 *</label>
                       <input value={newReq.productName} onChange={e => setNewReq(v => ({ ...v, productName: e.target.value }))}
@@ -7852,8 +7862,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                   </div>
                 )}
 
-                {/* 共用欄位 */}
-                <div className="grid grid-cols-2 gap-2">
+                </div>
+
+                {/* 右欄：共用欄位 */}
+                <div className="sm:w-1/2 min-w-0 grid grid-cols-2 gap-2 content-start">
                   <div>
                     <label className="text-xs text-slate-500 mb-1 block">數量</label>
                     <div className="flex gap-1">
@@ -7883,6 +7895,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                       onChange={e => setNewReq(v => ({ ...v, note: e.target.value }))}
                       className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none bg-white" />
                   </div>
+                </div>
                 </div>
                 <div className="flex gap-2 mt-3 justify-end">
                   <button onClick={() => { setShowNewReqForm(false); setNewReq(BLANK_REQ); }}

@@ -36,6 +36,7 @@ const SAMPLES_COL = 'samples';
 const WITHDRAWALS_COL = 'sample_withdrawals';
 const EXHIBITIONS_COL = 'exhibitions';
 const TRACKING_COL = 'tracking_overrides'; // 手動追蹤調整
+const MANUAL_REQUESTS_COL = 'sample_requests'; // 手動備料申請（不掛在產品下的）
 const STORAGE_FOLDER = 'roadmap';
 
 // === 簡易密碼設定 ===
@@ -46,10 +47,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.14.0';
-const BUILD_ID = '20260703-1000';
+const APP_VERSION = 'v1.16.0';
+const BUILD_ID = '20260714-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.16.0',
+    date: '2026-07-14',
+    changes: [
+      '✨ 備料申請 UI 全面重設計：新增「從產品庫選」視覺圖片格，取代難用的下拉選單',
+      '✨ 新增「手動輸入」模式：可自行輸入產品名稱、代碼並貼上/上傳圖片（用於庫外產品）',
+      '🖼 選擇既有產品時自動帶入產品圖片，申請卡片左側顯示圖片縮圖',
+      '🔧 修正備料申請欄位更新、圖片貼上/刪除的函式簽名，統一使用申請物件（r）而非分散的 id 參數',
+    ],
+  },
   {
     version: 'v1.14.0',
     date: '2026-07-03',
@@ -1773,6 +1784,19 @@ export default function ProductRoadmap() {
     return () => unsub();
   }, [currentUser]);
 
+  // === 訂閱手動備料申請 ===
+  const [manualRequests, setManualRequests] = useState([]);
+  useEffect(() => {
+    if (!currentUser) return;
+    const colRef = collection(db, MANUAL_REQUESTS_COL);
+    const unsub = onSnapshot(colRef, (snap) => {
+      const items = snap.docs.map(d => ({ ...d.data(), _docId: d.id, _isManual: true }));
+      items.sort((a, b) => (b.requestedAt || '').localeCompare(a.requestedAt || ''));
+      setManualRequests(items);
+    });
+    return () => unsub();
+  }, [currentUser]);
+
   // === 訂閱追蹤調整（手動加入/排除）===
   useEffect(() => {
     if (!currentUser) return;
@@ -2849,6 +2873,17 @@ export default function ProductRoadmap() {
               setOpenFrom('samples');
               setShowSampleLibrary(false);
             }
+          }}
+          manualRequests={manualRequests}
+          onAddManualRequest={async (req) => {
+            const docRef = doc(collection(db, MANUAL_REQUESTS_COL));
+            await setDoc(docRef, { ...req, _docId: docRef.id });
+          }}
+          onUpdateManualRequest={async (docId, changes) => {
+            await setDoc(doc(db, MANUAL_REQUESTS_COL, docId), changes, { merge: true });
+          }}
+          onDeleteManualRequest={async (docId) => {
+            await deleteDoc(doc(db, MANUAL_REQUESTS_COL, docId));
           }}
           onUpdateProject={(projectId, field, value) => {
             const p = projects.find(x => String(x.id) === String(projectId));
@@ -6780,67 +6815,96 @@ function exportSampleRequestsCSV(requests) {
   a.click();
 }
 
-function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, currentUser, canEdit, onClose, onJumpToProject, onUpdateProject }) {
+function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, currentUser, canEdit, onClose, onJumpToProject, onUpdateProject, manualRequests = [], onAddManualRequest, onUpdateManualRequest, onDeleteManualRequest }) {
   const [tab, setTab] = useState('samples'); // 'samples' | 'withdrawals' | 'exhibitions' | 'requests'
 
   // ── 備料申請 tab 狀態 ──
   const [reqStatusFilter, setReqStatusFilter] = useState('全部');
   const [showNewReqForm, setShowNewReqForm] = useState(false);
-  const [newReq, setNewReq] = useState({ projectId: '', quantity: 1, unit: '個', purpose: '', neededBy: '', note: '' });
-  const [reqImageUploading, setReqImageUploading] = useState(null); // requestId
+  const [showProductPicker, setShowProductPicker] = useState(false);
+  const BLANK_REQ = { isManual: false, projectId: '', productName: '', productCode: '', coverImage: null, quantity: 1, unit: '個', purpose: '', neededBy: '', note: '' };
+  const [newReq, setNewReq] = useState(BLANK_REQ);
+  const [reqImageUploading, setReqImageUploading] = useState(null);
 
+  // 合併：產品下的申請 + 獨立手動申請
   const allRequests = useMemo(() => {
     const ORDER = { '待備料': 0, '備料中': 1, '已完成': 2 };
-    return projects
-      .flatMap(p => (p.sampleRequests || []).map(r => ({ ...r, _project: p })))
-      .sort((a, b) => {
-        const s = (ORDER[a.status] ?? 0) - (ORDER[b.status] ?? 0);
-        return s !== 0 ? s : (a.neededBy || '').localeCompare(b.neededBy || '');
-      });
-  }, [projects]);
+    const fromProjects = projects.flatMap(p =>
+      (p.sampleRequests || []).map(r => ({ ...r, _project: p, _isManual: false }))
+    );
+    const manual = (manualRequests || []).map(r => ({ ...r, _project: null, _isManual: true }));
+    return [...fromProjects, ...manual].sort((a, b) => {
+      const s = (ORDER[a.status] ?? 0) - (ORDER[b.status] ?? 0);
+      return s !== 0 ? s : (a.neededBy || '').localeCompare(b.neededBy || '');
+    });
+  }, [projects, manualRequests]);
 
   const filteredRequests = reqStatusFilter === '全部' ? allRequests : allRequests.filter(r => r.status === reqStatusFilter);
 
-  const updateReqField = (projectId, reqId, field, value) => {
-    if (!onUpdateProject) return;
-    const p = projects.find(x => String(x.id) === String(projectId));
-    if (!p) return;
-    onUpdateProject(projectId, 'sampleRequests', (p.sampleRequests || []).map(r => r.id === reqId ? { ...r, [field]: value } : r));
+  // 取申請的顯示圖片（優先用存的，其次從連結產品取）
+  const getReqDisplayImage = (r) => {
+    if (r.coverImage) return r.coverImage;
+    if ((r.images || []).length > 0) return r.images[0];
+    if (r._project) {
+      const pi = (r._project.productImages || [])[0];
+      if (pi) return pi;
+    }
+    return null;
   };
 
-  const addReqImage = async (projectId, reqId, file) => {
-    setReqImageUploading(reqId);
+  const updateReqField = (r, field, value) => {
+    if (r._isManual) {
+      if (onUpdateManualRequest) onUpdateManualRequest(r._docId, { [field]: value });
+    } else {
+      if (!onUpdateProject) return;
+      const p = r._project;
+      onUpdateProject(p.id, 'sampleRequests', (p.sampleRequests || []).map(x => x.id === r.id ? { ...x, [field]: value } : x));
+    }
+  };
+
+  const addReqImage = async (r, file) => {
+    setReqImageUploading(r.id || r._docId);
     try {
       const dataUrl = await reqImageToDataUrl(file);
-      const p = projects.find(x => String(x.id) === String(projectId));
-      if (!p || !onUpdateProject) return;
-      onUpdateProject(projectId, 'sampleRequests', (p.sampleRequests || []).map(r =>
-        r.id === reqId ? { ...r, images: [...(r.images || []), { dataUrl, name: file.name }] } : r
-      ));
+      const newImg = { dataUrl, name: file.name };
+      if (r._isManual) {
+        if (onUpdateManualRequest) onUpdateManualRequest(r._docId, { images: [...(r.images || []), newImg] });
+      } else {
+        const p = r._project;
+        if (!onUpdateProject) return;
+        onUpdateProject(p.id, 'sampleRequests', (p.sampleRequests || []).map(x =>
+          x.id === r.id ? { ...x, images: [...(x.images || []), newImg] } : x
+        ));
+      }
     } finally { setReqImageUploading(null); }
   };
 
-  const removeReqImage = (projectId, reqId, imgIdx) => {
-    const p = projects.find(x => String(x.id) === String(projectId));
-    if (!p || !onUpdateProject) return;
-    onUpdateProject(projectId, 'sampleRequests', (p.sampleRequests || []).map(r =>
-      r.id === reqId ? { ...r, images: (r.images || []).filter((_, i) => i !== imgIdx) } : r
-    ));
+  const removeReqImage = (r, imgIdx) => {
+    if (r._isManual) {
+      if (onUpdateManualRequest) onUpdateManualRequest(r._docId, { images: (r.images || []).filter((_, i) => i !== imgIdx) });
+    } else {
+      const p = r._project;
+      if (!onUpdateProject) return;
+      onUpdateProject(p.id, 'sampleRequests', (p.sampleRequests || []).map(x =>
+        x.id === r.id ? { ...x, images: (x.images || []).filter((_, i) => i !== imgIdx) } : x
+      ));
+    }
   };
 
-  const deleteRequest = (projectId, reqId) => {
-    const p = projects.find(x => String(x.id) === String(projectId));
-    if (!p || !onUpdateProject) return;
-    onUpdateProject(projectId, 'sampleRequests', (p.sampleRequests || []).filter(r => r.id !== reqId));
+  const deleteRequest = (r) => {
+    if (r._isManual) {
+      if (onDeleteManualRequest) onDeleteManualRequest(r._docId);
+    } else {
+      const p = r._project;
+      if (!onUpdateProject) return;
+      onUpdateProject(p.id, 'sampleRequests', (p.sampleRequests || []).filter(x => x.id !== r.id));
+    }
   };
 
   const createRequest = () => {
-    const p = projects.find(x => String(x.id) === String(newReq.projectId));
-    if (!p || !onUpdateProject || !newReq.projectId) return;
-    const req = {
+    const today = new Date().toISOString().split('T')[0];
+    const base = {
       id: 'sr_' + Date.now(),
-      productName: p.name,
-      productCode: p.code || '',
       quantity: newReq.quantity || 1,
       unit: newReq.unit || '個',
       purpose: newReq.purpose,
@@ -6848,27 +6912,39 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       note: newReq.note,
       status: '待備料',
       requestedBy: currentUser?.name || '',
-      requestedAt: new Date().toISOString().split('T')[0],
-      images: [],
+      requestedAt: today,
+      images: newReq.coverImage ? [newReq.coverImage] : [],
     };
-    onUpdateProject(p.id, 'sampleRequests', [...(p.sampleRequests || []), req]);
+    if (newReq.isManual) {
+      // 手動申請：存到獨立 collection
+      if (!newReq.productName.trim()) return;
+      const req = { ...base, productName: newReq.productName.trim(), productCode: newReq.productCode.trim(), coverImage: newReq.coverImage || null };
+      if (onAddManualRequest) onAddManualRequest(req);
+    } else {
+      // 從產品庫選的
+      const p = projects.find(x => String(x.id) === String(newReq.projectId));
+      if (!p || !onUpdateProject) return;
+      const req = { ...base, productName: p.name, productCode: p.code || '', coverImage: newReq.coverImage || null };
+      onUpdateProject(p.id, 'sampleRequests', [...(p.sampleRequests || []), req]);
+    }
     setShowNewReqForm(false);
-    setNewReq({ projectId: '', quantity: 1, unit: '個', purpose: '', neededBy: '', note: '' });
+    setNewReq(BLANK_REQ);
   };
 
-  const pasteReqImage = async (projectId, reqId) => {
+  const pasteReqImage = async (r) => {
     try {
       const items = await navigator.clipboard.read();
       for (const item of items) {
         const imgType = item.types.find(t => t.startsWith('image/'));
         if (imgType) {
           const blob = await item.getType(imgType);
-          await addReqImage(projectId, reqId, new File([blob], 'pasted.png', { type: blob.type }));
+          await addReqImage(r, new File([blob], 'pasted.png', { type: blob.type }));
           break;
         }
       }
     } catch { alert('請先複製一張圖片，再點「貼上圖片」'); }
   };
+  const [pickerSearch, setPickerSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('全部');
   const [groupByProduct, setGroupByProduct] = useState(false); // 依產品分組
   const [locationFilter, setLocationFilter] = useState('全部');
@@ -7609,7 +7685,6 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
           <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
             {/* 工具列 */}
             <div className="flex flex-wrap items-center gap-2 mb-3">
-              {/* 狀態篩選 */}
               <div className="flex gap-1">
                 {['全部','待備料','備料中','已完成'].map(s => (
                   <button key={s} onClick={() => setReqStatusFilter(s)}
@@ -7617,12 +7692,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                     style={reqStatusFilter === s
                       ? { background: '#1e293b', color: '#fff', borderColor: '#1e293b' }
                       : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
-                    {s} {s !== '全部' && <span className="ml-0.5">{allRequests.filter(r => r.status === s).length}</span>}
+                    {s}{s !== '全部' && <span className="ml-1">{allRequests.filter(r => r.status === s).length}</span>}
                   </button>
                 ))}
               </div>
               <div className="flex-1" />
-              {/* 匯出按鈕 */}
               <button onClick={() => exportSampleRequestsPDF(filteredRequests)}
                 className="flex items-center gap-1 px-3 py-1.5 text-xs text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition">
                 🖨 匯出 PDF
@@ -7632,7 +7706,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                 📊 匯出 Excel
               </button>
               {canEdit && (
-                <button onClick={() => setShowNewReqForm(true)}
+                <button onClick={() => { setShowNewReqForm(true); setPickerSearch(''); }}
                   className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded-lg transition"
                   style={{ background: '#1e293b' }}>
                   + 新增申請
@@ -7642,53 +7716,180 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
 
             {/* 新增申請表單 */}
             {showNewReqForm && (
-              <div className="mb-4 p-4 rounded-xl border border-slate-200 bg-slate-50">
-                <p className="text-sm font-medium text-slate-700 mb-3">新增備料申請</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="col-span-2">
-                    <label className="text-xs text-slate-500 mb-1 block">選擇產品 *</label>
-                    <select value={newReq.projectId} onChange={e => setNewReq(v => ({ ...v, projectId: e.target.value }))}
-                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white">
-                      <option value="">— 請選擇 —</option>
-                      {projects.filter(p => !['取消'].includes(p.status)).map(p => (
-                        <option key={p.id} value={p.id}>{p.name}{p.code ? ` (${p.code})` : ''}</option>
-                      ))}
-                    </select>
+              <div className="mb-4 p-4 rounded-xl border border-slate-200 bg-slate-50 relative">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-medium text-slate-700">新增備料申請</p>
+                  {/* 模式切換 */}
+                  <div className="flex rounded-lg overflow-hidden border border-slate-200 text-xs">
+                    <button
+                      onClick={() => setNewReq(v => ({ ...BLANK_REQ, isManual: false }))}
+                      className="px-3 py-1.5 transition"
+                      style={!newReq.isManual ? { background: '#1e293b', color: '#fff' } : { background: '#fff', color: '#64748b' }}>
+                      從產品庫選
+                    </button>
+                    <button
+                      onClick={() => setNewReq(v => ({ ...BLANK_REQ, isManual: true }))}
+                      className="px-3 py-1.5 transition"
+                      style={newReq.isManual ? { background: '#1e293b', color: '#fff' } : { background: '#fff', color: '#64748b' }}>
+                      手動輸入
+                    </button>
                   </div>
+                </div>
+
+                {/* 從產品庫選：視覺化圖片格 */}
+                {!newReq.isManual && (
+                  <div className="mb-3">
+                    {newReq.projectId ? (
+                      /* 已選產品：顯示選中狀態 */
+                      <div className="flex items-center gap-3 p-2 rounded-lg border border-amber-300 bg-amber-50">
+                        {newReq.coverImage ? (
+                          <img src={typeof newReq.coverImage === 'string' ? newReq.coverImage : (newReq.coverImage.dataUrl || newReq.coverImage.url)}
+                            alt="" className="w-12 h-12 object-contain rounded bg-white border border-amber-200" />
+                        ) : (
+                          <div className="w-12 h-12 rounded bg-amber-100 flex items-center justify-center text-amber-400 text-lg">📦</div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-800 truncate">{newReq.productName}</p>
+                          {newReq.productCode && <p className="text-xs text-slate-400 font-mono">{newReq.productCode}</p>}
+                        </div>
+                        <button onClick={() => setNewReq(v => ({ ...v, projectId: '', productName: '', productCode: '', coverImage: null }))}
+                          className="text-xs text-slate-400 hover:text-slate-700 underline whitespace-nowrap">重新選</button>
+                      </div>
+                    ) : (
+                      /* 產品搜尋格 */
+                      <div>
+                        <input
+                          value={pickerSearch}
+                          onChange={e => setPickerSearch(e.target.value)}
+                          placeholder="搜尋產品名稱或代碼..."
+                          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg mb-2 focus:outline-none focus:border-amber-400 bg-white"
+                          autoFocus
+                        />
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-52 overflow-y-auto pr-1">
+                          {projects
+                            .filter(p => p.status !== '取消' && (
+                              !pickerSearch ||
+                              (p.name || '').toLowerCase().includes(pickerSearch.toLowerCase()) ||
+                              (p.code || '').toLowerCase().includes(pickerSearch.toLowerCase())
+                            ))
+                            .map(p => {
+                              const thumb = (p.productImages || [])[0];
+                              const thumbSrc = thumb ? (typeof thumb === 'string' ? thumb : (thumb.dataUrl || thumb.url)) : null;
+                              return (
+                                <button key={p.id}
+                                  onClick={() => {
+                                    const img = (p.productImages || [])[0] || null;
+                                    setNewReq(v => ({ ...v, projectId: p.id, productName: p.name, productCode: p.code || '', coverImage: img }));
+                                  }}
+                                  className="flex flex-col items-center p-2 rounded-lg border border-slate-200 bg-white hover:border-amber-400 hover:bg-amber-50 transition text-left group">
+                                  {thumbSrc ? (
+                                    <img src={thumbSrc} alt="" className="w-full aspect-square object-contain rounded mb-1 bg-slate-50" />
+                                  ) : (
+                                    <div className="w-full aspect-square rounded mb-1 bg-slate-100 flex items-center justify-center text-slate-300 text-2xl">📦</div>
+                                  )}
+                                  <p className="text-[11px] text-slate-700 text-center leading-tight line-clamp-2 group-hover:text-amber-800">{p.name}</p>
+                                  {p.code && <p className="text-[10px] text-slate-400 font-mono mt-0.5">{p.code}</p>}
+                                </button>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 手動輸入模式 */}
+                {newReq.isManual && (
+                  <div className="mb-3 grid grid-cols-2 gap-2">
+                    <div className="col-span-2">
+                      <label className="text-xs text-slate-500 mb-1 block">產品名稱 *</label>
+                      <input value={newReq.productName} onChange={e => setNewReq(v => ({ ...v, productName: e.target.value }))}
+                        placeholder="輸入產品名稱"
+                        className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-amber-400" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 mb-1 block">產品代碼</label>
+                      <input value={newReq.productCode} onChange={e => setNewReq(v => ({ ...v, productCode: e.target.value }))}
+                        placeholder="選填"
+                        className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-amber-400" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 mb-1 block">圖片（可選）</label>
+                      <div className="flex gap-1 items-center">
+                        {newReq.coverImage && (
+                          <img src={typeof newReq.coverImage === 'string' ? newReq.coverImage : (newReq.coverImage.dataUrl || newReq.coverImage.url)}
+                            alt="" className="w-10 h-10 object-contain rounded border border-slate-200 bg-white" />
+                        )}
+                        <label className="px-2 py-1.5 text-xs border border-dashed border-slate-300 rounded cursor-pointer hover:bg-slate-50 text-slate-500">
+                          上傳
+                          <input type="file" accept="image/*" className="hidden" onChange={async e => {
+                            if (e.target.files[0]) {
+                              const dataUrl = await reqImageToDataUrl(e.target.files[0]);
+                              setNewReq(v => ({ ...v, coverImage: { dataUrl, name: e.target.files[0].name } }));
+                              e.target.value = '';
+                            }
+                          }} />
+                        </label>
+                        <button className="px-2 py-1.5 text-xs border border-dashed border-slate-300 rounded hover:bg-slate-50 text-slate-500"
+                          onClick={async () => {
+                            try {
+                              const items = await navigator.clipboard.read();
+                              for (const item of items) {
+                                const t = item.types.find(x => x.startsWith('image/'));
+                                if (t) {
+                                  const blob = await item.getType(t);
+                                  const dataUrl = await reqImageToDataUrl(new File([blob], 'pasted.png', { type: blob.type }));
+                                  setNewReq(v => ({ ...v, coverImage: { dataUrl, name: 'pasted.png' } }));
+                                  break;
+                                }
+                              }
+                            } catch { alert('請先複製一張圖片'); }
+                          }}>
+                          貼上
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 共用欄位 */}
+                <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-xs text-slate-500 mb-1 block">數量</label>
                     <div className="flex gap-1">
                       <input type="number" min="1" value={newReq.quantity}
                         onChange={e => setNewReq(v => ({ ...v, quantity: Number(e.target.value) }))}
-                        className="w-20 px-2 py-1.5 text-sm border border-slate-200 rounded" />
+                        className="w-20 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
                       <input type="text" value={newReq.unit} placeholder="個"
                         onChange={e => setNewReq(v => ({ ...v, unit: e.target.value }))}
-                        className="w-14 px-2 py-1.5 text-sm border border-slate-200 rounded" />
+                        className="w-14 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
                     </div>
                   </div>
                   <div>
                     <label className="text-xs text-slate-500 mb-1 block">希望完成日</label>
                     <input type="date" value={newReq.neededBy}
                       onChange={e => setNewReq(v => ({ ...v, neededBy: e.target.value }))}
-                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded" />
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
                   </div>
                   <div className="col-span-2">
                     <label className="text-xs text-slate-500 mb-1 block">用途</label>
                     <input type="text" value={newReq.purpose} placeholder="展覽用 / 送樣 / 測試..."
                       onChange={e => setNewReq(v => ({ ...v, purpose: e.target.value }))}
-                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded" />
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
                   </div>
                   <div className="col-span-2">
                     <label className="text-xs text-slate-500 mb-1 block">備註</label>
                     <textarea value={newReq.note} rows={2} placeholder="規格說明、特殊要求..."
                       onChange={e => setNewReq(v => ({ ...v, note: e.target.value }))}
-                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none" />
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none bg-white" />
                   </div>
                 </div>
                 <div className="flex gap-2 mt-3 justify-end">
-                  <button onClick={() => setShowNewReqForm(false)} className="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 rounded">取消</button>
-                  <button onClick={createRequest} disabled={!newReq.projectId}
-                    className="px-4 py-1.5 text-sm text-white rounded disabled:opacity-40"
+                  <button onClick={() => { setShowNewReqForm(false); setNewReq(BLANK_REQ); }}
+                    className="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 rounded">取消</button>
+                  <button onClick={createRequest}
+                    disabled={newReq.isManual ? !newReq.productName.trim() : !newReq.projectId}
+                    className="px-4 py-1.5 text-sm text-white rounded disabled:opacity-40 transition"
                     style={{ background: '#1e293b' }}>
                     建立申請
                   </button>
@@ -7712,110 +7913,128 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                     '已完成': { bg: '#dcfce7', color: '#166534', next: null },
                   };
                   const st = STATUS_STYLE[r.status] || STATUS_STYLE['待備料'];
+                  const displayImg = getReqDisplayImage(r);
+                  const displayImgSrc = displayImg ? (typeof displayImg === 'string' ? displayImg : (displayImg.dataUrl || displayImg.url)) : null;
                   return (
                     <div key={r.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden">
-                      {/* 頂部：狀態 + 產品 + 刪除 */}
+                      {/* 頂部狀態列 */}
                       <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50">
                         <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: st.bg, color: st.color }}>{r.status}</span>
                         {st.next && canEdit && (
-                          <button onClick={() => updateReqField(r._project.id, r.id, 'status', st.next)}
+                          <button onClick={() => updateReqField(r, 'status', st.next)}
                             className="text-[11px] text-slate-400 hover:text-slate-700 border border-slate-200 px-2 py-0.5 rounded-full transition">
                             → {st.next}
                           </button>
                         )}
+                        {r._isManual && <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">手動</span>}
                         <div className="flex-1" />
-                        {r.neededBy && (
-                          <span className="text-[11px] text-slate-400">完成日：{r.neededBy}</span>
-                        )}
+                        {r.neededBy && <span className="text-[11px] text-slate-400">完成日：{r.neededBy}</span>}
                         {canEdit && (
-                          <button onClick={() => { if (window.confirm('確定刪除這筆申請？')) deleteRequest(r._project.id, r.id); }}
+                          <button onClick={() => { if (window.confirm('確定刪除這筆申請？')) deleteRequest(r); }}
                             className="text-slate-300 hover:text-rose-500 transition p-1">
                             <X className="w-3.5 h-3.5" />
                           </button>
                         )}
                       </div>
 
-                      {/* 主體：可編輯欄位 */}
-                      <div className="p-3 grid grid-cols-1 gap-2">
-                        {/* 產品名稱 + 代碼 */}
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <input value={r.productName || ''}
-                            onChange={e => updateReqField(r._project.id, r.id, 'productName', e.target.value)}
-                            placeholder="產品名稱"
-                            disabled={!canEdit}
-                            className="flex-1 min-w-0 text-sm font-medium text-slate-800 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 disabled:cursor-default" />
-                          <input value={r.productCode || ''}
-                            onChange={e => updateReqField(r._project.id, r.id, 'productCode', e.target.value)}
-                            placeholder="代碼"
-                            disabled={!canEdit}
-                            className="w-28 text-xs text-slate-400 font-mono bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 disabled:cursor-default" />
+                      {/* 主體：圖片在左，欄位在右 */}
+                      <div className="p-3 flex gap-3">
+                        {/* 圖片欄 */}
+                        <div className="flex-shrink-0 flex flex-col items-center gap-1.5">
+                          {displayImgSrc ? (
+                            <img src={displayImgSrc} alt=""
+                              className="w-20 h-20 object-contain rounded-lg border border-slate-200 bg-white" />
+                          ) : (
+                            <div className="w-20 h-20 rounded-lg border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-slate-300 text-2xl">📦</div>
+                          )}
+                          {canEdit && (
+                            <div className="flex gap-1">
+                              <label className="flex-1 flex items-center justify-center text-[10px] text-slate-400 border border-dashed border-slate-200 rounded px-1.5 py-1 cursor-pointer hover:bg-slate-50 whitespace-nowrap">
+                                +圖
+                                <input type="file" accept="image/*" className="hidden"
+                                  onChange={async e => { if (e.target.files[0]) { await addReqImage(r, e.target.files[0]); e.target.value = ''; } }} />
+                              </label>
+                              <button onClick={() => pasteReqImage(r)}
+                                className="flex-1 flex items-center justify-center text-[10px] text-slate-400 border border-dashed border-slate-200 rounded px-1.5 py-1 hover:bg-slate-50 whitespace-nowrap"
+                                title="先複製圖片再點">
+                                📋
+                              </button>
+                            </div>
+                          )}
+                          {reqImageUploading === (r.id || r._docId) && (
+                            <span className="text-[10px] text-slate-400">處理中…</span>
+                          )}
                         </div>
 
-                        {/* 數量 + 用途 + 完成日（行內可編輯） */}
-                        <div className="flex items-center gap-3 flex-wrap text-sm text-slate-600">
-                          <span className="text-xs text-slate-400">數量</span>
-                          <input type="number" min="1" value={r.quantity || 1}
-                            onChange={e => updateReqField(r._project.id, r.id, 'quantity', Number(e.target.value))}
-                            disabled={!canEdit}
-                            className="w-16 text-sm text-center border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
-                          <input value={r.unit || '個'}
-                            onChange={e => updateReqField(r._project.id, r.id, 'unit', e.target.value)}
-                            disabled={!canEdit}
-                            className="w-12 text-sm border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
-                          <span className="text-xs text-slate-400">用途</span>
-                          <input value={r.purpose || ''}
-                            onChange={e => updateReqField(r._project.id, r.id, 'purpose', e.target.value)}
-                            placeholder="展覽 / 送樣 / 測試..."
-                            disabled={!canEdit}
-                            className="flex-1 min-w-0 text-sm border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 bg-transparent disabled:cursor-default" />
-                          <span className="text-xs text-slate-400">完成日</span>
-                          <input type="date" value={r.neededBy || ''}
-                            onChange={e => updateReqField(r._project.id, r.id, 'neededBy', e.target.value)}
-                            disabled={!canEdit}
-                            className="text-sm border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
-                        </div>
-
-                        {/* 備註（可編輯） */}
-                        <textarea value={r.note || ''}
-                          onChange={e => updateReqField(r._project.id, r.id, 'note', e.target.value)}
-                          placeholder="備註、規格說明..."
-                          disabled={!canEdit}
-                          rows={2}
-                          className="w-full text-sm text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 resize-none focus:outline-none focus:border-slate-300 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
-
-                        {/* 圖片區 */}
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {(r.images || []).map((img, imgIdx) => (
-                              <div key={imgIdx} className="relative group">
-                                <img src={img.dataUrl || img.url} alt=""
-                                  className="w-16 h-16 object-contain rounded-lg border border-slate-200 bg-white" />
-                                {canEdit && (
-                                  <button onClick={() => removeReqImage(r._project.id, r.id, imgIdx)}
-                                    className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-500 text-white rounded-full text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-                                    ×
-                                  </button>
-                                )}
-                              </div>
-                            ))}
-                            {canEdit && (
-                              <div className="flex gap-1">
-                                <label className="w-16 h-16 flex flex-col items-center justify-center border border-dashed border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50 transition text-slate-400 text-center">
-                                  <span className="text-lg leading-none">+</span>
-                                  <span className="text-[10px] mt-0.5">上傳</span>
-                                  <input type="file" accept="image/*" className="hidden"
-                                    onChange={async e => { if (e.target.files[0]) { await addReqImage(r._project.id, r.id, e.target.files[0]); e.target.value = ''; } }} />
-                                </label>
-                                <button onClick={() => pasteReqImage(r._project.id, r.id)}
-                                  className="w-16 h-16 flex flex-col items-center justify-center border border-dashed border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50 transition text-slate-400 text-center text-[10px]"
-                                  title="先複製圖片再點這裡">
-                                  <span className="text-lg leading-none">📋</span>
-                                  <span className="mt-0.5">貼上</span>
-                                </button>
-                              </div>
-                            )}
-                            {reqImageUploading === r.id && <span className="text-xs text-slate-400">處理中...</span>}
+                        {/* 欄位欄 */}
+                        <div className="flex-1 min-w-0 grid grid-cols-1 gap-1.5">
+                          {/* 產品名稱 + 代碼 */}
+                          <div className="flex items-baseline gap-2 flex-wrap">
+                            <input value={r.productName || ''}
+                              onChange={e => updateReqField(r, 'productName', e.target.value)}
+                              placeholder="產品名稱"
+                              disabled={!canEdit}
+                              className="flex-1 min-w-0 text-sm font-medium text-slate-800 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 disabled:cursor-default" />
+                            <input value={r.productCode || ''}
+                              onChange={e => updateReqField(r, 'productCode', e.target.value)}
+                              placeholder="代碼"
+                              disabled={!canEdit}
+                              className="w-24 text-xs text-slate-400 font-mono bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 disabled:cursor-default" />
                           </div>
+
+                          {/* 數量 + 用途 */}
+                          <div className="flex items-center gap-2 flex-wrap text-sm text-slate-600">
+                            <span className="text-xs text-slate-400">數量</span>
+                            <input type="number" min="1" value={r.quantity || 1}
+                              onChange={e => updateReqField(r, 'quantity', Number(e.target.value))}
+                              disabled={!canEdit}
+                              className="w-14 text-sm text-center border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
+                            <input value={r.unit || '個'}
+                              onChange={e => updateReqField(r, 'unit', e.target.value)}
+                              disabled={!canEdit}
+                              className="w-10 text-sm border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
+                            <span className="text-xs text-slate-400">用途</span>
+                            <input value={r.purpose || ''}
+                              onChange={e => updateReqField(r, 'purpose', e.target.value)}
+                              placeholder="展覽 / 送樣 / 測試..."
+                              disabled={!canEdit}
+                              className="flex-1 min-w-0 text-sm border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 bg-transparent disabled:cursor-default" />
+                          </div>
+
+                          {/* 完成日 */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-400">完成日</span>
+                            <input type="date" value={r.neededBy || ''}
+                              onChange={e => updateReqField(r, 'neededBy', e.target.value)}
+                              disabled={!canEdit}
+                              className="text-sm border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
+                          </div>
+
+                          {/* 備註 */}
+                          <textarea value={r.note || ''}
+                            onChange={e => updateReqField(r, 'note', e.target.value)}
+                            placeholder="備註、規格說明..."
+                            disabled={!canEdit}
+                            rows={2}
+                            className="w-full text-sm text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 resize-none focus:outline-none focus:border-slate-300 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
+
+                          {/* 附加圖片列表 */}
+                          {(r.images || []).length > 0 && (
+                            <div className="flex gap-1.5 flex-wrap mt-0.5">
+                              {(r.images || []).map((img, imgIdx) => (
+                                <div key={imgIdx} className="relative group">
+                                  <img src={img.dataUrl || img.url} alt=""
+                                    className="w-12 h-12 object-contain rounded border border-slate-200 bg-white" />
+                                  {canEdit && (
+                                    <button onClick={() => removeReqImage(r, imgIdx)}
+                                      className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-500 text-white rounded-full text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                                      ×
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
 

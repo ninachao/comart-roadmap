@@ -47,10 +47,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.18.2';
-const BUILD_ID = '20260714-1600';
+const APP_VERSION = 'v1.18.3';
+const BUILD_ID = '20260714-1700';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.18.3',
+    date: '2026-07-14',
+    changes: [
+      '🎨 樣品申請 PDF 版型重排：固定欄寬（table-layout:fixed），日期/數量/狀態不再換行切斷',
+      '圖片欄移到最左邊，欄位順序改為 圖片→產品→數量→完成日→用途→備註→狀態，跨頁時整列不被切半',
+    ],
+  },
   {
     version: 'v1.18.2',
     date: '2026-07-14',
@@ -6831,25 +6839,41 @@ function exportSampleRequestsPDF(requests) {
   requests.forEach((r, idx) => {
     const mainSrc = reqImgSrc(r._exportImg);
     const srcs = [mainSrc, ...(r.images || []).map(reqImgSrc)].filter((s, i, arr) => s && arr.indexOf(s) === i);
-    const imgs = srcs.map(s =>
-      `<img src="${s}" style="width:56px;height:56px;object-fit:contain;border:1px solid #e2e8f0;border-radius:4px;background:#fff;margin-right:4px;" />`
-    ).join('');
+    const imgs = srcs.map(s => `<img src="${s}" class="pimg" />`).join('');
     rows += `<tr style="background:${idx % 2 === 0 ? '#fff' : '#f8fafc'}">
-      <td style="padding:10px 8px;font-weight:600;font-size:13px;">${r.productName || '—'}<br/><span style="font-size:11px;color:#94a3b8;font-weight:400;">${r.productCode || ''}</span></td>
-      <td style="padding:10px 8px;text-align:center;font-size:13px;">${r.quantity || 1} ${r.unit || '個'}</td>
-      <td style="padding:10px 8px;font-size:13px;">${r.purpose || '—'}</td>
-      <td style="padding:10px 8px;font-size:13px;">${r.neededBy || '—'}</td>
-      <td style="padding:10px 8px;font-size:12px;color:#475569;">${r.note || ''}</td>
-      <td style="padding:10px 8px;">${imgs || '<span style="color:#cbd5e1;font-size:12px;">無</span>'}</td>
-      <td style="padding:10px 8px;text-align:center;"><span style="background:${STATUS_COLOR[r.status] || '#94a3b8'};color:#fff;font-size:11px;padding:2px 10px;border-radius:99px;">${r.status || '待備料'}</span></td>
+      <td class="c-img">${imgs || '<span style="color:#cbd5e1;font-size:11px;">—</span>'}</td>
+      <td class="c-name"><b>${r.productName || '—'}</b>${r.productCode ? `<br/><span class="code">${r.productCode}</span>` : ''}</td>
+      <td class="c-qty">${r.quantity || 1}&nbsp;${r.unit || '個'}</td>
+      <td class="c-date">${r.neededBy || '—'}</td>
+      <td class="c-purpose">${r.purpose || '—'}</td>
+      <td class="c-note">${r.note || ''}</td>
+      <td class="c-status"><span class="pill" style="background:${STATUS_COLOR[r.status] || '#94a3b8'};">${r.status || '待備料'}</span></td>
     </tr>`;
   });
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>樣品申請清單</title>
-  <style>body{font-family:'Noto Sans TC',Arial,sans-serif;padding:24px;color:#1e293b;}h1{font-size:18px;margin-bottom:4px;}p.meta{font-size:12px;color:#94a3b8;margin-bottom:20px;}table{width:100%;border-collapse:collapse;}th{background:#1e293b;color:#fff;padding:8px;font-size:12px;text-align:left;}td{border-bottom:1px solid #e2e8f0;vertical-align:middle;}@media print{body{padding:12px;}}</style>
+  <style>
+    body{font-family:'Noto Sans TC','Microsoft JhengHei',Arial,sans-serif;padding:24px;color:#1e293b;}
+    h1{font-size:18px;margin-bottom:4px;}
+    p.meta{font-size:12px;color:#94a3b8;margin-bottom:16px;}
+    table{width:100%;border-collapse:collapse;table-layout:fixed;}
+    th{background:#1e293b;color:#fff;padding:8px 6px;font-size:12px;text-align:left;white-space:nowrap;}
+    td{border-bottom:1px solid #e2e8f0;vertical-align:middle;padding:8px 6px;font-size:12px;word-break:break-word;}
+    .c-img{width:70px;} .c-qty{width:52px;text-align:center;white-space:nowrap;}
+    .c-date{width:88px;white-space:nowrap;} .c-status{width:64px;text-align:center;}
+    .c-name{width:22%;} .c-purpose{width:14%;}
+    .c-name b{font-size:13px;font-weight:600;}
+    .code{font-size:11px;color:#94a3b8;font-family:Consolas,monospace;}
+    .c-note{color:#475569;}
+    .pill{color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;white-space:nowrap;display:inline-block;}
+    .pimg{width:56px;height:56px;object-fit:contain;border:1px solid #e2e8f0;border-radius:4px;background:#fff;margin:1px;}
+    tr{page-break-inside:avoid;}
+    @media print{body{padding:8px;}}
+  </style>
   </head><body>
   <h1>樣品申請清單</h1>
   <p class="meta">匯出日期：${today}　共 ${requests.length} 筆</p>
-  <table><thead><tr><th>產品</th><th>數量</th><th>用途</th><th>希望完成日</th><th>備註</th><th>圖片</th><th>狀態</th></tr></thead>
+  <table>
+    <thead><tr><th class="c-img">圖片</th><th class="c-name">產品</th><th class="c-qty">數量</th><th class="c-date">完成日</th><th class="c-purpose">用途</th><th>備註</th><th class="c-status">狀態</th></tr></thead>
   <tbody>${rows}</tbody></table>
   <script>window.onload=()=>window.print();<\/script></body></html>`;
   const w = window.open('', '_blank');

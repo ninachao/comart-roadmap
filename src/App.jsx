@@ -47,10 +47,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.16.1';
-const BUILD_ID = '20260714-1100';
+const APP_VERSION = 'v1.17.0';
+const BUILD_ID = '20260714-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.17.0',
+    date: '2026-07-14',
+    changes: [
+      '✨ 備料申請標示「已完成」時，詢問是否自動轉入樣品庫：一鍵建立樣品（帶入名稱、代碼、數量、圖片、用途備註）',
+      '🔗 從產品庫選的申請轉入時自動連結產品，會同步出現在該產品的「相關樣品（含手板）」區塊',
+      '📝 手動輸入的申請轉入後出現在樣品庫（無產品連結），之後可在樣品編輯裡自行補上關聯產品',
+    ],
+  },
   {
     version: 'v1.16.1',
     date: '2026-07-14',
@@ -6908,6 +6917,33 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     }
   };
 
+  // 標示已完成：更新狀態，並詢問是否自動轉入樣品庫（會連動相關樣品）
+  const completeRequest = async (r) => {
+    updateReqField(r, 'status', '已完成');
+    const linkMsg = r._project ? `，並連結到「${r._project.name}」的相關樣品（含手板）` : '';
+    if (!window.confirm(`「${r.productName}」備料完成 🎉\n\n要同時新增到樣品庫嗎？${linkMsg}`)) return;
+    const sampleId = `s${Date.now()}`;
+    const img = getReqDisplayImage(r);
+    const sample = {
+      id: sampleId,
+      type: '手板',
+      source: '工程提供',
+      status: '已收到',
+      name: r.productName || '',
+      sampleNo: r.productCode || '',
+      initialQuantity: Number(r.quantity) || 1,
+      notes: ['由備料申請轉入', r.purpose, r.note].filter(Boolean).join('｜'),
+      images: img ? [img] : [],
+      createdAt: Date.now(),
+    };
+    if (r._project) {
+      sample.relatedProjectId = r._project.id;
+      sample.relatedProjectCode = r._project.code || '';
+    }
+    await setDoc(doc(db, SAMPLES_COL, sampleId), sample);
+    alert('已新增到樣品庫 ✅（可到「樣品」分頁查看或補充資料）');
+  };
+
   const createRequest = () => {
     const today = new Date().toISOString().split('T')[0];
     const base = {
@@ -7934,7 +7970,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                       <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50">
                         <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: st.bg, color: st.color }}>{r.status}</span>
                         {st.next && canEdit && (
-                          <button onClick={() => updateReqField(r, 'status', st.next)}
+                          <button onClick={() => st.next === '已完成' ? completeRequest(r) : updateReqField(r, 'status', st.next)}
                             className="text-[11px] text-slate-400 hover:text-slate-700 border border-slate-200 px-2 py-0.5 rounded-full transition">
                             → {st.next}
                           </button>

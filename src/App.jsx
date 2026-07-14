@@ -47,10 +47,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.18.1';
-const BUILD_ID = '20260714-1500';
+const APP_VERSION = 'v1.18.2';
+const BUILD_ID = '20260714-1600';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.18.2',
+    date: '2026-07-14',
+    changes: [
+      '🎨 樣品申請狀態改為「分段切換器」：待備料/備料中/已完成 三顆並排，點任一個直接跳到該狀態，當前狀態以對應顏色高亮（取代原本的 ←/→ 按鈕）',
+    ],
+  },
   {
     version: 'v1.18.1',
     date: '2026-07-14',
@@ -8039,31 +8046,35 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
               <div className="space-y-3 flex-1 overflow-y-auto pb-2">
                 {filteredRequests.map((r) => {
                   const STATUS_STYLE = {
-                    '待備料': { bg: '#fef3c7', color: '#92400e', next: '備料中', prev: null },
-                    '備料中': { bg: '#dbeafe', color: '#1e40af', next: '已完成', prev: '待備料' },
-                    '已完成': { bg: '#dcfce7', color: '#166534', next: null, prev: '備料中' },
+                    '待備料': { bg: '#fef3c7', color: '#92400e' },
+                    '備料中': { bg: '#dbeafe', color: '#1e40af' },
+                    '已完成': { bg: '#dcfce7', color: '#166534' },
                   };
-                  const st = STATUS_STYLE[r.status] || STATUS_STYLE['待備料'];
+                  const curStatus = STATUS_STYLE[r.status] ? r.status : '待備料';
                   const displayImg = getReqDisplayImage(r);
                   const displayImgSrc = displayImg ? (typeof displayImg === 'string' ? displayImg : (displayImg.dataUrl || displayImg.url)) : null;
                   return (
                     <div key={r.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden">
                       {/* 頂部狀態列 */}
                       <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50">
-                        <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: st.bg, color: st.color }}>{r.status}</span>
-                        {st.prev && canEdit && (
-                          <button onClick={() => updateReqField(r, 'status', st.prev)}
-                            title="退回上一狀態"
-                            className="text-[11px] text-slate-400 hover:text-slate-700 border border-slate-200 px-2 py-0.5 rounded-full transition">
-                            ← {st.prev}
-                          </button>
-                        )}
-                        {st.next && canEdit && (
-                          <button onClick={() => st.next === '已完成' ? completeRequest(r) : updateReqField(r, 'status', st.next)}
-                            className="text-[11px] text-slate-400 hover:text-slate-700 border border-slate-200 px-2 py-0.5 rounded-full transition">
-                            → {st.next}
-                          </button>
-                        )}
+                        {/* 分段狀態切換器：點任一狀態直接切換 */}
+                        <div className="flex items-center rounded-full border border-slate-200 bg-white p-0.5">
+                          {['待備料', '備料中', '已完成'].map(s => {
+                            const active = curStatus === s;
+                            const sc = STATUS_STYLE[s];
+                            return (
+                              <button key={s}
+                                disabled={!canEdit || active}
+                                onClick={() => s === '已完成' ? completeRequest(r) : updateReqField(r, 'status', s)}
+                                className="text-[11px] px-2.5 py-0.5 rounded-full transition font-medium disabled:cursor-default"
+                                style={active
+                                  ? { background: sc.bg, color: sc.color }
+                                  : { background: 'transparent', color: '#94a3b8' }}>
+                                {s}
+                              </button>
+                            );
+                          })}
+                        </div>
                         {r._isManual && <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">手動</span>}
                         <div className="flex-1" />
                         {r.neededBy && <span className="text-[11px] text-slate-400">完成日：{r.neededBy}</span>}

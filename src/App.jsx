@@ -2846,9 +2846,16 @@ export default function ProductRoadmap() {
             const target = projects.find(p => p.id === id);
             if (target) {
               setSelectedProject(target);
-              setOpenFrom('samples'); // 記錄從樣品庫來的
+              setOpenFrom('samples');
               setShowSampleLibrary(false);
             }
+          }}
+          onUpdateProject={(projectId, field, value) => {
+            const p = projects.find(x => String(x.id) === String(projectId));
+            if (!p) return;
+            const updated = { ...p, [field]: value };
+            setProjects(prev => prev.map(x => String(x.id) === String(projectId) ? updated : x));
+            saveProjectToCloud(updated);
           }}
         />
       )}
@@ -6707,8 +6714,161 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
   );
 }
 
-function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, currentUser, canEdit, onClose, onJumpToProject }) {
-  const [tab, setTab] = useState('samples'); // 'samples' | 'withdrawals' | 'exhibitions'
+// === 備料申請：圖片壓縮為 dataUrl ===
+async function reqImageToDataUrl(file) {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 600;
+      const scale = Math.min(1, MAX / img.naturalWidth, MAX / img.naturalHeight);
+      const w = Math.round(img.naturalWidth * scale);
+      const h = Math.round(img.naturalHeight * scale);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.src = url;
+  });
+}
+
+// === 備料申請：匯出 PDF ===
+function exportSampleRequestsPDF(requests) {
+  const today = new Date().toLocaleDateString('zh-TW');
+  const STATUS_COLOR = { '待備料': '#f59e0b', '備料中': '#3b82f6', '已完成': '#22c55e' };
+  let rows = '';
+  requests.forEach((r, idx) => {
+    const imgs = (r.images || []).map(img =>
+      `<img src="${img.dataUrl || img.url || ''}" style="width:56px;height:56px;object-fit:contain;border:1px solid #e2e8f0;border-radius:4px;background:#fff;margin-right:4px;" />`
+    ).join('');
+    rows += `<tr style="background:${idx % 2 === 0 ? '#fff' : '#f8fafc'}">
+      <td style="padding:10px 8px;font-weight:600;font-size:13px;">${r.productName || '—'}<br/><span style="font-size:11px;color:#94a3b8;font-weight:400;">${r.productCode || ''}</span></td>
+      <td style="padding:10px 8px;text-align:center;font-size:13px;">${r.quantity || 1} ${r.unit || '個'}</td>
+      <td style="padding:10px 8px;font-size:13px;">${r.purpose || '—'}</td>
+      <td style="padding:10px 8px;font-size:13px;">${r.neededBy || '—'}</td>
+      <td style="padding:10px 8px;font-size:12px;color:#475569;">${r.note || ''}</td>
+      <td style="padding:10px 8px;">${imgs || '<span style="color:#cbd5e1;font-size:12px;">無</span>'}</td>
+      <td style="padding:10px 8px;text-align:center;"><span style="background:${STATUS_COLOR[r.status] || '#94a3b8'};color:#fff;font-size:11px;padding:2px 10px;border-radius:99px;">${r.status || '待備料'}</span></td>
+    </tr>`;
+  });
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>備料申請清單</title>
+  <style>body{font-family:'Noto Sans TC',Arial,sans-serif;padding:24px;color:#1e293b;}h1{font-size:18px;margin-bottom:4px;}p.meta{font-size:12px;color:#94a3b8;margin-bottom:20px;}table{width:100%;border-collapse:collapse;}th{background:#1e293b;color:#fff;padding:8px;font-size:12px;text-align:left;}td{border-bottom:1px solid #e2e8f0;vertical-align:middle;}@media print{body{padding:12px;}}</style>
+  </head><body>
+  <h1>備料申請清單</h1>
+  <p class="meta">匯出日期：${today}　共 ${requests.length} 筆</p>
+  <table><thead><tr><th>產品</th><th>數量</th><th>用途</th><th>希望完成日</th><th>備註</th><th>圖片</th><th>狀態</th></tr></thead>
+  <tbody>${rows}</tbody></table>
+  <script>window.onload=()=>window.print();<\/script></body></html>`;
+  const w = window.open('', '_blank');
+  if (w) { w.document.write(html); w.document.close(); }
+}
+
+// === 備料申請：匯出 CSV ===
+function exportSampleRequestsCSV(requests) {
+  const headers = ['產品名稱', '產品代碼', '數量', '單位', '用途', '希望完成日', '備註', '狀態', '申請人', '申請日期'];
+  const escape = (v) => `"${String(v || '').replace(/"/g, '""')}"`;
+  const rows = requests.map(r => [
+    r.productName, r.productCode, r.quantity, r.unit || '個',
+    r.purpose, r.neededBy, r.note, r.status, r.requestedBy, r.requestedAt,
+  ].map(escape).join(','));
+  const csv = '﻿' + [headers.join(','), ...rows].join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+  a.download = `備料申請清單_${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+}
+
+function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, currentUser, canEdit, onClose, onJumpToProject, onUpdateProject }) {
+  const [tab, setTab] = useState('samples'); // 'samples' | 'withdrawals' | 'exhibitions' | 'requests'
+
+  // ── 備料申請 tab 狀態 ──
+  const [reqStatusFilter, setReqStatusFilter] = useState('全部');
+  const [showNewReqForm, setShowNewReqForm] = useState(false);
+  const [newReq, setNewReq] = useState({ projectId: '', quantity: 1, unit: '個', purpose: '', neededBy: '', note: '' });
+  const [reqImageUploading, setReqImageUploading] = useState(null); // requestId
+
+  const allRequests = useMemo(() => {
+    const ORDER = { '待備料': 0, '備料中': 1, '已完成': 2 };
+    return projects
+      .flatMap(p => (p.sampleRequests || []).map(r => ({ ...r, _project: p })))
+      .sort((a, b) => {
+        const s = (ORDER[a.status] ?? 0) - (ORDER[b.status] ?? 0);
+        return s !== 0 ? s : (a.neededBy || '').localeCompare(b.neededBy || '');
+      });
+  }, [projects]);
+
+  const filteredRequests = reqStatusFilter === '全部' ? allRequests : allRequests.filter(r => r.status === reqStatusFilter);
+
+  const updateReqField = (projectId, reqId, field, value) => {
+    if (!onUpdateProject) return;
+    const p = projects.find(x => String(x.id) === String(projectId));
+    if (!p) return;
+    onUpdateProject(projectId, 'sampleRequests', (p.sampleRequests || []).map(r => r.id === reqId ? { ...r, [field]: value } : r));
+  };
+
+  const addReqImage = async (projectId, reqId, file) => {
+    setReqImageUploading(reqId);
+    try {
+      const dataUrl = await reqImageToDataUrl(file);
+      const p = projects.find(x => String(x.id) === String(projectId));
+      if (!p || !onUpdateProject) return;
+      onUpdateProject(projectId, 'sampleRequests', (p.sampleRequests || []).map(r =>
+        r.id === reqId ? { ...r, images: [...(r.images || []), { dataUrl, name: file.name }] } : r
+      ));
+    } finally { setReqImageUploading(null); }
+  };
+
+  const removeReqImage = (projectId, reqId, imgIdx) => {
+    const p = projects.find(x => String(x.id) === String(projectId));
+    if (!p || !onUpdateProject) return;
+    onUpdateProject(projectId, 'sampleRequests', (p.sampleRequests || []).map(r =>
+      r.id === reqId ? { ...r, images: (r.images || []).filter((_, i) => i !== imgIdx) } : r
+    ));
+  };
+
+  const deleteRequest = (projectId, reqId) => {
+    const p = projects.find(x => String(x.id) === String(projectId));
+    if (!p || !onUpdateProject) return;
+    onUpdateProject(projectId, 'sampleRequests', (p.sampleRequests || []).filter(r => r.id !== reqId));
+  };
+
+  const createRequest = () => {
+    const p = projects.find(x => String(x.id) === String(newReq.projectId));
+    if (!p || !onUpdateProject || !newReq.projectId) return;
+    const req = {
+      id: 'sr_' + Date.now(),
+      productName: p.name,
+      productCode: p.code || '',
+      quantity: newReq.quantity || 1,
+      unit: newReq.unit || '個',
+      purpose: newReq.purpose,
+      neededBy: newReq.neededBy,
+      note: newReq.note,
+      status: '待備料',
+      requestedBy: currentUser?.name || '',
+      requestedAt: new Date().toISOString().split('T')[0],
+      images: [],
+    };
+    onUpdateProject(p.id, 'sampleRequests', [...(p.sampleRequests || []), req]);
+    setShowNewReqForm(false);
+    setNewReq({ projectId: '', quantity: 1, unit: '個', purpose: '', neededBy: '', note: '' });
+  };
+
+  const pasteReqImage = async (projectId, reqId) => {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imgType = item.types.find(t => t.startsWith('image/'));
+        if (imgType) {
+          const blob = await item.getType(imgType);
+          await addReqImage(projectId, reqId, new File([blob], 'pasted.png', { type: blob.type }));
+          break;
+        }
+      }
+    } catch { alert('請先複製一張圖片，再點「貼上圖片」'); }
+  };
   const [typeFilter, setTypeFilter] = useState('全部');
   const [groupByProduct, setGroupByProduct] = useState(false); // 依產品分組
   const [locationFilter, setLocationFilter] = useState('全部');
@@ -6927,7 +7087,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             <h3 className="text-base font-medium flex items-center gap-2">
               <span>📦</span>樣品庫
               <span className="text-xs text-slate-400 font-normal">
-                ({tab === 'samples' ? `${filtered.length} 項` : tab === 'withdrawals' ? `${withdrawals.length} 筆紀錄` : `${exhibitions.length} 場展覽`})
+                ({tab === 'samples' ? `${filtered.length} 項` : tab === 'withdrawals' ? `${withdrawals.length} 筆紀錄` : tab === 'exhibitions' ? `${exhibitions.length} 場展覽` : `${allRequests.length} 筆`})
               </span>
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">公司所有樣品 · 領用前請登記</p>
@@ -6956,6 +7116,12 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'exhibitions' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
           >
             🎪 展覽 ({exhibitions.length})
+          </button>
+          <button
+            onClick={() => setTab('requests')}
+            className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'requests' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          >
+            📋 備料申請 {allRequests.filter(r => r.status !== '已完成').length > 0 && <span className="ml-1 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{allRequests.filter(r => r.status !== '已完成').length}</span>}
           </button>
         </div>
 
@@ -7430,6 +7596,233 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                           )}
                         </div>
                       )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── 備料申請 Tab ── */}
+        {tab === 'requests' && (
+          <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
+            {/* 工具列 */}
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              {/* 狀態篩選 */}
+              <div className="flex gap-1">
+                {['全部','待備料','備料中','已完成'].map(s => (
+                  <button key={s} onClick={() => setReqStatusFilter(s)}
+                    className="px-2.5 py-1 text-xs rounded-full border transition"
+                    style={reqStatusFilter === s
+                      ? { background: '#1e293b', color: '#fff', borderColor: '#1e293b' }
+                      : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+                    {s} {s !== '全部' && <span className="ml-0.5">{allRequests.filter(r => r.status === s).length}</span>}
+                  </button>
+                ))}
+              </div>
+              <div className="flex-1" />
+              {/* 匯出按鈕 */}
+              <button onClick={() => exportSampleRequestsPDF(filteredRequests)}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition">
+                🖨 匯出 PDF
+              </button>
+              <button onClick={() => exportSampleRequestsCSV(filteredRequests)}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition">
+                📊 匯出 Excel
+              </button>
+              {canEdit && (
+                <button onClick={() => setShowNewReqForm(true)}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded-lg transition"
+                  style={{ background: '#1e293b' }}>
+                  + 新增申請
+                </button>
+              )}
+            </div>
+
+            {/* 新增申請表單 */}
+            {showNewReqForm && (
+              <div className="mb-4 p-4 rounded-xl border border-slate-200 bg-slate-50">
+                <p className="text-sm font-medium text-slate-700 mb-3">新增備料申請</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2">
+                    <label className="text-xs text-slate-500 mb-1 block">選擇產品 *</label>
+                    <select value={newReq.projectId} onChange={e => setNewReq(v => ({ ...v, projectId: e.target.value }))}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white">
+                      <option value="">— 請選擇 —</option>
+                      {projects.filter(p => !['取消'].includes(p.status)).map(p => (
+                        <option key={p.id} value={p.id}>{p.name}{p.code ? ` (${p.code})` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">數量</label>
+                    <div className="flex gap-1">
+                      <input type="number" min="1" value={newReq.quantity}
+                        onChange={e => setNewReq(v => ({ ...v, quantity: Number(e.target.value) }))}
+                        className="w-20 px-2 py-1.5 text-sm border border-slate-200 rounded" />
+                      <input type="text" value={newReq.unit} placeholder="個"
+                        onChange={e => setNewReq(v => ({ ...v, unit: e.target.value }))}
+                        className="w-14 px-2 py-1.5 text-sm border border-slate-200 rounded" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">希望完成日</label>
+                    <input type="date" value={newReq.neededBy}
+                      onChange={e => setNewReq(v => ({ ...v, neededBy: e.target.value }))}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-xs text-slate-500 mb-1 block">用途</label>
+                    <input type="text" value={newReq.purpose} placeholder="展覽用 / 送樣 / 測試..."
+                      onChange={e => setNewReq(v => ({ ...v, purpose: e.target.value }))}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-xs text-slate-500 mb-1 block">備註</label>
+                    <textarea value={newReq.note} rows={2} placeholder="規格說明、特殊要求..."
+                      onChange={e => setNewReq(v => ({ ...v, note: e.target.value }))}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none" />
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-3 justify-end">
+                  <button onClick={() => setShowNewReqForm(false)} className="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 rounded">取消</button>
+                  <button onClick={createRequest} disabled={!newReq.projectId}
+                    className="px-4 py-1.5 text-sm text-white rounded disabled:opacity-40"
+                    style={{ background: '#1e293b' }}>
+                    建立申請
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 申請列表 */}
+            {filteredRequests.length === 0 ? (
+              <div className="flex flex-col items-center justify-center flex-1 text-center py-16 text-slate-400">
+                <p className="text-4xl mb-3">📋</p>
+                <p className="text-sm">目前沒有{reqStatusFilter !== '全部' ? reqStatusFilter + '的' : ''}備料申請</p>
+                {canEdit && <button onClick={() => setShowNewReqForm(true)} className="mt-3 text-xs text-amber-600 hover:underline">+ 新增第一筆</button>}
+              </div>
+            ) : (
+              <div className="space-y-3 flex-1 overflow-y-auto pb-2">
+                {filteredRequests.map((r) => {
+                  const STATUS_STYLE = {
+                    '待備料': { bg: '#fef3c7', color: '#92400e', next: '備料中' },
+                    '備料中': { bg: '#dbeafe', color: '#1e40af', next: '已完成' },
+                    '已完成': { bg: '#dcfce7', color: '#166534', next: null },
+                  };
+                  const st = STATUS_STYLE[r.status] || STATUS_STYLE['待備料'];
+                  return (
+                    <div key={r.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+                      {/* 頂部：狀態 + 產品 + 刪除 */}
+                      <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50">
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: st.bg, color: st.color }}>{r.status}</span>
+                        {st.next && canEdit && (
+                          <button onClick={() => updateReqField(r._project.id, r.id, 'status', st.next)}
+                            className="text-[11px] text-slate-400 hover:text-slate-700 border border-slate-200 px-2 py-0.5 rounded-full transition">
+                            → {st.next}
+                          </button>
+                        )}
+                        <div className="flex-1" />
+                        {r.neededBy && (
+                          <span className="text-[11px] text-slate-400">完成日：{r.neededBy}</span>
+                        )}
+                        {canEdit && (
+                          <button onClick={() => { if (window.confirm('確定刪除這筆申請？')) deleteRequest(r._project.id, r.id); }}
+                            className="text-slate-300 hover:text-rose-500 transition p-1">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* 主體：可編輯欄位 */}
+                      <div className="p-3 grid grid-cols-1 gap-2">
+                        {/* 產品名稱 + 代碼 */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <input value={r.productName || ''}
+                            onChange={e => updateReqField(r._project.id, r.id, 'productName', e.target.value)}
+                            placeholder="產品名稱"
+                            disabled={!canEdit}
+                            className="flex-1 min-w-0 text-sm font-medium text-slate-800 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 disabled:cursor-default" />
+                          <input value={r.productCode || ''}
+                            onChange={e => updateReqField(r._project.id, r.id, 'productCode', e.target.value)}
+                            placeholder="代碼"
+                            disabled={!canEdit}
+                            className="w-28 text-xs text-slate-400 font-mono bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 disabled:cursor-default" />
+                        </div>
+
+                        {/* 數量 + 用途 + 完成日（行內可編輯） */}
+                        <div className="flex items-center gap-3 flex-wrap text-sm text-slate-600">
+                          <span className="text-xs text-slate-400">數量</span>
+                          <input type="number" min="1" value={r.quantity || 1}
+                            onChange={e => updateReqField(r._project.id, r.id, 'quantity', Number(e.target.value))}
+                            disabled={!canEdit}
+                            className="w-16 text-sm text-center border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
+                          <input value={r.unit || '個'}
+                            onChange={e => updateReqField(r._project.id, r.id, 'unit', e.target.value)}
+                            disabled={!canEdit}
+                            className="w-12 text-sm border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
+                          <span className="text-xs text-slate-400">用途</span>
+                          <input value={r.purpose || ''}
+                            onChange={e => updateReqField(r._project.id, r.id, 'purpose', e.target.value)}
+                            placeholder="展覽 / 送樣 / 測試..."
+                            disabled={!canEdit}
+                            className="flex-1 min-w-0 text-sm border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 bg-transparent disabled:cursor-default" />
+                          <span className="text-xs text-slate-400">完成日</span>
+                          <input type="date" value={r.neededBy || ''}
+                            onChange={e => updateReqField(r._project.id, r.id, 'neededBy', e.target.value)}
+                            disabled={!canEdit}
+                            className="text-sm border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
+                        </div>
+
+                        {/* 備註（可編輯） */}
+                        <textarea value={r.note || ''}
+                          onChange={e => updateReqField(r._project.id, r.id, 'note', e.target.value)}
+                          placeholder="備註、規格說明..."
+                          disabled={!canEdit}
+                          rows={2}
+                          className="w-full text-sm text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 resize-none focus:outline-none focus:border-slate-300 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
+
+                        {/* 圖片區 */}
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {(r.images || []).map((img, imgIdx) => (
+                              <div key={imgIdx} className="relative group">
+                                <img src={img.dataUrl || img.url} alt=""
+                                  className="w-16 h-16 object-contain rounded-lg border border-slate-200 bg-white" />
+                                {canEdit && (
+                                  <button onClick={() => removeReqImage(r._project.id, r.id, imgIdx)}
+                                    className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-500 text-white rounded-full text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                                    ×
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                            {canEdit && (
+                              <div className="flex gap-1">
+                                <label className="w-16 h-16 flex flex-col items-center justify-center border border-dashed border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50 transition text-slate-400 text-center">
+                                  <span className="text-lg leading-none">+</span>
+                                  <span className="text-[10px] mt-0.5">上傳</span>
+                                  <input type="file" accept="image/*" className="hidden"
+                                    onChange={async e => { if (e.target.files[0]) { await addReqImage(r._project.id, r.id, e.target.files[0]); e.target.value = ''; } }} />
+                                </label>
+                                <button onClick={() => pasteReqImage(r._project.id, r.id)}
+                                  className="w-16 h-16 flex flex-col items-center justify-center border border-dashed border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50 transition text-slate-400 text-center text-[10px]"
+                                  title="先複製圖片再點這裡">
+                                  <span className="text-lg leading-none">📋</span>
+                                  <span className="mt-0.5">貼上</span>
+                                </button>
+                              </div>
+                            )}
+                            {reqImageUploading === r.id && <span className="text-xs text-slate-400">處理中...</span>}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 底部：申請人資訊 */}
+                      <div className="px-3 pb-2 text-[11px] text-slate-300">
+                        {r.requestedBy && `${r.requestedBy} 申請`}{r.requestedAt && ` · ${r.requestedAt}`}
+                      </div>
                     </div>
                   );
                 })}

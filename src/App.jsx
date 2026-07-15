@@ -48,10 +48,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.19.1';
-const BUILD_ID = '20260714-2200';
+const APP_VERSION = 'v1.20.0';
+const BUILD_ID = '20260715-0900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.20.0',
+    date: '2026-07-15',
+    changes: [
+      '📅 領用表單新增「領用日期」欄位：預設今天、可改（補登記過去的領用）',
+      '🎨 領用紀錄改為單行緊湊列：小縮圖 + 一行資訊 + 狀態徽章（在外/已歸還/不歸還），操作按鈕滑過才浮現，掃視密度提高 3 倍',
+      '✨ 新增「只看未歸還」快速篩選',
+      '🔧 「不歸還原因」改為行內展開輸入框（Enter 確定 / Esc 取消），不再跳瀏覽器原生 prompt 視窗',
+    ],
+  },
   {
     version: 'v1.19.1',
     date: '2026-07-14',
@@ -7342,6 +7352,9 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [locationFilter, setLocationFilter] = useState('全部');
   const [searchTerm, setSearchTerm] = useState('');
   const [withdrawalSearch, setWithdrawalSearch] = useState('');
+  const [wOnlyOut, setWOnlyOut] = useState(false);            // 只看未歸還
+  const [noReturnEditId, setNoReturnEditId] = useState(null); // 行內填不歸還原因的紀錄 id
+  const [noReturnReasonDraft, setNoReturnReasonDraft] = useState('');
   const [editingSample, setEditingSample] = useState(null);
   const [withdrawingSample, setWithdrawingSample] = useState(null);
   const [viewingGallery, setViewingGallery] = useState(null); // {images, index}
@@ -7433,7 +7446,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       quantity: Number(data.quantity || 0),
       purpose: data.purpose || '',
       timestamp: Date.now(),
-      date: new Date().toISOString().split('T')[0],
+      date: data.date || new Date().toISOString().split('T')[0],
       returned: false,
       operator: currentUser?.name || '',
     };
@@ -7717,23 +7730,35 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
 
         {tab === 'withdrawals' && (
           <div className="flex-1 overflow-y-auto -mx-1 px-1">
-            {/* 搜尋框 */}
-            <div className="relative mb-3">
-              <Search className="w-4 h-4 text-slate-300 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={withdrawalSearch}
-                onChange={e => setWithdrawalSearch(e.target.value)}
-                placeholder="搜尋領用人、樣品名稱、用途..."
-                className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
-              />
+            {/* 搜尋 + 篩選 */}
+            <div className="flex items-center gap-2 mb-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-300 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={withdrawalSearch}
+                  onChange={e => setWithdrawalSearch(e.target.value)}
+                  placeholder="搜尋領用人、樣品名稱、用途..."
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
+                />
+              </div>
+              <button onClick={() => setWOnlyOut(v => !v)}
+                className="px-3 py-2 text-xs rounded-lg border transition whitespace-nowrap"
+                style={wOnlyOut
+                  ? { background: '#1e293b', color: '#fff', borderColor: '#1e293b' }
+                  : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+                只看未歸還 ({withdrawals.filter(w => !w.returned && !w.noReturn).length})
+              </button>
             </div>
             {(() => {
               // 建立 sampleId → sample 對照（取圖片）
               const sampleMap = {};
               samples.forEach(s => { sampleMap[s.id] = s; });
               const kw = withdrawalSearch.trim().toLowerCase();
-              const filteredW = withdrawals.filter(w => !kw || [w.personName, w.sampleName, w.purpose, w.noReturnReason].some(v => (v || '').toLowerCase().includes(kw)));
+              const filteredW = withdrawals.filter(w => {
+                if (wOnlyOut && (w.returned || w.noReturn)) return false;
+                return !kw || [w.personName, w.sampleName, w.purpose, w.noReturnReason].some(v => (v || '').toLowerCase().includes(kw));
+              });
 
               if (withdrawals.length === 0) {
                 return <p className="text-center text-sm text-slate-400 py-8">尚無領用紀錄</p>;
@@ -7742,88 +7767,114 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                 return <p className="text-center text-sm text-slate-400 py-8">找不到符合的領用紀錄</p>;
               }
               return (
-              <div className="space-y-1.5">
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg bg-white">
                 {filteredW.map(w => {
                   const linkedSample = sampleMap[w.sampleId];
                   const sampleImg = (linkedSample?.images || [])[0];
+                  const isOut = !w.returned && !w.noReturn; // 在外未歸還
                   return (
-                  <div key={w.id} className={`bg-white border rounded-lg p-3 group ${w.returned || w.noReturn ? 'opacity-60 border-slate-200' : 'border-amber-200 bg-amber-50/30'}`}>
-                    <div className="flex items-start gap-3">
-                      {/* 樣品圖片 */}
-                      <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-slate-50 border border-slate-100 overflow-hidden flex items-center justify-center">
+                  <div key={w.id} className="group">
+                    {/* 單行緊湊列 */}
+                    <div className={`flex items-center gap-2.5 px-2.5 py-1.5 ${isOut ? '' : 'opacity-55'}`}>
+                      {/* 縮圖 */}
+                      <div className="flex-shrink-0 w-8 h-8 rounded bg-slate-50 border border-slate-100 overflow-hidden flex items-center justify-center">
                         {sampleImg ? (
                           <StorageImage src={sampleImg.url || sampleImg.dataUrl} path={sampleImg.path} alt={w.sampleName}
                             className="w-full h-full object-contain" />
                         ) : (
-                          <ImageIcon className="w-4 h-4 text-slate-300" />
+                          <ImageIcon className="w-3.5 h-3.5 text-slate-300" />
                         )}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
-                          <span className="text-sm font-medium text-slate-900">{w.personName}</span>
-                          <span className="text-xs text-slate-600">領 {w.quantity} 個</span>
-                          <span className="text-xs text-slate-500 truncate">「{w.sampleName}」</span>
-                          {w.returned && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded">已歸還</span>}
-                          {w.noReturn && <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded">{w.noReturnReason || '不歸還'}</span>}
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-slate-400">
-                          <span>{w.date}</span>
-                          {w.purpose && <span>· 用途：{w.purpose}</span>}
-                        </div>
+                      {/* 主資訊：一行搞定，過長截斷 */}
+                      <div className="flex-1 min-w-0 flex items-baseline gap-x-2 flex-wrap">
+                        <span className="text-sm font-medium text-slate-900 whitespace-nowrap">{w.personName}</span>
+                        <span className="text-xs text-slate-700 truncate max-w-[16rem]" title={w.sampleName}>{w.sampleName}</span>
+                        <span className="text-xs text-slate-500 whitespace-nowrap">×{w.quantity}</span>
+                        <span className="text-[11px] text-slate-400 whitespace-nowrap">{w.date}</span>
+                        {w.purpose && (
+                          <span className="text-[11px] text-slate-400 truncate max-w-[14rem]" title={w.purpose}>{w.purpose}</span>
+                        )}
                       </div>
+                      {/* 狀態徽章 */}
+                      {w.returned && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded whitespace-nowrap">已歸還</span>}
+                      {w.noReturn && <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded whitespace-nowrap" title={w.noReturnReason}>{w.noReturnReason || '不歸還'}</span>}
+                      {isOut && <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded whitespace-nowrap">在外</span>}
+                      {/* 操作（hover 才浮現，減少視覺噪音） */}
                       {canEdit && (
-                        <button
-                          onClick={async () => {
-                            if (!confirm(`確定刪除這筆領用紀錄嗎？（${w.personName} 領 ${w.quantity} 個）`)) return;
-                            await deleteDoc(doc(db, WITHDRAWALS_COL, w.id));
-                          }}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-rose-600 transition flex-shrink-0"
-                          title="刪除此筆紀錄"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                    {canEdit && (
-                      <div className="mt-2 flex gap-2 flex-wrap">
-                        {!w.noReturn && (
-                          <button
-                            onClick={() => handleToggleReturn(w)}
-                            className={`text-xs px-2 py-1 rounded ${w.returned ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'}`}
-                          >
-                            {w.returned ? '取消歸還' : '標記已歸還'}
-                          </button>
-                        )}
-                        {!w.returned && !w.noReturn && (
-                          <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                          {!w.noReturn && (
+                            <button
+                              onClick={() => handleToggleReturn(w)}
+                              className={`text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap ${w.returned ? 'text-slate-500 hover:bg-slate-100' : 'text-emerald-700 hover:bg-emerald-50'}`}
+                            >
+                              {w.returned ? '取消歸還' : '✓ 歸還'}
+                            </button>
+                          )}
+                          {isOut && (
+                            <button
+                              onClick={() => { setNoReturnEditId(noReturnEditId === w.id ? null : w.id); setNoReturnReasonDraft(''); }}
+                              className="text-[11px] px-1.5 py-0.5 text-blue-700 hover:bg-blue-50 rounded whitespace-nowrap"
+                            >
+                              不歸還
+                            </button>
+                          )}
+                          {w.noReturn && (
                             <button
                               onClick={() => {
-                                const reason = prompt('說明不歸還原因（如：送客戶、展覽留存、損壞）：') ;
-                                if (reason === null) return;
-                                const updated = { ...w, noReturn: true, noReturnReason: reason || '不歸還' };
+                                const updated = { ...w, noReturn: false, noReturnReason: '' };
                                 const cleaned = {};
                                 Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && k !== '_docId') cleaned[k] = updated[k]; });
                                 setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
                               }}
-                              className="text-xs px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100"
+                              className="text-[11px] px-1.5 py-0.5 text-slate-500 hover:bg-slate-100 rounded whitespace-nowrap"
                             >
-                              不歸還（送客戶等）
+                              取消不歸還
                             </button>
-                          </div>
-                        )}
-                        {w.noReturn && (
+                          )}
                           <button
-                            onClick={() => {
-                              const updated = { ...w, noReturn: false, noReturnReason: '' };
+                            onClick={async () => {
+                              if (!confirm(`確定刪除這筆領用紀錄嗎？（${w.personName} 領 ${w.quantity} 個）`)) return;
+                              await deleteDoc(doc(db, WITHDRAWALS_COL, w.id));
+                            }}
+                            className="p-1 text-slate-300 hover:text-rose-600 transition"
+                            title="刪除此筆紀錄"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {/* 行內展開：不歸還原因（取代瀏覽器 prompt） */}
+                    {noReturnEditId === w.id && (
+                      <div className="flex items-center gap-2 px-2.5 pb-2 pl-[3.25rem]">
+                        <input
+                          value={noReturnReasonDraft}
+                          onChange={e => setNoReturnReasonDraft(e.target.value)}
+                          placeholder="原因：送客戶 / 展覽留存 / 損壞..."
+                          autoFocus
+                          onKeyDown={e => {
+                            if (e.key === 'Escape') setNoReturnEditId(null);
+                            if (e.key === 'Enter') {
+                              const updated = { ...w, noReturn: true, noReturnReason: noReturnReasonDraft.trim() || '不歸還' };
                               const cleaned = {};
                               Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && k !== '_docId') cleaned[k] = updated[k]; });
                               setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
-                            }}
-                            className="text-xs px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200"
-                          >
-                            取消不歸還
-                          </button>
-                        )}
+                              setNoReturnEditId(null);
+                            }
+                          }}
+                          className="flex-1 px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50/50 focus:outline-none focus:border-blue-400"
+                        />
+                        <button
+                          onClick={() => {
+                            const updated = { ...w, noReturn: true, noReturnReason: noReturnReasonDraft.trim() || '不歸還' };
+                            const cleaned = {};
+                            Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && k !== '_docId') cleaned[k] = updated[k]; });
+                            setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
+                            setNoReturnEditId(null);
+                          }}
+                          className="text-[11px] px-2.5 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap">確定</button>
+                        <button onClick={() => setNoReturnEditId(null)}
+                          className="text-[11px] px-2 py-1 text-slate-500 hover:bg-slate-100 rounded whitespace-nowrap">取消</button>
                       </div>
                     )}
                   </div>
@@ -9830,6 +9881,7 @@ function WithdrawalModal({ sample, currentUser, onSave, onClose }) {
   const [personName, setPersonName] = useState(currentUser?.name || '');
   const [quantity, setQuantity] = useState(1);
   const [purpose, setPurpose] = useState('');
+  const [wDate, setWDate] = useState(new Date().toISOString().split('T')[0]); // 領用日期，預設今天可改
 
   const remaining = sample._remaining || 0;
 
@@ -9848,6 +9900,7 @@ function WithdrawalModal({ sample, currentUser, onSave, onClose }) {
       personName: personName.trim(),
       quantity,
       purpose: purpose.trim(),
+      date: wDate,
     });
   };
 
@@ -9877,15 +9930,26 @@ function WithdrawalModal({ sample, currentUser, onSave, onClose }) {
               className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
             />
           </div>
-          <div>
-            <label className="block text-xs text-slate-600 mb-1">數量（庫存剩 {remaining}）</label>
-            <input
-              type="number"
-              min="1"
-              value={quantity}
-              onChange={(e) => setQuantity(Number(e.target.value))}
-              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">數量（庫存剩 {remaining}）</label>
+              <input
+                type="number"
+                min="1"
+                value={quantity}
+                onChange={(e) => setQuantity(Number(e.target.value))}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">領用日期</label>
+              <input
+                type="date"
+                value={wDate}
+                onChange={(e) => setWDate(e.target.value)}
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+              />
+            </div>
           </div>
           <div>
             <label className="block text-xs text-slate-600 mb-1">用途</label>

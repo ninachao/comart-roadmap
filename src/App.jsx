@@ -48,10 +48,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.19.0';
-const BUILD_ID = '20260714-2100';
+const APP_VERSION = 'v1.19.1';
+const BUILD_ID = '20260714-2200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.19.1',
+    date: '2026-07-14',
+    changes: [
+      '🎨 樣品編輯的「關聯產品」從文字下拉選單升級為可搜尋的圖片格選擇器',
+      '選擇產品時自動帶入：名稱（沒填才帶）、產品料號、產品主圖（沒放圖才帶）',
+      '確立「樣品統一從樣品庫新增/查找」的動線；產品頁「相關樣品」保留為情境視圖',
+    ],
+  },
   {
     version: 'v1.19.0',
     date: '2026-07-14',
@@ -9268,6 +9277,8 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
   });
   const [uploading, setUploading] = useState(false);
   const [pasteHint, setPasteHint] = useState(false);
+  const [showProjPicker, setShowProjPicker] = useState(false); // 關聯產品圖片格選擇器
+  const [projSearch, setProjSearch] = useState('');
   const [cropTarget, setCropTarget] = useState(null); // { imgIndex, url }
   const [viewingIdx, setViewingIdx] = useState(null); // 放大預覽 index
   const fileRef = useRef(null);
@@ -9412,29 +9423,90 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
             </div>
           </div>
 
-          {/* 關聯產品（所有類型都可選，非僅手板） */}
+          {/* 關聯產品（所有類型都可選，非僅手板）：可搜尋的圖片格選擇器 */}
           {!lockProject && projects && projects.length > 0 && (
             <div>
               <label className="block text-xs text-slate-600 mb-1">關聯產品（選填）</label>
-              <select
-                value={data.relatedProjectId || ''}
-                onChange={(e) => {
-                  const pid = e.target.value;
-                  const proj = projects.find(p => String(p.id) === pid);
-                  setData(prev => ({
-                    ...prev,
-                    relatedProjectId: pid ? Number(pid) : '',
-                    relatedProjectCode: proj?.code || '',
-                    // 換產品時清空版本（避免帶到別產品的版本）
-                    idVersion: '',
-                    threeDVersion: '',
-                  }));
-                }}
-                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
-              >
-                <option value="">無</option>
-                {projects.map(p => <option key={p.id} value={p.id}>{p.code ? `${p.code} · ` : ''}{p.name}</option>)}
-              </select>
+              {data.relatedProjectId ? (
+                (() => {
+                  const proj = projects.find(p => String(p.id) === String(data.relatedProjectId));
+                  const thumb = proj ? (proj.productImages || [])[0] : null;
+                  const thumbSrc = thumb ? (typeof thumb === 'string' ? thumb : (thumb.dataUrl || thumb.url)) : null;
+                  return (
+                    <div className="flex items-center gap-2.5 p-2 rounded-lg border border-amber-300 bg-amber-50">
+                      {thumbSrc ? (
+                        <img src={thumbSrc} alt="" className="w-11 h-11 object-contain rounded bg-white border border-amber-200" />
+                      ) : (
+                        <div className="w-11 h-11 rounded bg-amber-100 flex items-center justify-center text-amber-400">📦</div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">{proj ? proj.name : '（產品已刪除）'}</p>
+                        {proj?.code && <p className="text-[11px] text-slate-400 font-mono">{proj.code}</p>}
+                      </div>
+                      <button type="button" onClick={() => { setShowProjPicker(true); setProjSearch(''); }}
+                        className="text-xs text-slate-500 hover:text-slate-700 underline whitespace-nowrap">重新選</button>
+                      <button type="button"
+                        onClick={() => setData(prev => ({ ...prev, relatedProjectId: '', relatedProjectCode: '', idVersion: '', threeDVersion: '' }))}
+                        className="text-xs text-slate-400 hover:text-rose-500 underline whitespace-nowrap">清除</button>
+                    </div>
+                  );
+                })()
+              ) : !showProjPicker ? (
+                <button type="button" onClick={() => { setShowProjPicker(true); setProjSearch(''); }}
+                  className="w-full py-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg hover:bg-slate-50 transition">
+                  ＋ 選擇產品（自動帶名稱 / 料號 / 圖片）
+                </button>
+              ) : null}
+              {showProjPicker && (
+                <div className="mt-1.5 p-2.5 rounded-lg border border-amber-200 bg-amber-50/50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <input value={projSearch} onChange={e => setProjSearch(e.target.value)}
+                      placeholder="搜尋產品名稱或代碼..."
+                      autoFocus
+                      className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-amber-400" />
+                    <button type="button" onClick={() => setShowProjPicker(false)}
+                      className="text-xs text-slate-400 hover:text-slate-700 underline">關閉</button>
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 max-h-52 overflow-y-auto pr-1">
+                    {projects
+                      .filter(p => p.status !== '取消' && (
+                        !projSearch ||
+                        (p.name || '').toLowerCase().includes(projSearch.toLowerCase()) ||
+                        (p.code || '').toLowerCase().includes(projSearch.toLowerCase())
+                      ))
+                      .map(p => {
+                        const thumb = (p.productImages || [])[0];
+                        const thumbSrc = thumb ? (typeof thumb === 'string' ? thumb : (thumb.dataUrl || thumb.url)) : null;
+                        return (
+                          <button key={p.id} type="button"
+                            onClick={() => {
+                              setData(prev => ({
+                                ...prev,
+                                relatedProjectId: Number(p.id),
+                                relatedProjectCode: p.code || '',
+                                // 名稱沒填才自動帶產品名；圖片沒放才自動帶產品主圖
+                                name: (prev.name && prev.name.trim()) ? prev.name : (p.name || ''),
+                                images: (prev.images && prev.images.length > 0) ? prev.images : (thumb ? [thumb] : []),
+                                // 換產品時清空版本（避免帶到別產品的版本）
+                                idVersion: '',
+                                threeDVersion: '',
+                              }));
+                              setShowProjPicker(false);
+                            }}
+                            className="flex flex-col items-center p-1.5 rounded-lg border border-slate-200 bg-white hover:border-amber-400 hover:bg-amber-50 transition text-left">
+                            {thumbSrc ? (
+                              <img src={thumbSrc} alt="" className="w-14 h-14 object-contain rounded mb-1 bg-slate-50" />
+                            ) : (
+                              <div className="w-14 h-14 rounded mb-1 bg-slate-100 flex items-center justify-center text-slate-300 text-xl">📦</div>
+                            )}
+                            <p className="text-[11px] text-slate-700 text-center leading-tight line-clamp-2">{p.name}</p>
+                            {p.code && <p className="text-[10px] text-slate-400 font-mono mt-0.5">{p.code}</p>}
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

@@ -47,10 +47,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.18.5';
-const BUILD_ID = '20260714-1900';
+const APP_VERSION = 'v1.18.6';
+const BUILD_ID = '20260714-2000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.18.6',
+    date: '2026-07-14',
+    changes: [
+      '🔧 修正樣品申請卡片打中文會亂碼：欄位改為離開時才儲存（onBlur），打字過程不再被雲端同步刷新打斷注音組字',
+      '⚡ 順帶大幅減少 Firestore 寫入次數（原本每打一個字寫一次雲端）',
+    ],
+  },
   {
     version: 'v1.18.5',
     date: '2026-07-14',
@@ -8146,15 +8154,15 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
 
                         {/* 欄位欄 */}
                         <div className="flex-1 min-w-0 grid grid-cols-1 gap-1.5">
-                          {/* 產品名稱 + 代碼 */}
+                          {/* 產品名稱 + 代碼（onBlur 才儲存，避免打字時被雲端同步打斷輸入法） */}
                           <div className="flex items-baseline gap-2 flex-wrap">
-                            <input value={r.productName || ''}
-                              onChange={e => updateReqField(r, 'productName', e.target.value)}
+                            <input defaultValue={r.productName || ''}
+                              onBlur={e => { if (e.target.value !== (r.productName || '')) updateReqField(r, 'productName', e.target.value); }}
                               placeholder="產品名稱"
                               disabled={!canEdit}
                               className="flex-1 min-w-0 text-sm font-medium text-slate-800 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 disabled:cursor-default" />
-                            <input value={r.productCode || ''}
-                              onChange={e => updateReqField(r, 'productCode', e.target.value)}
+                            <input defaultValue={r.productCode || ''}
+                              onBlur={e => { if (e.target.value !== (r.productCode || '')) updateReqField(r, 'productCode', e.target.value); }}
                               placeholder="代碼"
                               disabled={!canEdit}
                               className="w-24 text-xs text-slate-400 font-mono bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-1 py-0.5 disabled:cursor-default" />
@@ -8163,24 +8171,24 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                           {/* 數量 + 完成日 */}
                           <div className="flex items-center gap-2 flex-wrap text-sm text-slate-600">
                             <span className="text-xs text-slate-400">數量</span>
-                            <input type="number" min="1" value={r.quantity || 1}
-                              onChange={e => updateReqField(r, 'quantity', Number(e.target.value))}
+                            <input type="number" min="1" defaultValue={r.quantity || 1}
+                              onBlur={e => { const n = Number(e.target.value) || 1; if (n !== (r.quantity || 1)) updateReqField(r, 'quantity', n); }}
                               disabled={!canEdit}
                               className="w-14 text-sm text-center border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
-                            <input value={r.unit || '個'}
-                              onChange={e => updateReqField(r, 'unit', e.target.value)}
+                            <input defaultValue={r.unit || '個'}
+                              onBlur={e => { if (e.target.value !== (r.unit || '個')) updateReqField(r, 'unit', e.target.value); }}
                               disabled={!canEdit}
                               className="w-10 text-sm border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
                             <span className="text-xs text-slate-400">完成日</span>
-                            <input type="date" value={r.neededBy || ''}
-                              onChange={e => updateReqField(r, 'neededBy', e.target.value)}
+                            <input type="date" defaultValue={r.neededBy || ''}
+                              onBlur={e => { if (e.target.value !== (r.neededBy || '')) updateReqField(r, 'neededBy', e.target.value); }}
                               disabled={!canEdit}
                               className="text-sm border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
                           </div>
 
                           {/* 備註 */}
-                          <textarea value={r.note || ''}
-                            onChange={e => updateReqField(r, 'note', e.target.value)}
+                          <textarea defaultValue={r.note || ''}
+                            onBlur={e => { if (e.target.value !== (r.note || '')) updateReqField(r, 'note', e.target.value); }}
                             placeholder="備註、規格說明..."
                             disabled={!canEdit}
                             rows={2}

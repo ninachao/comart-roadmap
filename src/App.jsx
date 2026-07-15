@@ -37,6 +37,7 @@ const WITHDRAWALS_COL = 'sample_withdrawals';
 const EXHIBITIONS_COL = 'exhibitions';
 const TRACKING_COL = 'tracking_overrides'; // 手動追蹤調整
 const MANUAL_REQUESTS_COL = 'sample_requests'; // 手動備料申請（不掛在產品下的）
+const CUSTOMER_LISTS_COL = 'customer_lists'; // 客戶樣品清單（老闆帶去給客人看的）
 const STORAGE_FOLDER = 'roadmap';
 
 // === 簡易密碼設定 ===
@@ -47,10 +48,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.18.6';
-const BUILD_ID = '20260714-2000';
+const APP_VERSION = 'v1.19.0';
+const BUILD_ID = '20260714-2100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.19.0',
+    date: '2026-07-14',
+    changes: [
+      '🧳 新增「客戶清單」分頁（樣品庫第五個分頁）：可建立多份給不同客戶的樣品清單',
+      '每份清單可從「樣品庫」「樣品申請」視覺化挑選，也可手動輸入（台北找的樣品，可貼圖）',
+      '連結樣品申請的項目會即時顯示備料狀態；每項可填數量、備註、勾「已準備」',
+      '每份清單可單獨匯出 PDF / Excel（含圖片），抬頭帶客戶名稱與日期',
+      '新增清單時可一鍵匯入目前所有樣品申請，也有「匯入全部樣品申請」按鈕',
+    ],
+  },
   {
     version: 'v1.18.6',
     date: '2026-07-14',
@@ -1873,6 +1885,19 @@ export default function ProductRoadmap() {
     return () => unsub();
   }, [currentUser]);
 
+  // === 訂閱客戶樣品清單 ===
+  const [customerLists, setCustomerLists] = useState([]);
+  useEffect(() => {
+    if (!currentUser) return;
+    const colRef = collection(db, CUSTOMER_LISTS_COL);
+    const unsub = onSnapshot(colRef, (snap) => {
+      const items = snap.docs.map(d => ({ ...d.data(), _docId: d.id }));
+      items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setCustomerLists(items);
+    });
+    return () => unsub();
+  }, [currentUser]);
+
   // === 訂閱追蹤調整（手動加入/排除）===
   useEffect(() => {
     if (!currentUser) return;
@@ -2950,6 +2975,7 @@ export default function ProductRoadmap() {
               setShowSampleLibrary(false);
             }
           }}
+          customerLists={customerLists}
           manualRequests={manualRequests}
           onAddManualRequest={async (req) => {
             const docRef = doc(collection(db, MANUAL_REQUESTS_COL));
@@ -6959,8 +6985,97 @@ async function exportSampleRequestsXLSX(requests) {
   a.click();
 }
 
-function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, currentUser, canEdit, onClose, onJumpToProject, onUpdateProject, manualRequests = [], onAddManualRequest, onUpdateManualRequest, onDeleteManualRequest }) {
-  const [tab, setTab] = useState('samples'); // 'samples' | 'withdrawals' | 'exhibitions' | 'requests'
+// === 客戶清單：匯出 PDF（items 需帶 _exportImg / _statusLabel） ===
+function exportCustomerListPDF(list, items) {
+  const today = new Date().toLocaleDateString('zh-TW');
+  let rows = '';
+  items.forEach((it, idx) => {
+    const src = reqImgSrc(it._exportImg);
+    rows += `<tr style="background:${idx % 2 === 0 ? '#fff' : '#f8fafc'}">
+      <td class="c-img">${src ? `<img src="${src}" class="pimg" />` : '<span style="color:#cbd5e1;font-size:11px;">—</span>'}</td>
+      <td class="c-name"><b>${it.name || '—'}</b>${it.code ? `<br/><span class="code">${it.code}</span>` : ''}</td>
+      <td class="c-qty">${it.qty || 1}</td>
+      <td class="c-note">${it.note || ''}</td>
+      <td class="c-status">${it.prepared ? '<span class="pill" style="background:#22c55e;">已準備</span>' : '<span class="pill" style="background:#94a3b8;">未備</span>'}</td>
+    </tr>`;
+  });
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${list.name || '客戶樣品清單'}</title>
+  <style>
+    body{font-family:'Noto Sans TC','Microsoft JhengHei',Arial,sans-serif;padding:24px;color:#1e293b;}
+    h1{font-size:18px;margin-bottom:4px;}
+    p.meta{font-size:12px;color:#94a3b8;margin-bottom:16px;}
+    table{width:100%;border-collapse:collapse;table-layout:fixed;}
+    th{background:#1e293b;color:#fff;padding:8px 6px;font-size:12px;text-align:left;white-space:nowrap;}
+    td{border-bottom:1px solid #e2e8f0;vertical-align:middle;padding:8px 6px;font-size:12px;word-break:break-word;}
+    .c-img{width:70px;} .c-qty{width:44px;text-align:center;white-space:nowrap;}
+    .c-status{width:64px;text-align:center;} .c-name{width:30%;}
+    .c-name b{font-size:13px;font-weight:600;}
+    .code{font-size:11px;color:#94a3b8;font-family:Consolas,monospace;}
+    .c-note{color:#475569;white-space:pre-line;}
+    .pill{color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;white-space:nowrap;display:inline-block;}
+    .pimg{width:56px;height:56px;object-fit:contain;border:1px solid #e2e8f0;border-radius:4px;background:#fff;margin:1px;}
+    tr{page-break-inside:avoid;}
+    @media print{body{padding:8px;}}
+  </style>
+  </head><body>
+  <h1>${list.name || '客戶樣品清單'}</h1>
+  <p class="meta">${list.customer ? `客戶：${list.customer}　` : ''}${list.visitDate ? `日期：${list.visitDate}　` : ''}匯出：${today}　共 ${items.length} 項</p>
+  <table>
+    <thead><tr><th class="c-img">圖片</th><th class="c-name">品名</th><th class="c-qty">數量</th><th>備註</th><th class="c-status">狀態</th></tr></thead>
+  <tbody>${rows}</tbody></table>
+  <script>window.onload=()=>window.print();<\/script></body></html>`;
+  const w = window.open('', '_blank');
+  if (w) { w.document.write(html); w.document.close(); }
+}
+
+// === 客戶清單：匯出 Excel（.xlsx 內嵌圖片） ===
+async function exportCustomerListXLSX(list, items) {
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(list.name ? list.name.slice(0, 28) : '客戶清單');
+  ws.columns = [
+    { header: '圖片', width: 14 },
+    { header: '品名', width: 32 },
+    { header: '代碼', width: 16 },
+    { header: '數量', width: 8 },
+    { header: '備註', width: 36 },
+    { header: '狀態', width: 10 },
+  ];
+  const headerRow = ws.getRow(1);
+  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+  headerRow.height = 20;
+  const toBase64 = async (img) => {
+    const src = reqImgSrc(img);
+    if (!src) return null;
+    if (src.startsWith('data:')) return src;
+    try {
+      const blob = await fetch(src).then(x => x.blob());
+      return await new Promise(res => { const rd = new FileReader(); rd.onload = e => res(e.target.result); rd.readAsDataURL(blob); });
+    } catch { return null; }
+  };
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const row = ws.getRow(i + 2);
+    row.values = ['', it.name || '', it.code || '', it.qty || 1, it.note || '', it.prepared ? '已準備' : '未備'];
+    row.height = 64;
+    row.alignment = { vertical: 'middle', wrapText: true };
+    const b64 = await toBase64(it._exportImg);
+    if (b64) {
+      const ext = b64.includes('image/png') ? 'png' : 'jpeg';
+      const imgId = wb.addImage({ base64: b64, extension: ext });
+      ws.addImage(imgId, { tl: { col: 0.1, row: i + 1.05 }, ext: { width: 78, height: 78 } });
+    }
+  }
+  const buf = await wb.xlsx.writeBuffer();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  a.download = `${list.name || '客戶樣品清單'}_${new Date().toISOString().split('T')[0]}.xlsx`;
+  a.click();
+}
+
+function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, currentUser, canEdit, onClose, onJumpToProject, onUpdateProject, manualRequests = [], onAddManualRequest, onUpdateManualRequest, onDeleteManualRequest, customerLists = [] }) {
+  const [tab, setTab] = useState('samples'); // 'samples' | 'withdrawals' | 'exhibitions' | 'requests' | 'lists'
 
   // ── 備料申請 tab 狀態 ──
   const [reqStatusFilter, setReqStatusFilter] = useState('全部');
@@ -7116,6 +7231,103 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     } catch { alert('請先複製一張圖片，再點「貼上圖片」'); }
   };
   const [pickerSearch, setPickerSearch] = useState('');
+
+  // ── 客戶清單 tab 狀態 ──
+  const [openListId, setOpenListId] = useState(null);        // 展開中的清單
+  const [showNewListForm, setShowNewListForm] = useState(false);
+  const [newList, setNewList] = useState({ name: '', customer: '', visitDate: '', importRequests: true });
+  const [listPicker, setListPicker] = useState(null);        // {listId, mode: 'sample' | 'request' | 'manual'}
+  const [listPickerSearch, setListPickerSearch] = useState('');
+  const [manualItem, setManualItem] = useState({ name: '', code: '', qty: 1, note: '', image: null });
+
+  const saveCustomerList = async (list) => {
+    const cleaned = {};
+    Object.keys(list).forEach(k => { if (list[k] !== undefined && k !== '_docId') cleaned[k] = list[k]; });
+    await setDoc(doc(db, CUSTOMER_LISTS_COL, list.id), cleaned);
+  };
+
+  const deleteCustomerList = async (list) => {
+    if (!confirm(`確定刪除清單「${list.name}」嗎？此操作無法復原。`)) return;
+    await deleteDoc(doc(db, CUSTOMER_LISTS_COL, list.id));
+    if (openListId === list.id) setOpenListId(null);
+  };
+
+  const newItemId = () => 'ci_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+
+  // 把目前所有樣品申請匯入清單（略過已在清單裡的）
+  const buildItemsFromRequests = (existingItems = []) => {
+    const existing = new Set(existingItems.filter(i => i.sourceType === 'request').map(i => i.refId));
+    return allRequests
+      .filter(r => !existing.has(r._isManual ? (r._docId || r.id) : r.id))
+      .map(r => ({
+        id: newItemId(),
+        sourceType: 'request',
+        refId: r._isManual ? (r._docId || r.id) : r.id,
+        projectId: r._project ? r._project.id : null,
+        name: r.productName || '',
+        code: r.productCode || '',
+        qty: r.quantity || 1,
+        note: r.note || '',
+        prepared: false,
+      }));
+  };
+
+  const createCustomerList = async () => {
+    if (!newList.name.trim()) return;
+    const id = 'cl_' + Date.now();
+    const items = newList.importRequests ? buildItemsFromRequests([]) : [];
+    await saveCustomerList({
+      id,
+      name: newList.name.trim(),
+      customer: newList.customer.trim(),
+      visitDate: newList.visitDate,
+      items,
+      createdAt: Date.now(),
+      createdBy: currentUser?.name || '',
+    });
+    setShowNewListForm(false);
+    setNewList({ name: '', customer: '', visitDate: '', importRequests: true });
+    setOpenListId(id);
+  };
+
+  const updateListItem = (list, itemId, patch) => {
+    saveCustomerList({ ...list, items: (list.items || []).map(it => it.id === itemId ? { ...it, ...patch } : it) });
+  };
+  const removeListItem = (list, itemId) => {
+    saveCustomerList({ ...list, items: (list.items || []).filter(it => it.id !== itemId) });
+  };
+
+  // 清單項目的顯示圖片：手動項目用自己的圖；連結項目即時從樣品庫/申請/產品取
+  const getListItemImage = (item) => {
+    if (item.image) return item.image;
+    if (item.sourceType === 'sample') {
+      const s = samples.find(x => x.id === item.refId);
+      return s ? ((s.images || [])[0] || null) : null;
+    }
+    if (item.sourceType === 'request') {
+      if (item.projectId) {
+        const p = projects.find(x => String(x.id) === String(item.projectId));
+        if (!p) return null;
+        const r = (p.sampleRequests || []).find(x => x.id === item.refId);
+        return (r && (r.images || [])[0]) || (p.productImages || [])[0] || null;
+      }
+      const m = manualRequests.find(x => (x._docId || x.id) === item.refId);
+      return m ? (m.coverImage || (m.images || [])[0] || null) : null;
+    }
+    return null;
+  };
+
+  // 連結到樣品申請的項目：顯示即時備料狀態
+  const getListItemStatus = (item) => {
+    if (item.sourceType !== 'request') return null;
+    if (item.projectId) {
+      const p = projects.find(x => String(x.id) === String(item.projectId));
+      const r = p && (p.sampleRequests || []).find(x => x.id === item.refId);
+      return r ? r.status : null;
+    }
+    const m = manualRequests.find(x => (x._docId || x.id) === item.refId);
+    return m ? m.status : null;
+  };
   const [typeFilter, setTypeFilter] = useState('全部');
   const [groupByProduct, setGroupByProduct] = useState(false); // 依產品分組
   const [locationFilter, setLocationFilter] = useState('全部');
@@ -7369,6 +7581,12 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'requests' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
           >
             📋 樣品申請 {allRequests.filter(r => r.status !== '已完成').length > 0 && <span className="ml-1 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{allRequests.filter(r => r.status !== '已完成').length}</span>}
+          </button>
+          <button
+            onClick={() => setTab('lists')}
+            className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'lists' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          >
+            🧳 客戶清單 ({customerLists.length})
           </button>
         </div>
 
@@ -8218,6 +8436,309 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                       <div className="px-3 pb-2 text-[11px] text-slate-300">
                         {r.requestedBy && `${r.requestedBy} 申請`}{r.requestedAt && ` · ${r.requestedAt}`}
                       </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── 客戶清單 Tab ── */}
+        {tab === 'lists' && (
+          <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
+            {/* 工具列 */}
+            <div className="flex items-center gap-2 mb-3">
+              <p className="text-xs text-slate-400">給客戶看的樣品清單 · 可從樣品庫 / 樣品申請挑選，也可手動加入</p>
+              <div className="flex-1" />
+              {canEdit && (
+                <button onClick={() => setShowNewListForm(true)}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs text-white rounded-lg transition"
+                  style={{ background: '#1e293b' }}>
+                  + 新增清單
+                </button>
+              )}
+            </div>
+
+            {/* 新增清單表單 */}
+            {showNewListForm && (
+              <div className="mb-4 p-4 rounded-xl border border-slate-200 bg-slate-50">
+                <p className="text-sm font-medium text-slate-700 mb-3">新增客戶清單</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="col-span-2">
+                    <label className="text-xs text-slate-500 mb-1 block">清單名稱 *</label>
+                    <input value={newList.name} onChange={e => setNewList(v => ({ ...v, name: e.target.value }))}
+                      placeholder="例：SCOSCHE 美國拜訪樣品"
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-amber-400" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">客戶</label>
+                    <input value={newList.customer} onChange={e => setNewList(v => ({ ...v, customer: e.target.value }))}
+                      placeholder="例：SCOSCHE"
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-amber-400" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">日期</label>
+                    <input type="date" value={newList.visitDate} onChange={e => setNewList(v => ({ ...v, visitDate: e.target.value }))}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
+                  </div>
+                  <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+                    <input type="checkbox" checked={newList.importRequests}
+                      onChange={e => setNewList(v => ({ ...v, importRequests: e.target.checked }))} />
+                    建立時匯入目前所有樣品申請（{allRequests.length} 筆）
+                  </label>
+                </div>
+                <div className="flex gap-2 mt-3 justify-end">
+                  <button onClick={() => setShowNewListForm(false)} className="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 rounded">取消</button>
+                  <button onClick={createCustomerList} disabled={!newList.name.trim()}
+                    className="px-4 py-1.5 text-sm text-white rounded disabled:opacity-40"
+                    style={{ background: '#1e293b' }}>
+                    建立清單
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 清單列表 */}
+            {customerLists.length === 0 && !showNewListForm ? (
+              <div className="flex flex-col items-center justify-center flex-1 text-center py-16 text-slate-400">
+                <p className="text-4xl mb-3">🧳</p>
+                <p className="text-sm">還沒有客戶清單</p>
+                {canEdit && <button onClick={() => setShowNewListForm(true)} className="mt-3 text-xs text-amber-600 hover:underline">+ 建立第一份</button>}
+              </div>
+            ) : (
+              <div className="space-y-3 flex-1 overflow-y-auto pb-2">
+                {customerLists.map(list => {
+                  const items = list.items || [];
+                  const isOpen = openListId === list.id;
+                  const preparedCount = items.filter(i => i.prepared).length;
+                  const exportItems = () => items.map(it => ({ ...it, _exportImg: getListItemImage(it) }));
+                  return (
+                    <div key={list.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+                      {/* 清單標題列 */}
+                      <div className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-slate-50 transition"
+                        onClick={() => setOpenListId(isOpen ? null : list.id)}>
+                        <span className="text-lg">🧳</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-800 truncate">{list.name}</p>
+                          <p className="text-[11px] text-slate-400">
+                            {list.customer && `客戶：${list.customer} · `}{list.visitDate && `${list.visitDate} · `}{items.length} 項 · 已準備 {preparedCount}/{items.length}
+                          </p>
+                        </div>
+                        <button onClick={e => { e.stopPropagation(); exportCustomerListPDF(list, exportItems()); }}
+                          className="px-2 py-1 text-[11px] text-slate-500 border border-slate-200 rounded hover:bg-slate-50 transition">🖨 PDF</button>
+                        <button onClick={async e => {
+                          e.stopPropagation();
+                          try { await exportCustomerListXLSX(list, exportItems()); }
+                          catch (err) { console.error(err); alert('匯出 Excel 失敗，請再試一次'); }
+                        }}
+                          className="px-2 py-1 text-[11px] text-slate-500 border border-slate-200 rounded hover:bg-slate-50 transition">📊 Excel</button>
+                        {canEdit && (
+                          <button onClick={e => { e.stopPropagation(); deleteCustomerList(list); }}
+                            className="text-slate-300 hover:text-rose-500 transition p-1">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <span className="text-slate-300 text-xs">{isOpen ? '▲' : '▼'}</span>
+                      </div>
+
+                      {/* 展開內容 */}
+                      {isOpen && (
+                        <div className="border-t border-slate-100 p-3">
+                          {/* 加項目按鈕列 */}
+                          {canEdit && (
+                            <div className="flex flex-wrap gap-1.5 mb-3">
+                              <button onClick={() => { setListPicker({ listId: list.id, mode: 'sample' }); setListPickerSearch(''); }}
+                                className="px-2.5 py-1 text-[11px] text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50 transition">📦 從樣品庫挑</button>
+                              <button onClick={() => { setListPicker({ listId: list.id, mode: 'request' }); setListPickerSearch(''); }}
+                                className="px-2.5 py-1 text-[11px] text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50 transition">📋 從樣品申請挑</button>
+                              <button onClick={() => { setListPicker({ listId: list.id, mode: 'manual' }); setManualItem({ name: '', code: '', qty: 1, note: '', image: null }); }}
+                                className="px-2.5 py-1 text-[11px] text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50 transition">✏️ 手動新增</button>
+                              <button onClick={() => {
+                                const fresh = buildItemsFromRequests(items);
+                                if (fresh.length === 0) { alert('所有樣品申請都已在清單裡了'); return; }
+                                saveCustomerList({ ...list, items: [...items, ...fresh] });
+                              }}
+                                className="px-2.5 py-1 text-[11px] text-amber-700 border border-amber-200 bg-amber-50 rounded-full hover:bg-amber-100 transition">⬇ 匯入全部樣品申請</button>
+                            </div>
+                          )}
+
+                          {/* 挑選面板 */}
+                          {listPicker && listPicker.listId === list.id && listPicker.mode !== 'manual' && (
+                            <div className="mb-3 p-3 rounded-lg border border-amber-200 bg-amber-50/50">
+                              <div className="flex items-center gap-2 mb-2">
+                                <input value={listPickerSearch} onChange={e => setListPickerSearch(e.target.value)}
+                                  placeholder={listPicker.mode === 'sample' ? '搜尋樣品名稱或料號...' : '搜尋樣品申請...'}
+                                  autoFocus
+                                  className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-amber-400" />
+                                <button onClick={() => setListPicker(null)} className="text-xs text-slate-400 hover:text-slate-700 underline">關閉</button>
+                              </div>
+                              <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 max-h-56 overflow-y-auto pr-1">
+                                {(listPicker.mode === 'sample'
+                                  ? samplesWithRemaining.filter(s => !listPickerSearch || [s._displayName, s._displayCode, s.sampleNo].some(v => (v || '').toLowerCase().includes(listPickerSearch.toLowerCase())))
+                                  : allRequests.filter(r => !listPickerSearch || [r.productName, r.productCode].some(v => (v || '').toLowerCase().includes(listPickerSearch.toLowerCase())))
+                                ).map(x => {
+                                  const isSample = listPicker.mode === 'sample';
+                                  const img = isSample ? (x.images || [])[0] : getReqDisplayImage(x);
+                                  const src = reqImgSrc(img);
+                                  const name = isSample ? x._displayName : x.productName;
+                                  const code = isSample ? (x.sampleNo || x._displayCode) : x.productCode;
+                                  const refId = isSample ? x.id : (x._isManual ? (x._docId || x.id) : x.id);
+                                  const already = items.some(it => it.sourceType === (isSample ? 'sample' : 'request') && it.refId === refId);
+                                  return (
+                                    <button key={refId} disabled={already}
+                                      onClick={() => {
+                                        const item = {
+                                          id: newItemId(),
+                                          sourceType: isSample ? 'sample' : 'request',
+                                          refId,
+                                          projectId: isSample ? null : (x._project ? x._project.id : null),
+                                          name: name || '', code: code || '',
+                                          qty: 1, note: '', prepared: false,
+                                        };
+                                        saveCustomerList({ ...list, items: [...items, item] });
+                                      }}
+                                      className="flex flex-col items-center p-1.5 rounded-lg border bg-white transition text-left disabled:opacity-30 border-slate-200 hover:border-amber-400 hover:bg-amber-50">
+                                      {src ? (
+                                        <img src={src} alt="" className="w-12 h-12 object-contain rounded mb-1 bg-slate-50" />
+                                      ) : (
+                                        <div className="w-12 h-12 rounded mb-1 bg-slate-100 flex items-center justify-center text-slate-300 text-lg">📦</div>
+                                      )}
+                                      <p className="text-[10px] text-slate-700 text-center leading-tight line-clamp-2">{name}</p>
+                                      {already && <p className="text-[9px] text-amber-600">已加入</p>}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 手動新增面板 */}
+                          {listPicker && listPicker.listId === list.id && listPicker.mode === 'manual' && (
+                            <div className="mb-3 p-3 rounded-lg border border-amber-200 bg-amber-50/50">
+                              <div className="grid grid-cols-2 gap-2">
+                                <input value={manualItem.name} onChange={e => setManualItem(v => ({ ...v, name: e.target.value }))}
+                                  placeholder="品名 *" autoFocus
+                                  className="col-span-2 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-amber-400" />
+                                <input value={manualItem.code} onChange={e => setManualItem(v => ({ ...v, code: e.target.value }))}
+                                  placeholder="代碼（選填）"
+                                  className="px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
+                                <input type="number" min="1" value={manualItem.qty}
+                                  onChange={e => setManualItem(v => ({ ...v, qty: Number(e.target.value) || 1 }))}
+                                  className="w-24 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
+                                <div className="col-span-2 flex gap-1.5 items-center">
+                                  {manualItem.image && (
+                                    <img src={reqImgSrc(manualItem.image)} alt="" className="w-10 h-10 object-contain rounded border border-slate-200 bg-white" />
+                                  )}
+                                  <label className="px-2 py-1.5 text-xs border border-dashed border-slate-300 rounded cursor-pointer hover:bg-white text-slate-500">
+                                    上傳圖片
+                                    <input type="file" accept="image/*" className="hidden" onChange={async e => {
+                                      if (e.target.files[0]) {
+                                        const dataUrl = await reqImageToDataUrl(e.target.files[0]);
+                                        setManualItem(v => ({ ...v, image: { dataUrl } }));
+                                        e.target.value = '';
+                                      }
+                                    }} />
+                                  </label>
+                                  <button className="px-2 py-1.5 text-xs border border-dashed border-slate-300 rounded hover:bg-white text-slate-500"
+                                    onClick={async () => {
+                                      try {
+                                        const clip = await navigator.clipboard.read();
+                                        for (const item of clip) {
+                                          const t = item.types.find(x => x.startsWith('image/'));
+                                          if (t) {
+                                            const blob = await item.getType(t);
+                                            const dataUrl = await reqImageToDataUrl(new File([blob], 'pasted.png', { type: blob.type }));
+                                            setManualItem(v => ({ ...v, image: { dataUrl } }));
+                                            break;
+                                          }
+                                        }
+                                      } catch { alert('請先複製一張圖片'); }
+                                    }}>貼上圖片</button>
+                                </div>
+                              </div>
+                              <div className="flex gap-2 mt-2 justify-end">
+                                <button onClick={() => setListPicker(null)} className="px-3 py-1 text-xs text-slate-500 hover:bg-slate-100 rounded">關閉</button>
+                                <button disabled={!manualItem.name.trim()}
+                                  onClick={() => {
+                                    const item = {
+                                      id: newItemId(), sourceType: 'manual', refId: null, projectId: null,
+                                      name: manualItem.name.trim(), code: manualItem.code.trim(),
+                                      qty: manualItem.qty || 1, note: manualItem.note || '', prepared: false,
+                                      image: manualItem.image || null,
+                                    };
+                                    saveCustomerList({ ...list, items: [...items, item] });
+                                    setManualItem({ name: '', code: '', qty: 1, note: '', image: null });
+                                  }}
+                                  className="px-3 py-1 text-xs text-white rounded disabled:opacity-40" style={{ background: '#1e293b' }}>
+                                  加入清單
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 項目列表 */}
+                          {items.length === 0 ? (
+                            <p className="text-xs text-slate-400 py-4 text-center">清單還是空的，用上面的按鈕加入樣品</p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {items.map(it => {
+                                const img = getListItemImage(it);
+                                const src = reqImgSrc(img);
+                                const reqStatus = getListItemStatus(it);
+                                const SOURCE_TAG = { sample: { label: '樣品庫', bg: '#f1f5f9', color: '#64748b' }, request: { label: '申請中', bg: '#fef3c7', color: '#92400e' }, manual: { label: '手動', bg: '#f1f5f9', color: '#64748b' } };
+                                const tag = SOURCE_TAG[it.sourceType] || SOURCE_TAG.manual;
+                                return (
+                                  <div key={it.id} className={`flex items-center gap-2.5 p-2 rounded-lg border transition ${it.prepared ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-100 bg-white'}`}>
+                                    {canEdit && (
+                                      <input type="checkbox" checked={!!it.prepared} title="已準備"
+                                        onChange={e => updateListItem(list, it.id, { prepared: e.target.checked })} />
+                                    )}
+                                    {src ? (
+                                      <img src={src} alt="" className="w-12 h-12 object-contain rounded border border-slate-200 bg-white flex-shrink-0" />
+                                    ) : (
+                                      <div className="w-12 h-12 rounded border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-slate-300 flex-shrink-0">📦</div>
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <p className="text-sm text-slate-800 font-medium truncate">{it.name}</p>
+                                        {it.code && <span className="text-[10px] text-slate-400 font-mono">{it.code}</span>}
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: tag.bg, color: tag.color }}>{tag.label}</span>
+                                        {reqStatus && reqStatus !== '已完成' && (
+                                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">{reqStatus}</span>
+                                        )}
+                                      </div>
+                                      {canEdit ? (
+                                        <input defaultValue={it.note || ''} placeholder="備註（客人要黑色...）"
+                                          onBlur={e => { if (e.target.value !== (it.note || '')) updateListItem(list, it.id, { note: e.target.value }); }}
+                                          className="w-full mt-0.5 text-xs text-slate-500 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5" />
+                                      ) : (
+                                        it.note && <p className="text-xs text-slate-400 mt-0.5">{it.note}</p>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-1 text-xs text-slate-400">
+                                      <span>×</span>
+                                      {canEdit ? (
+                                        <input type="number" min="1" defaultValue={it.qty || 1}
+                                          onBlur={e => { const n = Number(e.target.value) || 1; if (n !== (it.qty || 1)) updateListItem(list, it.id, { qty: n }); }}
+                                          className="w-12 text-sm text-center border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400" />
+                                      ) : (
+                                        <span className="text-sm text-slate-600">{it.qty || 1}</span>
+                                      )}
+                                    </div>
+                                    {canEdit && (
+                                      <button onClick={() => removeListItem(list, it.id)}
+                                        className="text-slate-300 hover:text-rose-500 transition p-1">
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

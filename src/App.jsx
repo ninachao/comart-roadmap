@@ -38,6 +38,7 @@ const EXHIBITIONS_COL = 'exhibitions';
 const TRACKING_COL = 'tracking_overrides'; // 手動追蹤調整
 const MANUAL_REQUESTS_COL = 'sample_requests'; // 手動備料申請（不掛在產品下的）
 const CUSTOMER_LISTS_COL = 'customer_lists'; // 客戶樣品清單（老闆帶去給客人看的）
+const REFERENCE_COL = 'reference_files'; // 參考資料庫（競品、靈感、未立案檔案）
 const STORAGE_FOLDER = 'roadmap';
 
 // === 簡易密碼設定 ===
@@ -48,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.21.1';
-const BUILD_ID = '20260715-1100';
+const APP_VERSION = 'v1.22.0';
+const BUILD_ID = '20260715-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.22.0',
+    date: '2026-07-15',
+    changes: [
+      '📁 新增「參考資料庫」：頂部工具列新入口，存放競品、靈感、客戶提供、未立案檔案（不佔產品編碼）',
+      '每筆資料：標題、自由標籤、備註、多張圖片（上傳/貼上）、選填關聯產品',
+      '支援關鍵字搜尋 + 標籤篩選；卡片格顯示封面圖，點圖放大；關聯產品可直接跳轉',
+      '資料存獨立 Firestore collection（reference_files），與產品資料互不干擾',
+    ],
+  },
   {
     version: 'v1.21.1',
     date: '2026-07-15',
@@ -1936,6 +1947,19 @@ export default function ProductRoadmap() {
     return () => unsub();
   }, [currentUser]);
 
+  // === 訂閱參考資料庫 ===
+  const [refFiles, setRefFiles] = useState([]);
+  useEffect(() => {
+    if (!currentUser) return;
+    const colRef = collection(db, REFERENCE_COL);
+    const unsub = onSnapshot(colRef, (snap) => {
+      const items = snap.docs.map(d => ({ ...d.data(), _docId: d.id }));
+      items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setRefFiles(items);
+    });
+    return () => unsub();
+  }, [currentUser]);
+
   // === 訂閱追蹤調整（手動加入/排除）===
   useEffect(() => {
     if (!currentUser) return;
@@ -2118,6 +2142,7 @@ export default function ProductRoadmap() {
   const [showNewModal, setShowNewModal] = useState(false);
   const [showPrototypeOverview, setShowPrototypeOverview] = useState(false);
   const [showSampleLibrary, setShowSampleLibrary] = useState(false);
+  const [showRefLibrary, setShowRefLibrary] = useState(false);
   const [openFrom, setOpenFrom] = useState(null);
   const [followUpTrigger, setFollowUpTrigger] = useState(null); // 從提醒面板點「已跟追」帶過來的 update // 'samples' | 'reminders' | 'prototype' | null
   const [showReminders, setShowReminders] = useState(false);
@@ -2660,6 +2685,14 @@ export default function ProductRoadmap() {
               <span>📦</span>
               <span className="hidden sm:inline text-xs">樣品庫</span>
             </button>
+            <button
+              onClick={() => setShowRefLibrary(true)}
+              title="參考資料庫（競品、靈感、未立案檔案）"
+              className="p-2 text-slate-500 hover:bg-violet-50 hover:text-violet-700 rounded-lg inline-flex items-center gap-1"
+            >
+              <span>📁</span>
+              <span className="hidden sm:inline text-xs">參考資料</span>
+            </button>
             <div className="relative group">
               <button title="匯出" className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
                 <Download className="w-4 h-4" />
@@ -3031,6 +3064,23 @@ export default function ProductRoadmap() {
             const updated = { ...p, [field]: value };
             setProjects(prev => prev.map(x => String(x.id) === String(projectId) ? updated : x));
             saveProjectToCloud(updated);
+          }}
+        />
+      )}
+
+      {showRefLibrary && (
+        <ReferenceLibraryModal
+          items={refFiles}
+          projects={projects}
+          currentUser={currentUser}
+          canEdit={canEditSamples}
+          onClose={() => setShowRefLibrary(false)}
+          onJumpToProject={(id) => {
+            const target = projects.find(p => p.id === id);
+            if (target) {
+              setSelectedProject(target);
+              setShowRefLibrary(false);
+            }
           }}
         />
       )}
@@ -7136,6 +7186,296 @@ async function exportCustomerListXLSX(list, items) {
   a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   a.download = `${list.name || '客戶樣品清單'}_${new Date().toISOString().split('T')[0]}.xlsx`;
   a.click();
+}
+
+// ============= 參考資料庫 =============
+// 競品、靈感、客戶提供、還沒立案的雜檔都放這裡；可選填關聯產品
+function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose, onJumpToProject }) {
+  const [search, setSearch] = useState('');
+  const [tagFilter, setTagFilter] = useState(null);
+  const [editing, setEditing] = useState(null); // {isNew, id, title, tagsText, note, images, relatedProjectId}
+  const [projSearch, setProjSearch] = useState('');
+  const [showProjPicker, setShowProjPicker] = useState(false);
+  const [viewingImg, setViewingImg] = useState(null); // 放大預覽 src
+
+  // 所有出現過的標籤（做篩選 chips）
+  const allTags = useMemo(() => {
+    const set = new Set();
+    items.forEach(it => (it.tags || []).forEach(t => set.add(t)));
+    return [...set].sort();
+  }, [items]);
+
+  const filtered = useMemo(() => {
+    const kw = search.trim().toLowerCase();
+    return items.filter(it => {
+      if (tagFilter && !(it.tags || []).includes(tagFilter)) return false;
+      if (!kw) return true;
+      return [it.title, it.note, ...(it.tags || [])].some(v => (v || '').toLowerCase().includes(kw));
+    });
+  }, [items, search, tagFilter]);
+
+  const startAdd = () => setEditing({ isNew: true, id: 'ref_' + Date.now(), title: '', tagsText: '', note: '', images: [], relatedProjectId: '' });
+  const startEdit = (it) => setEditing({ isNew: false, id: it.id, title: it.title || '', tagsText: (it.tags || []).join(', '), note: it.note || '', images: it.images || [], relatedProjectId: it.relatedProjectId || '' });
+
+  const saveEditing = async () => {
+    if (!editing.title.trim()) return;
+    const orig = items.find(x => x.id === editing.id);
+    const docData = {
+      id: editing.id,
+      title: editing.title.trim(),
+      tags: editing.tagsText.split(/[,，、]/).map(t => t.trim()).filter(Boolean),
+      note: editing.note,
+      images: editing.images,
+      relatedProjectId: editing.relatedProjectId || '',
+      createdAt: orig?.createdAt || Date.now(),
+      createdBy: orig?.createdBy || currentUser?.name || '',
+    };
+    await setDoc(doc(db, REFERENCE_COL, editing.id), docData);
+    setEditing(null);
+  };
+
+  const deleteItem = async (it) => {
+    if (!confirm(`確定刪除「${it.title}」嗎？此操作無法復原。`)) return;
+    await deleteDoc(doc(db, REFERENCE_COL, it.id));
+  };
+
+  const addEditingImage = async (file) => {
+    const dataUrl = await reqImageToDataUrl(file);
+    setEditing(v => ({ ...v, images: [...(v.images || []), { dataUrl, name: file.name }] }));
+  };
+
+  return (
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl max-w-5xl w-full p-4 sm:p-5 my-auto max-h-[95vh] flex flex-col">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-base font-medium flex items-center gap-2">
+              <span>📁</span>參考資料庫
+              <span className="text-xs text-slate-400 font-normal">({filtered.length} 筆)</span>
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">競品、靈感、客戶提供、未立案檔案 · 不佔產品編碼</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        {/* 搜尋 + 標籤篩選 + 新增 */}
+        <div className="flex items-center gap-2 mb-2">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-300 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="搜尋標題、標籤、備註..."
+              className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400" />
+          </div>
+          {canEdit && (
+            <button onClick={startAdd}
+              className="px-3 py-2 text-xs text-white rounded-lg whitespace-nowrap" style={{ background: '#1e293b' }}>
+              + 新增資料
+            </button>
+          )}
+        </div>
+        {allTags.length > 0 && (
+          <div className="flex gap-1 mb-3 flex-wrap">
+            <button onClick={() => setTagFilter(null)}
+              className="px-2 py-0.5 text-[11px] rounded-full border transition"
+              style={!tagFilter ? { background: '#1e293b', color: '#fff', borderColor: '#1e293b' } : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+              全部
+            </button>
+            {allTags.map(t => (
+              <button key={t} onClick={() => setTagFilter(tagFilter === t ? null : t)}
+                className="px-2 py-0.5 text-[11px] rounded-full border transition"
+                style={tagFilter === t ? { background: '#7c3aed', color: '#fff', borderColor: '#7c3aed' } : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+                #{t}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 資料卡片格 */}
+        <div className="flex-1 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center text-center py-16 text-slate-400">
+              <p className="text-4xl mb-3">📁</p>
+              <p className="text-sm">{items.length === 0 ? '還沒有參考資料' : '找不到符合的資料'}</p>
+              {canEdit && items.length === 0 && <button onClick={startAdd} className="mt-3 text-xs text-violet-600 hover:underline">+ 新增第一筆</button>}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pb-2">
+              {filtered.map(it => {
+                const cover = (it.images || [])[0];
+                const coverSrc = cover ? (cover.dataUrl || cover.url) : null;
+                const relatedProj = it.relatedProjectId ? projects.find(p => String(p.id) === String(it.relatedProjectId)) : null;
+                return (
+                  <div key={it.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden group flex flex-col">
+                    {/* 圖片區 */}
+                    <div className="h-32 bg-slate-50 flex items-center justify-center cursor-pointer relative"
+                      onClick={() => coverSrc && setViewingImg(coverSrc)}>
+                      {coverSrc ? (
+                        <img src={coverSrc} alt="" className="w-full h-full object-contain" />
+                      ) : (
+                        <span className="text-3xl text-slate-200">📄</span>
+                      )}
+                      {(it.images || []).length > 1 && (
+                        <span className="absolute bottom-1 right-1.5 text-[10px] bg-slate-900/60 text-white px-1.5 py-0.5 rounded">+{it.images.length - 1}</span>
+                      )}
+                    </div>
+                    {/* 文字區 */}
+                    <div className="p-2.5 flex-1 flex flex-col">
+                      <div className="flex items-start justify-between gap-1">
+                        <p className="text-sm font-medium text-slate-800 leading-tight">{it.title}</p>
+                        {canEdit && (
+                          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+                            <button onClick={() => startEdit(it)} className="p-0.5 text-slate-400 hover:text-slate-700"><Edit2 className="w-3 h-3" /></button>
+                            <button onClick={() => deleteItem(it)} className="p-0.5 text-slate-400 hover:text-rose-600"><Trash2 className="w-3 h-3" /></button>
+                          </div>
+                        )}
+                      </div>
+                      {(it.tags || []).length > 0 && (
+                        <div className="flex gap-1 flex-wrap mt-1">
+                          {it.tags.map(t => (
+                            <button key={t} onClick={() => setTagFilter(t)}
+                              className="text-[10px] px-1.5 py-0.5 bg-violet-50 text-violet-600 rounded hover:bg-violet-100">#{t}</button>
+                          ))}
+                        </div>
+                      )}
+                      {it.note && <p className="text-xs text-slate-500 mt-1 line-clamp-2 whitespace-pre-line" title={it.note}>{it.note}</p>}
+                      <div className="mt-auto pt-1.5 flex items-center justify-between">
+                        {relatedProj ? (
+                          <button onClick={() => onJumpToProject(relatedProj.id)}
+                            className="text-[10px] text-blue-500 hover:underline truncate">🔗 {relatedProj.name}</button>
+                        ) : <span />}
+                        <span className="text-[10px] text-slate-300">{it.createdAt ? new Date(it.createdAt).toISOString().split('T')[0] : ''}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 圖片放大預覽 */}
+        {viewingImg && (
+          <div className="fixed inset-0 bg-slate-900/80 z-[70] flex items-center justify-center p-6" onClick={() => setViewingImg(null)}>
+            <img src={viewingImg} alt="" className="max-w-full max-h-full object-contain rounded-lg" />
+          </div>
+        )}
+
+        {/* 新增 / 編輯表單 */}
+        {editing && (
+          <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-[60] flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl max-w-md w-full p-5 max-h-[90vh] overflow-y-auto">
+              <h3 className="text-sm font-medium mb-4">{editing.isNew ? '新增' : '編輯'}參考資料</h3>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">標題 *</label>
+                  <input value={editing.title} onChange={e => setEditing(v => ({ ...v, title: e.target.value }))}
+                    placeholder="例：競品 XX 牌磁吸支架" autoFocus
+                    className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">標籤（逗號分隔）</label>
+                  <input value={editing.tagsText} onChange={e => setEditing(v => ({ ...v, tagsText: e.target.value }))}
+                    placeholder="競品, 靈感, 客戶提供..."
+                    className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">備註</label>
+                  <textarea value={editing.note} onChange={e => setEditing(v => ({ ...v, note: e.target.value }))}
+                    rows={3} placeholder="來源、售價、觀察心得..."
+                    className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none focus:outline-none focus:border-violet-400" />
+                </div>
+                {/* 圖片 */}
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">圖片</label>
+                  <div className="flex gap-1.5 flex-wrap items-center">
+                    {(editing.images || []).map((img, i) => (
+                      <div key={i} className="relative group/img">
+                        <img src={img.dataUrl || img.url} alt="" className="w-14 h-14 object-contain rounded border border-slate-200 bg-slate-50" />
+                        <button onClick={() => setEditing(v => ({ ...v, images: v.images.filter((_, j) => j !== i) }))}
+                          className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-500 text-white rounded-full text-[10px] flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition">×</button>
+                      </div>
+                    ))}
+                    <label className="w-14 h-14 flex flex-col items-center justify-center border border-dashed border-slate-300 rounded cursor-pointer hover:bg-slate-50 text-slate-400 text-center">
+                      <span className="text-lg leading-none">+</span>
+                      <span className="text-[9px]">上傳</span>
+                      <input type="file" accept="image/*" multiple className="hidden" onChange={async e => {
+                        for (const f of Array.from(e.target.files || [])) await addEditingImage(f);
+                        e.target.value = '';
+                      }} />
+                    </label>
+                    <button onClick={async () => {
+                      try {
+                        const clip = await navigator.clipboard.read();
+                        for (const item of clip) {
+                          const t = item.types.find(x => x.startsWith('image/'));
+                          if (t) {
+                            const blob = await item.getType(t);
+                            await addEditingImage(new File([blob], 'pasted.png', { type: blob.type }));
+                            break;
+                          }
+                        }
+                      } catch { alert('請先複製一張圖片'); }
+                    }}
+                      className="w-14 h-14 flex flex-col items-center justify-center border border-dashed border-slate-300 rounded hover:bg-slate-50 text-slate-400 text-center">
+                      <span className="text-lg leading-none">📋</span>
+                      <span className="text-[9px]">貼上</span>
+                    </button>
+                  </div>
+                </div>
+                {/* 關聯產品（選填） */}
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">關聯產品（選填）</label>
+                  {editing.relatedProjectId ? (
+                    (() => {
+                      const proj = projects.find(p => String(p.id) === String(editing.relatedProjectId));
+                      return (
+                        <div className="flex items-center gap-2 p-1.5 rounded border border-violet-200 bg-violet-50 text-sm">
+                          <span className="flex-1 truncate text-slate-700">{proj ? proj.name : '（產品已刪除）'}</span>
+                          <button onClick={() => setEditing(v => ({ ...v, relatedProjectId: '' }))}
+                            className="text-xs text-slate-400 hover:text-rose-500 underline">清除</button>
+                        </div>
+                      );
+                    })()
+                  ) : !showProjPicker ? (
+                    <button onClick={() => { setShowProjPicker(true); setProjSearch(''); }}
+                      className="w-full py-1.5 text-xs text-slate-500 border border-dashed border-slate-300 rounded hover:bg-slate-50">＋ 選擇產品</button>
+                  ) : (
+                    <div className="p-2 rounded border border-violet-200 bg-violet-50/50">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <input value={projSearch} onChange={e => setProjSearch(e.target.value)}
+                          placeholder="搜尋產品..." autoFocus
+                          className="flex-1 px-2 py-1 text-xs border border-slate-200 rounded bg-white focus:outline-none focus:border-violet-400" />
+                        <button onClick={() => setShowProjPicker(false)} className="text-[11px] text-slate-400 underline">關閉</button>
+                      </div>
+                      <div className="max-h-36 overflow-y-auto space-y-0.5">
+                        {projects
+                          .filter(p => !projSearch || (p.name || '').toLowerCase().includes(projSearch.toLowerCase()) || (p.code || '').toLowerCase().includes(projSearch.toLowerCase()))
+                          .slice(0, 30)
+                          .map(p => (
+                            <button key={p.id}
+                              onClick={() => { setEditing(v => ({ ...v, relatedProjectId: p.id })); setShowProjPicker(false); }}
+                              className="w-full text-left px-2 py-1 text-xs text-slate-700 hover:bg-white rounded truncate">
+                              {p.name}{p.code ? ` (${p.code})` : ''}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-4">
+                <button onClick={() => setEditing(null)} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+                <button onClick={saveEditing} disabled={!editing.title.trim()}
+                  className="text-sm px-4 py-1.5 text-white rounded disabled:opacity-40" style={{ background: '#1e293b' }}>儲存</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, currentUser, canEdit, onClose, onJumpToProject, onUpdateProject, manualRequests = [], onAddManualRequest, onUpdateManualRequest, onDeleteManualRequest, customerLists = [] }) {

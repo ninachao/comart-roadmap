@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.22.2';
-const BUILD_ID = '20260715-1400';
+const APP_VERSION = 'v1.22.3';
+const BUILD_ID = '20260715-1500';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.22.3',
+    date: '2026-07-15',
+    changes: [
+      '📊 客戶清單「從樣品庫挑」的格子顯示即時庫存（綠：充足、黃：<3、紅：0）',
+      '清單裡來自樣品庫的項目也顯示即時庫存標籤；來源樣品被刪除會標「樣品已刪除」提醒',
+    ],
+  },
   {
     version: 'v1.22.2',
     date: '2026-07-15',
@@ -9073,6 +9081,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   const code = isSample ? (x.sampleNo || x._displayCode) : x.productCode;
                                   const refId = isSample ? x.id : (x._isManual ? (x._docId || x.id) : x.id);
                                   const already = items.some(it => it.sourceType === (isSample ? 'sample' : 'request') && it.refId === refId);
+                                  const stock = isSample ? x._remaining : null; // 即時庫存（樣品庫模式）
                                   return (
                                     <button key={refId} disabled={already}
                                       onClick={() => {
@@ -9093,6 +9102,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         <div className="w-12 h-12 rounded mb-1 bg-slate-100 flex items-center justify-center text-slate-300 text-lg">📦</div>
                                       )}
                                       <p className="text-[10px] text-slate-700 text-center leading-tight line-clamp-2">{name}</p>
+                                      {stock !== null && (
+                                        <p className={`text-[9px] font-medium ${stock === 0 ? 'text-rose-500' : stock < 3 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                          庫存 {stock}
+                                        </p>
+                                      )}
                                       {already && <p className="text-[9px] text-amber-600">已加入</p>}
                                     </button>
                                   );
@@ -9174,6 +9188,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                 const img = getListItemImage(it);
                                 const src = reqImgSrc(img);
                                 const reqStatus = getListItemStatus(it);
+                                const linkedSample = it.sourceType === 'sample' ? samplesWithRemaining.find(x => x.id === it.refId) : null;
                                 const SOURCE_TAG = { sample: { label: '樣品庫', bg: '#f1f5f9', color: '#64748b' }, request: { label: '申請中', bg: '#fef3c7', color: '#92400e' }, manual: { label: '手動', bg: '#f1f5f9', color: '#64748b' } };
                                 const tag = SOURCE_TAG[it.sourceType] || SOURCE_TAG.manual;
                                 return (
@@ -9194,6 +9209,14 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: tag.bg, color: tag.color }}>{tag.label}</span>
                                         {reqStatus && reqStatus !== '已完成' && (
                                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">{reqStatus}</span>
+                                        )}
+                                        {linkedSample && (
+                                          <span className={`text-[9px] px-1.5 py-0.5 rounded ${linkedSample._remaining === 0 ? 'bg-rose-50 text-rose-600' : linkedSample._remaining < 3 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                                            庫存 {linkedSample._remaining}
+                                          </span>
+                                        )}
+                                        {it.sourceType === 'sample' && !linkedSample && (
+                                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-500">樣品已刪除</span>
                                         )}
                                       </div>
                                       {canEdit ? (

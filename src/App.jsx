@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.22.4';
-const BUILD_ID = '20260715-1600';
+const APP_VERSION = 'v1.23.0';
+const BUILD_ID = '20260715-1700';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.23.0',
+    date: '2026-07-15',
+    changes: [
+      '🖱 客戶清單項目可拖曳排序：抓左側「⋮⋮」把手上下拖，把相近的產品排在一起（順序會存檔，匯出也照這個順序）',
+      '🖼 每個項目可「換圖」：從現有圖挑（樣品圖/產品圖/申請附圖）、自己上傳、或複製貼上；可一鍵還原預設圖',
+    ],
+  },
   {
     version: 'v1.22.4',
     date: '2026-07-15',
@@ -7693,6 +7701,41 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [listPicker, setListPicker] = useState(null);        // {listId, mode: 'sample' | 'request' | 'manual'}
   const [listPickerSearch, setListPickerSearch] = useState('');
   const [manualItem, setManualItem] = useState({ name: '', code: '', qty: 1, note: '', image: null });
+  const [dragItemId, setDragItemId] = useState(null);     // 拖曳排序中的項目
+  const [imgEditItemId, setImgEditItemId] = useState(null); // 換圖面板開啟的項目
+
+  // 拖曳排序：把 dragId 移到 targetId 的位置
+  const moveListItem = (list, dragId, targetId) => {
+    if (!dragId || dragId === targetId) return;
+    const arr = [...(list.items || [])];
+    const from = arr.findIndex(x => x.id === dragId);
+    const to = arr.findIndex(x => x.id === targetId);
+    if (from < 0 || to < 0) return;
+    const [moved] = arr.splice(from, 1);
+    arr.splice(to, 0, moved);
+    saveCustomerList({ ...list, items: arr });
+  };
+
+  // 換圖面板的候選圖片：來源樣品的圖 / 產品圖 / 申請附圖
+  const getListItemImageCandidates = (item) => {
+    const out = [];
+    if (item.sourceType === 'sample') {
+      const s = samples.find(x => x.id === item.refId);
+      (s?.images || []).forEach(img => out.push(img));
+    } else if (item.sourceType === 'request') {
+      if (item.projectId) {
+        const p = projects.find(x => String(x.id) === String(item.projectId));
+        (p?.productImages || []).forEach(img => out.push(img));
+        const r = (p?.sampleRequests || []).find(x => x.id === item.refId);
+        (r?.images || []).forEach(img => out.push(img));
+      } else {
+        const m = manualRequests.find(x => (x._docId || x.id) === item.refId);
+        if (m?.coverImage) out.push(m.coverImage);
+        (m?.images || []).forEach(img => out.push(img));
+      }
+    }
+    return out;
+  };
 
   const saveCustomerList = async (list) => {
     const cleaned = {};
@@ -9213,16 +9256,36 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                 const SOURCE_TAG = { sample: { label: '樣品庫', bg: '#f1f5f9', color: '#64748b' }, request: { label: '申請中', bg: '#fef3c7', color: '#92400e' }, manual: { label: '手動', bg: '#f1f5f9', color: '#64748b' } };
                                 const tag = SOURCE_TAG[it.sourceType] || SOURCE_TAG.manual;
                                 return (
-                                  <div key={it.id} className={`flex items-center gap-2.5 p-2 rounded-lg border transition ${it.prepared ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-100 bg-white'}`}>
+                                  <div key={it.id}
+                                    onDragOver={e => { if (dragItemId) e.preventDefault(); }}
+                                    onDrop={() => { moveListItem(list, dragItemId, it.id); setDragItemId(null); }}
+                                    className={`rounded-lg border transition ${dragItemId === it.id ? 'opacity-40' : ''} ${it.prepared ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-100 bg-white'}`}>
+                                  <div className="flex items-center gap-2.5 p-2">
+                                    {canEdit && (
+                                      <span
+                                        draggable
+                                        onDragStart={() => setDragItemId(it.id)}
+                                        onDragEnd={() => setDragItemId(null)}
+                                        title="拖曳調整順序"
+                                        className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 select-none leading-none text-sm px-0.5">
+                                        ⋮⋮
+                                      </span>
+                                    )}
                                     {canEdit && (
                                       <input type="checkbox" checked={!!it.prepared} title="已準備"
                                         onChange={e => updateListItem(list, it.id, { prepared: e.target.checked })} />
                                     )}
-                                    {src ? (
-                                      <img src={src} alt="" className="w-12 h-12 object-contain rounded border border-slate-200 bg-white flex-shrink-0" />
-                                    ) : (
-                                      <div className="w-12 h-12 rounded border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-slate-300 flex-shrink-0">📦</div>
-                                    )}
+                                    <div className="flex-shrink-0 flex flex-col items-center gap-0.5">
+                                      {src ? (
+                                        <img src={src} alt="" className="w-12 h-12 object-contain rounded border border-slate-200 bg-white" />
+                                      ) : (
+                                        <div className="w-12 h-12 rounded border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-slate-300">📦</div>
+                                      )}
+                                      {canEdit && (
+                                        <button onClick={() => setImgEditItemId(imgEditItemId === it.id ? null : it.id)}
+                                          className="text-[9px] text-slate-400 hover:text-slate-700 underline">換圖</button>
+                                      )}
+                                    </div>
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-center gap-1.5 flex-wrap">
                                         <p className="text-sm text-slate-800 font-medium truncate">{it.name}</p>
@@ -9270,6 +9333,67 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         <X className="w-3.5 h-3.5" />
                                       </button>
                                     )}
+                                  </div>
+
+                                  {/* 換圖面板：從現有圖挑 / 上傳 / 貼上 / 還原 */}
+                                  {imgEditItemId === it.id && canEdit && (
+                                    <div className="px-2 pb-2 pl-10">
+                                      <div className="p-2 rounded-lg border border-amber-200 bg-amber-50/50">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          {getListItemImageCandidates(it).map((img, ci) => {
+                                            const cSrc = reqImgSrc(img);
+                                            if (!cSrc) return null;
+                                            return (
+                                              <button key={ci}
+                                                onClick={() => { updateListItem(list, it.id, { image: img }); setImgEditItemId(null); }}
+                                                title="用這張圖"
+                                                className={`w-12 h-12 rounded border-2 overflow-hidden bg-white transition ${src === cSrc ? 'border-amber-400' : 'border-slate-200 hover:border-amber-400'}`}>
+                                                <img src={cSrc} alt="" className="w-full h-full object-contain" />
+                                              </button>
+                                            );
+                                          })}
+                                          <label className="w-12 h-12 flex flex-col items-center justify-center border border-dashed border-slate-300 rounded cursor-pointer hover:bg-white text-slate-400 text-center bg-white/50">
+                                            <span className="text-base leading-none">+</span>
+                                            <span className="text-[8px]">上傳</span>
+                                            <input type="file" accept="image/*" className="hidden" onChange={async e => {
+                                              if (e.target.files[0]) {
+                                                const dataUrl = await reqImageToDataUrl(e.target.files[0]);
+                                                updateListItem(list, it.id, { image: { dataUrl } });
+                                                setImgEditItemId(null);
+                                                e.target.value = '';
+                                              }
+                                            }} />
+                                          </label>
+                                          <button onClick={async () => {
+                                            try {
+                                              const clip = await navigator.clipboard.read();
+                                              for (const ci of clip) {
+                                                const t = ci.types.find(x => x.startsWith('image/'));
+                                                if (t) {
+                                                  const blob = await ci.getType(t);
+                                                  const dataUrl = await reqImageToDataUrl(new File([blob], 'pasted.png', { type: blob.type }));
+                                                  updateListItem(list, it.id, { image: { dataUrl } });
+                                                  setImgEditItemId(null);
+                                                  break;
+                                                }
+                                              }
+                                            } catch { alert('請先複製一張圖片'); }
+                                          }}
+                                            className="w-12 h-12 flex flex-col items-center justify-center border border-dashed border-slate-300 rounded hover:bg-white text-slate-400 text-center bg-white/50">
+                                            <span className="text-base leading-none">📋</span>
+                                            <span className="text-[8px]">貼上</span>
+                                          </button>
+                                          <div className="flex-1" />
+                                          {it.image && (
+                                            <button onClick={() => { updateListItem(list, it.id, { image: null }); setImgEditItemId(null); }}
+                                              className="text-[10px] text-slate-400 hover:text-slate-700 underline whitespace-nowrap">還原預設</button>
+                                          )}
+                                          <button onClick={() => setImgEditItemId(null)}
+                                            className="text-[10px] text-slate-400 hover:text-slate-700 underline whitespace-nowrap">關閉</button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
                                   </div>
                                 );
                               })}

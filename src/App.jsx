@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.22.3';
-const BUILD_ID = '20260715-1500';
+const APP_VERSION = 'v1.22.4';
+const BUILD_ID = '20260715-1600';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.22.4',
+    date: '2026-07-15',
+    changes: [
+      '📝 客戶清單顯示來源樣品的備註與材質：挑選格、清單項目都看得到同名樣品的差異（如鋅合金版 vs 塑膠版）',
+      '匯出 PDF / Excel 時樣品備註自動併入備註欄（樣品資訊在前、給客戶的備註在後）',
+    ],
+  },
   {
     version: 'v1.22.3',
     date: '2026-07-15',
@@ -9008,7 +9016,15 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                   const items = list.items || [];
                   const isOpen = openListId === list.id;
                   const preparedCount = items.filter(i => i.prepared).length;
-                  const exportItems = () => items.map(it => ({ ...it, _exportImg: getListItemImage(it) }));
+                  const exportItems = () => items.map(it => {
+                    const ls = it.sourceType === 'sample' ? samplesWithRemaining.find(x => x.id === it.refId) : null;
+                    const sampleInfo = ls ? [ls.material, ls.notes].filter(Boolean).join('｜') : '';
+                    return {
+                      ...it,
+                      _exportImg: getListItemImage(it),
+                      note: [sampleInfo, it.note].filter(Boolean).join('\n'),
+                    };
+                  });
                   return (
                     <div key={list.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden">
                       {/* 清單標題列 */}
@@ -9102,6 +9118,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         <div className="w-12 h-12 rounded mb-1 bg-slate-100 flex items-center justify-center text-slate-300 text-lg">📦</div>
                                       )}
                                       <p className="text-[10px] text-slate-700 text-center leading-tight line-clamp-2">{name}</p>
+                                      {isSample && (x.notes || x.material) && (
+                                        <p className="text-[9px] text-slate-400 text-center leading-tight line-clamp-1" title={[x.material, x.notes].filter(Boolean).join('｜')}>
+                                          {[x.material, x.notes].filter(Boolean).join('｜')}
+                                        </p>
+                                      )}
                                       {stock !== null && (
                                         <p className={`text-[9px] font-medium ${stock === 0 ? 'text-rose-500' : stock < 3 ? 'text-amber-600' : 'text-emerald-600'}`}>
                                           庫存 {stock}
@@ -9219,6 +9240,12 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-500">樣品已刪除</span>
                                         )}
                                       </div>
+                                      {/* 來源樣品自己的備註/材質（即時帶入，和給客戶的備註分開） */}
+                                      {linkedSample && (linkedSample.notes || linkedSample.material) && (
+                                        <p className="text-[11px] text-slate-400 truncate mt-0.5" title={[linkedSample.material, linkedSample.notes].filter(Boolean).join('｜')}>
+                                          📝 {[linkedSample.material, linkedSample.notes].filter(Boolean).join('｜')}
+                                        </p>
+                                      )}
                                       {canEdit ? (
                                         <input defaultValue={it.note || ''} placeholder="備註（客人要黑色...）"
                                           onBlur={e => { if (e.target.value !== (it.note || '')) updateListItem(list, it.id, { note: e.target.value }); }}

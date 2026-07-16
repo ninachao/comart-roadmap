@@ -48,10 +48,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.21.0';
-const BUILD_ID = '20260715-1000';
+const APP_VERSION = 'v1.21.1';
+const BUILD_ID = '20260715-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.21.1',
+    date: '2026-07-15',
+    changes: [
+      '🎨 設計圖紙版本改以「時間軸」為唯一主視圖：刪除 ID / 3D 分區，所有版本卡片按日期新→舊合併排列',
+      '每張卡片帶類型徽章（ID藍/3D紫），最新一筆琥珀色高亮標「最新」；點列展開即可看說明、檔案、BOM（含確認狀態）',
+      '「＋ 新增版本」表單內直接選 ID / 3D，版本號自動建議；BOM 可當下傳或之後候補',
+      '資料結構不變，所有既有版本、檔案、BOM 完整保留',
+    ],
+  },
   {
     version: 'v1.21.0',
     date: '2026-07-15',
@@ -6143,7 +6153,7 @@ function AttachmentList({ attachments, onChange, readOnly, showBomStatus = false
 
 
 // 單一版本的可折疊卡片
-function DesignVersionCard({ d, type, isLatest, onUpdateVersion, onEdit, onDelete }) {
+function DesignVersionCard({ d, type, isLatest, onUpdateVersion, onEdit, onDelete, showTypeBadge = false }) {
   const hasBom = (d.bomAttachments || []).length > 0;
   const bomVisible = hasBom || d.bomEnabled === true;
   const attCount = (d.attachments || []).length;
@@ -6152,17 +6162,27 @@ function DesignVersionCard({ d, type, isLatest, onUpdateVersion, onEdit, onDelet
   // 最新版本預設展開，其他預設收起
   const [expanded, setExpanded] = useState(isLatest);
 
+  const TYPE_BADGE = {
+    ID: { bg: '#dbeafe', color: '#1e40af' },
+    '3D': { bg: '#ede9fe', color: '#6d28d9' },
+  };
+  const tb = TYPE_BADGE[type] || TYPE_BADGE.ID;
+
   return (
-    <div className={`rounded border text-xs group ${isLatest ? 'bg-white border-blue-200' : 'bg-white border-slate-200'}`}>
+    <div className={`rounded border text-xs group ${isLatest ? 'bg-white border-amber-300' : 'bg-white border-slate-200'}`}>
       {/* 標題列 (一律可見) */}
       <div
         onClick={() => setExpanded(!expanded)}
-        className="flex items-baseline justify-between gap-2 p-2 cursor-pointer hover:bg-slate-50 select-none"
+        className={`flex items-baseline justify-between gap-2 p-2 cursor-pointer hover:bg-slate-50 select-none ${isLatest ? 'bg-amber-50/60' : ''}`}
       >
         <div className="flex items-baseline gap-2 flex-wrap min-w-0">
           <span className="text-slate-400 text-[10px]">{expanded ? '▼' : '▶'}</span>
-          <span className={`font-medium ${isLatest ? 'text-blue-700' : 'text-slate-600'}`}>{d.version}</span>
           <span className="text-slate-400 tabular-nums">{d.date}</span>
+          {showTypeBadge && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ background: tb.bg, color: tb.color }}>{type}</span>
+          )}
+          <span className={`font-medium ${isLatest ? 'text-amber-700' : 'text-slate-600'}`}>{d.version}</span>
+          {isLatest && <span className="text-[10px] text-amber-600 font-medium">最新</span>}
           {hasBom && (
             <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-medium">
               📋 BOM
@@ -6310,85 +6330,47 @@ function DesignSection({ designs, onChange }) {
     ? `${totalVersions} 個版本${bomCount > 0 ? ` · ${bomCount} BOM` : ''}`
     : '無';
 
-  // 版本時間軸：合併 ID / 3D / 舊BOM 所有版本，按日期由新到舊
+  // 版本時間軸（主視圖）：合併 ID / 3D 所有版本，按日期由新到舊
   const timeline = useMemo(() => {
     const entries = [];
-    ['ID', '3D'].forEach(t => (designs[t] || []).forEach(d => entries.push({ ...d, _type: t })));
-    (designs.BOM || []).forEach(d => entries.push({ ...d, _type: 'BOM' }));
-    return entries.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    types.forEach(t => (designs[t] || []).forEach((d, i) => entries.push({ d, type: t, idx: i })));
+    return entries.sort((a, b) => (b.d.date || '').localeCompare(a.d.date || ''));
   }, [designs]);
-  const TYPE_STYLE = {
-    ID: { bg: '#dbeafe', color: '#1e40af' },
-    '3D': { bg: '#ede9fe', color: '#6d28d9' },
-    BOM: { bg: '#dcfce7', color: '#166534' },
-  };
 
   return (
     <CollapsibleSection title="設計圖紙版本" badge={badge} defaultOpen={false} accent="slate">
-      {/* 📅 版本時間軸：一眼看懂整體演進順序（純視圖，資料不動） */}
-      {timeline.length > 1 && (
-        <div className="mt-2 mb-1 p-3 rounded-lg border border-slate-200 bg-white">
-          <p className="text-xs font-medium text-slate-500 mb-2">📅 版本時間軸（新 → 舊）</p>
-          <div className="space-y-0.5">
-            {timeline.map((e, i) => {
-              const ts = TYPE_STYLE[e._type] || TYPE_STYLE.ID;
-              const hasBom = (e.bomAttachments || []).length > 0;
-              return (
-                <div key={`${e._type}-${e.version}-${i}`}
-                  className={`flex items-baseline gap-2 py-1 px-2 rounded ${i === 0 ? 'bg-amber-50 border border-amber-200' : ''}`}>
-                  <span className="text-[11px] text-slate-400 font-mono whitespace-nowrap w-20 flex-shrink-0">{e.date || '—'}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium whitespace-nowrap" style={{ background: ts.bg, color: ts.color }}>{e._type}</span>
-                  <span className="text-xs font-medium text-slate-700 whitespace-nowrap">{e.version}</span>
-                  {hasBom && <span className="text-[9px] px-1 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded whitespace-nowrap">BOM</span>}
-                  <span className="text-xs text-slate-500 truncate" title={e.notes}>{e.notes || ''}</span>
-                  {i === 0 && <span className="text-[10px] text-amber-600 font-medium whitespace-nowrap ml-auto">← 最新</span>}
-                </div>
-              );
-            })}
-          </div>
+      <div className="mt-2">
+        {/* 工具列：一顆新增按鈕，類型在表單裡選 */}
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs text-slate-400">所有版本按日期排列（新 → 舊）· 點列展開看檔案 / BOM</p>
+          <button onClick={() => handleAdd('3D')} className="text-xs text-blue-600 hover:underline flex items-center gap-1 whitespace-nowrap">
+            <Plus className="w-3 h-3" />新增版本
+          </button>
         </div>
-      )}
+        {timeline.length === 0 ? (
+          <p className="text-xs text-slate-400 py-2">尚無版本，點右上「＋ 新增版本」開始記錄</p>
+        ) : (
+          <div className="space-y-1.5">
+            {timeline.map((e, i) => (
+              <DesignVersionCard
+                key={`${e.type}-${e.idx}`}
+                d={e.d}
+                type={e.type}
+                showTypeBadge
+                isLatest={i === 0}
+                onUpdateVersion={(newD) => {
+                  const newList = [...(designs[e.type] || [])];
+                  newList[e.idx] = newD;
+                  onChange({ ...designs, [e.type]: newList });
+                }}
+                onEdit={() => handleEdit(e.type, e.idx)}
+                onDelete={() => handleDelete(e.type, e.idx)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
       <div className="space-y-3 mt-2">
-        {types.map(type => {
-          const list = designs[type] || [];
-          const latest = list[0];
-          return (
-            <div key={type} className="bg-slate-50 rounded-lg p-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-medium text-slate-800">{type === '3D' ? '3D 圖' : 'ID 圖'}</span>
-                  {latest && (
-                    <span className="text-xs px-1.5 py-0.5 bg-blue-600 text-white rounded font-medium">最新 {latest.version}</span>
-                  )}
-                </div>
-                <button onClick={() => handleAdd(type)} className="text-xs text-blue-600 hover:underline flex items-center gap-1">
-                  <Plus className="w-3 h-3" />新版本
-                </button>
-              </div>
-              {list.length === 0 ? (
-                <p className="text-xs text-slate-400 py-1">尚無版本</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {list.map((d, i) => (
-                    <DesignVersionCard
-                      key={i}
-                      d={d}
-                      type={type}
-                      isLatest={i === 0}
-                      onUpdateVersion={(newD) => {
-                        const newList = [...list];
-                        newList[i] = newD;
-                        onChange({ ...designs, [type]: newList });
-                      }}
-                      onEdit={() => handleEdit(type, i)}
-                      onDelete={() => handleDelete(type, i)}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
 
         {/* 舊版獨立 BOM 紀錄區塊：只有舊資料有東西時才顯示 */}
         {oldBomList.length > 0 && (
@@ -6429,6 +6411,8 @@ function DesignSection({ designs, onChange }) {
         <DesignVersionForm
           type={editing.type}
           data={editing.data}
+          typeEditable={editing.idx === -1}
+          onTypeChange={(t) => setEditing({ ...editing, type: t, data: { ...editing.data, version: getNextVersion(t) } })}
           onChange={(d) => setEditing({ ...editing, data: d })}
           onCancel={() => setEditing(null)}
           onSave={handleSave}
@@ -6438,12 +6422,28 @@ function DesignSection({ designs, onChange }) {
   );
 }
 
-function DesignVersionForm({ type, data, onChange, onCancel, onSave }) {
+function DesignVersionForm({ type, data, onChange, onCancel, onSave, typeEditable = false, onTypeChange }) {
   return (
     <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl max-w-md w-full p-5">
         <h3 className="text-sm font-medium mb-4">新增 / 編輯 {type} 版本</h3>
         <div className="space-y-3">
+          {/* 新增時可選類型 */}
+          {typeEditable && (
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">圖檔類型</label>
+              <div className="flex rounded-lg overflow-hidden border border-slate-200 text-sm w-fit">
+                {['ID', '3D'].map(t => (
+                  <button key={t} type="button"
+                    onClick={() => onTypeChange && onTypeChange(t)}
+                    className="px-4 py-1.5 transition"
+                    style={type === t ? { background: '#1e293b', color: '#fff' } : { background: '#fff', color: '#64748b' }}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-slate-600 mb-1">版本</label>

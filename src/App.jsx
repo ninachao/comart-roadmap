@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.22.0';
-const BUILD_ID = '20260715-1200';
+const APP_VERSION = 'v1.22.1';
+const BUILD_ID = '20260715-1300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.22.1',
+    date: '2026-07-15',
+    changes: [
+      '📝 樣品庫列表直接顯示備註（名稱下方一行，過長截斷、滑鼠移上去看全文），不用點進去才知道是什麼',
+      '🔀 樣品排序改為「同名產品聚在一起」（名稱排序，同名之間新的在前），不再分散各處',
+    ],
+  },
   {
     version: 'v1.22.0',
     date: '2026-07-15',
@@ -6918,6 +6926,7 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
                   {s.idVersion && <span className="text-[10px] text-blue-500">ID {s.idVersion}</span>}
                   {s.threeDVersion && <span className="text-[10px] text-purple-500">3D {s.threeDVersion}</span>}
                 </div>
+                {s.notes && <p className="text-[11px] text-slate-400 truncate mt-0.5" title={s.notes}>📝 {s.notes}</p>}
               </div>
               <span className={`text-[10px] px-1.5 py-0.5 rounded border text-center ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
               <span className="text-sm font-semibold tabular-nums">
@@ -6955,6 +6964,9 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
                     {s.material && <span>{s.material}</span>}
                   </div>
                   {actionBtns}
+                </div>
+                <div>
+                  {s.notes && <p className="text-[11px] text-slate-400 truncate mt-0.5" title={s.notes}>📝 {s.notes}</p>}
                 </div>
               </div>
             </div>
@@ -7783,7 +7795,12 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
         s._displayName, s._displayCode, s.sampleNo, s.material, s.location, s.notes, s.orderNote, s.source
       ].some(v => (v || '').toLowerCase().includes(searchTerm.toLowerCase()));
       return matchType && matchLocation && matchSearch;
-    }).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }).sort((a, b) => {
+      // 相同產品排在一起（先按名稱聚合，同名之間新的在前）
+      const nameCmp = (a._displayName || a.name || '').localeCompare(b._displayName || b.name || '', 'zh-Hant');
+      if (nameCmp !== 0) return nameCmp;
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
   }, [samplesWithRemaining, typeFilter, locationFilter, searchTerm]);
 
   const handleSaveSample = async (sample) => {

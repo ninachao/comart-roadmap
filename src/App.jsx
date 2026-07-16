@@ -48,10 +48,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.20.0';
-const BUILD_ID = '20260715-0900';
+const APP_VERSION = 'v1.21.0';
+const BUILD_ID = '20260715-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.21.0',
+    date: '2026-07-15',
+    changes: [
+      '📅 設計圖紙版本新增「版本時間軸」：ID / 3D / BOM 全部版本合併、按日期由新到舊排列，一眼看出哪個最新',
+      '每條顯示日期、類型徽章（ID藍/3D紫/BOM綠）、版本號、有無BOM、說明摘要；最新一條以琥珀色高亮標「← 最新」',
+      '純新增視圖：原本的 ID / 3D 分類區塊與所有資料完全保留不動',
+    ],
+  },
   {
     version: 'v1.20.0',
     date: '2026-07-15',
@@ -6301,8 +6310,44 @@ function DesignSection({ designs, onChange }) {
     ? `${totalVersions} 個版本${bomCount > 0 ? ` · ${bomCount} BOM` : ''}`
     : '無';
 
+  // 版本時間軸：合併 ID / 3D / 舊BOM 所有版本，按日期由新到舊
+  const timeline = useMemo(() => {
+    const entries = [];
+    ['ID', '3D'].forEach(t => (designs[t] || []).forEach(d => entries.push({ ...d, _type: t })));
+    (designs.BOM || []).forEach(d => entries.push({ ...d, _type: 'BOM' }));
+    return entries.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [designs]);
+  const TYPE_STYLE = {
+    ID: { bg: '#dbeafe', color: '#1e40af' },
+    '3D': { bg: '#ede9fe', color: '#6d28d9' },
+    BOM: { bg: '#dcfce7', color: '#166534' },
+  };
+
   return (
     <CollapsibleSection title="設計圖紙版本" badge={badge} defaultOpen={false} accent="slate">
+      {/* 📅 版本時間軸：一眼看懂整體演進順序（純視圖，資料不動） */}
+      {timeline.length > 1 && (
+        <div className="mt-2 mb-1 p-3 rounded-lg border border-slate-200 bg-white">
+          <p className="text-xs font-medium text-slate-500 mb-2">📅 版本時間軸（新 → 舊）</p>
+          <div className="space-y-0.5">
+            {timeline.map((e, i) => {
+              const ts = TYPE_STYLE[e._type] || TYPE_STYLE.ID;
+              const hasBom = (e.bomAttachments || []).length > 0;
+              return (
+                <div key={`${e._type}-${e.version}-${i}`}
+                  className={`flex items-baseline gap-2 py-1 px-2 rounded ${i === 0 ? 'bg-amber-50 border border-amber-200' : ''}`}>
+                  <span className="text-[11px] text-slate-400 font-mono whitespace-nowrap w-20 flex-shrink-0">{e.date || '—'}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium whitespace-nowrap" style={{ background: ts.bg, color: ts.color }}>{e._type}</span>
+                  <span className="text-xs font-medium text-slate-700 whitespace-nowrap">{e.version}</span>
+                  {hasBom && <span className="text-[9px] px-1 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded whitespace-nowrap">BOM</span>}
+                  <span className="text-xs text-slate-500 truncate" title={e.notes}>{e.notes || ''}</span>
+                  {i === 0 && <span className="text-[10px] text-amber-600 font-medium whitespace-nowrap ml-auto">← 最新</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="space-y-3 mt-2">
         {types.map(type => {
           const list = designs[type] || [];

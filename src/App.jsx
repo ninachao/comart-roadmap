@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.22.1';
-const BUILD_ID = '20260715-1300';
+const APP_VERSION = 'v1.22.2';
+const BUILD_ID = '20260715-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.22.2',
+    date: '2026-07-15',
+    changes: [
+      '🔧 樣品申請從「已完成」退回時，會自動找到當初轉入樣品庫的樣品並詢問是否一併移除（不再留下多餘樣品）',
+      '轉入樣品庫的樣品現在會記錄來源申請（fromRequestId），之前轉入的舊資料用「轉入備註＋同名」比對',
+    ],
+  },
   {
     version: 'v1.22.1',
     date: '2026-07-15',
@@ -7594,6 +7602,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       notes: ['由樣品申請轉入', r.note].filter(Boolean).join('｜'),
       images: img ? [img] : [],
       createdAt: Date.now(),
+      fromRequestId: r.id || r._docId, // 記住來源申請，退回狀態時可自動撤銷
     };
     if (r._project) {
       sample.relatedProjectId = r._project.id;
@@ -7601,6 +7610,19 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     }
     await setDoc(doc(db, SAMPLES_COL, sampleId), sample);
     alert('已新增到樣品庫 ✅（可到「樣品」分頁查看或補充資料）');
+  };
+
+  // 從「已完成」退回：找到當初自動轉入樣品庫的那顆樣品，詢問是否一併移除
+  const uncompleteRequest = async (r, newStatus) => {
+    updateReqField(r, 'status', newStatus);
+    const reqId = r.id || r._docId;
+    // 優先用 fromRequestId 精準比對；舊資料退而求其次用「轉入備註 + 同名」比對
+    const linked = samples.find(s => s.fromRequestId === reqId)
+      || samples.find(s => (s.notes || '').startsWith('由樣品申請轉入') && s.name === r.productName);
+    if (!linked) return;
+    if (window.confirm(`「${r.productName}」退回${newStatus}。\n\n之前完成時已轉入樣品庫的樣品「${linked.name}」要一併從樣品庫移除嗎？\n（相關領用紀錄會保留）`)) {
+      await deleteDoc(doc(db, SAMPLES_COL, linked.id));
+    }
   };
 
   const createRequest = () => {
@@ -8782,7 +8804,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                             return (
                               <button key={s}
                                 disabled={!canEdit || active}
-                                onClick={() => s === '已完成' ? completeRequest(r) : updateReqField(r, 'status', s)}
+                                onClick={() => {
+                                  if (s === '已完成') completeRequest(r);
+                                  else if (curStatus === '已完成') uncompleteRequest(r, s);
+                                  else updateReqField(r, 'status', s);
+                                }}
                                 className="text-[11px] px-2.5 py-0.5 rounded-full transition font-medium disabled:cursor-default"
                                 style={active
                                   ? { background: sc.bg, color: sc.color }

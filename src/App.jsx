@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.23.7';
-const BUILD_ID = '20260716-0900';
+const APP_VERSION = 'v1.23.8';
+const BUILD_ID = '20260716-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.23.8',
+    date: '2026-07-16',
+    changes: [
+      '🔧 修正樣品庫刪除鈕看不到：操作欄太窄（84px）把垃圾桶按鈕擠出畫面，加寬後領用/編輯/跳轉/刪除四個按鈕都看得到',
+      '🎨 客戶清單「手動新增」改為精簡單行：圖 + 品名 + 代碼 + 數量 + 加入，不再佔一大塊',
+    ],
+  },
   {
     version: 'v1.23.7',
     date: '2026-07-16',
@@ -6965,7 +6973,7 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
       {/* 桌面：表格標題列 */}
       {!compact && (
         <div className="hidden sm:grid gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 text-[10px] font-semibold text-slate-500 uppercase tracking-wide"
-          style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(100px,1fr) 60px 84px'}}>
+          style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(100px,1fr) 60px 112px'}}>
           <span></span><span>名稱</span><span>類型</span><span>剩餘/總數</span><span>位置</span><span>材質</span><span>操作</span>
         </div>
       )}
@@ -7009,7 +7017,7 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
           <div key={s.id} className={`border-b border-slate-100 last:border-0 transition ${rowBg}`}>
             {/* 桌面列 */}
             <div className="hidden sm:grid gap-2 px-3 py-2 items-center"
-              style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(100px,1fr) 60px 84px'}}>
+              style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(100px,1fr) 60px 112px'}}>
               {thumbEl}
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</p>
@@ -9292,65 +9300,61 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
 
                           {/* 手動新增面板 */}
                           {listPicker && listPicker.listId === list.id && listPicker.mode === 'manual' && (
-                            <div className="mb-3 p-3 rounded-lg border border-amber-200 bg-amber-50/50">
-                              <div className="grid grid-cols-2 gap-2">
-                                <input value={manualItem.name} onChange={e => setManualItem(v => ({ ...v, name: e.target.value }))}
-                                  placeholder="品名 *" autoFocus
-                                  className="col-span-2 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-amber-400" />
-                                <input value={manualItem.code} onChange={e => setManualItem(v => ({ ...v, code: e.target.value }))}
-                                  placeholder="代碼（選填）"
-                                  className="px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
-                                <input type="number" min="1" value={manualItem.qty}
-                                  onChange={e => setManualItem(v => ({ ...v, qty: Number(e.target.value) || 1 }))}
-                                  className="w-24 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
-                                <div className="col-span-2 flex gap-1.5 items-center">
-                                  {manualItem.image && (
-                                    <img src={reqImgSrc(manualItem.image)} alt="" className="w-10 h-10 object-contain rounded border border-slate-200 bg-white" />
-                                  )}
-                                  <label className="px-2 py-1.5 text-xs border border-dashed border-slate-300 rounded cursor-pointer hover:bg-white text-slate-500">
-                                    上傳圖片
-                                    <input type="file" accept="image/*" className="hidden" onChange={async e => {
-                                      if (e.target.files[0]) {
-                                        const dataUrl = await reqImageToDataUrl(e.target.files[0]);
+                            <div className="mb-3 p-2.5 rounded-lg border border-amber-200 bg-amber-50/50 flex items-center gap-2 flex-wrap">
+                              {manualItem.image ? (
+                                <img src={reqImgSrc(manualItem.image)} alt="" className="w-9 h-9 object-contain rounded border border-slate-200 bg-white flex-shrink-0" />
+                              ) : (
+                                <label className="w-9 h-9 flex items-center justify-center border border-dashed border-slate-300 rounded cursor-pointer hover:bg-white text-slate-400 flex-shrink-0" title="上傳圖片">
+                                  ＋
+                                  <input type="file" accept="image/*" className="hidden" onChange={async e => {
+                                    if (e.target.files[0]) {
+                                      const dataUrl = await reqImageToDataUrl(e.target.files[0]);
+                                      setManualItem(v => ({ ...v, image: { dataUrl } }));
+                                      e.target.value = '';
+                                    }
+                                  }} />
+                                </label>
+                              )}
+                              <button className="px-2 py-1.5 text-xs border border-dashed border-slate-300 rounded hover:bg-white text-slate-500 flex-shrink-0"
+                                title="先複製圖片再點"
+                                onClick={async () => {
+                                  try {
+                                    const clip = await navigator.clipboard.read();
+                                    for (const item of clip) {
+                                      const t = item.types.find(x => x.startsWith('image/'));
+                                      if (t) {
+                                        const blob = await item.getType(t);
+                                        const dataUrl = await reqImageToDataUrl(new File([blob], 'pasted.png', { type: blob.type }));
                                         setManualItem(v => ({ ...v, image: { dataUrl } }));
-                                        e.target.value = '';
+                                        break;
                                       }
-                                    }} />
-                                  </label>
-                                  <button className="px-2 py-1.5 text-xs border border-dashed border-slate-300 rounded hover:bg-white text-slate-500"
-                                    onClick={async () => {
-                                      try {
-                                        const clip = await navigator.clipboard.read();
-                                        for (const item of clip) {
-                                          const t = item.types.find(x => x.startsWith('image/'));
-                                          if (t) {
-                                            const blob = await item.getType(t);
-                                            const dataUrl = await reqImageToDataUrl(new File([blob], 'pasted.png', { type: blob.type }));
-                                            setManualItem(v => ({ ...v, image: { dataUrl } }));
-                                            break;
-                                          }
-                                        }
-                                      } catch { alert('請先複製一張圖片'); }
-                                    }}>貼上圖片</button>
-                                </div>
-                              </div>
-                              <div className="flex gap-2 mt-2 justify-end">
-                                <button onClick={() => setListPicker(null)} className="px-3 py-1 text-xs text-slate-500 hover:bg-slate-100 rounded">關閉</button>
-                                <button disabled={!manualItem.name.trim()}
-                                  onClick={() => {
-                                    const item = {
-                                      id: newItemId(), sourceType: 'manual', refId: null, projectId: null,
-                                      name: manualItem.name.trim(), code: manualItem.code.trim(),
-                                      qty: manualItem.qty || 1, note: manualItem.note || '', prepared: false,
-                                      image: manualItem.image || null,
-                                    };
-                                    saveCustomerList({ ...list, items: [...items, item] });
-                                    setManualItem({ name: '', code: '', qty: 1, note: '', image: null });
-                                  }}
-                                  className="px-3 py-1 text-xs text-white rounded disabled:opacity-40" style={{ background: '#1e293b' }}>
-                                  加入清單
-                                </button>
-                              </div>
+                                    }
+                                  } catch { alert('請先複製一張圖片'); }
+                                }}>📋</button>
+                              <input value={manualItem.name} onChange={e => setManualItem(v => ({ ...v, name: e.target.value }))}
+                                placeholder="品名 *" autoFocus
+                                className="flex-1 min-w-[10rem] px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-amber-400" />
+                              <input value={manualItem.code} onChange={e => setManualItem(v => ({ ...v, code: e.target.value }))}
+                                placeholder="代碼"
+                                className="w-28 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
+                              <input type="number" min="1" value={manualItem.qty}
+                                onChange={e => setManualItem(v => ({ ...v, qty: Number(e.target.value) || 1 }))}
+                                className="w-16 px-2 py-1.5 text-sm text-center border border-slate-200 rounded bg-white" />
+                              <button disabled={!manualItem.name.trim()}
+                                onClick={() => {
+                                  const item = {
+                                    id: newItemId(), sourceType: 'manual', refId: null, projectId: null,
+                                    name: manualItem.name.trim(), code: manualItem.code.trim(),
+                                    qty: manualItem.qty || 1, note: manualItem.note || '', prepared: false,
+                                    image: manualItem.image || null,
+                                  };
+                                  saveCustomerList({ ...list, items: [...items, item] });
+                                  setManualItem({ name: '', code: '', qty: 1, note: '', image: null });
+                                }}
+                                className="px-3 py-1.5 text-xs text-white rounded disabled:opacity-40 flex-shrink-0" style={{ background: '#1e293b' }}>
+                                加入
+                              </button>
+                              <button onClick={() => setListPicker(null)} className="px-2 py-1.5 text-xs text-slate-500 hover:bg-slate-100 rounded flex-shrink-0">關閉</button>
                             </div>
                           )}
 

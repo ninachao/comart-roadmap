@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.23.5';
-const BUILD_ID = '20260715-2200';
+const APP_VERSION = 'v1.23.6';
+const BUILD_ID = '20260715-2300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.23.6',
+    date: '2026-07-15',
+    changes: [
+      '↩ 客戶清單挑選面板版面還原為 v1.23.3 的小圖格（縱向捲動）',
+      '保留：備註可換行、Storage 圖片主動抓網址的修正',
+    ],
+  },
   {
     version: 'v1.23.5',
     date: '2026-07-15',
@@ -9201,7 +9209,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-amber-400" />
                                 <button onClick={() => setListPicker(null)} className="text-xs text-slate-400 hover:text-slate-700 underline">關閉</button>
                               </div>
-                              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 max-h-72 overflow-y-auto pr-1">
+                              <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 max-h-56 overflow-y-auto pr-1">
                                 {(listPicker.mode === 'sample'
                                   ? samplesWithRemaining.filter(s => !listPickerSearch || [s._displayName, s._displayCode, s.sampleNo].some(v => (v || '').toLowerCase().includes(listPickerSearch.toLowerCase())))
                                   : allRequests.filter(r => !listPickerSearch || [r.productName, r.productCode].some(v => (v || '').toLowerCase().includes(listPickerSearch.toLowerCase())))
@@ -9231,13 +9239,13 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   return (
                                     <div key={refId}
                                       onClick={() => { if (!addedItem) addNew(); }}
-                                      className={`flex flex-col items-center p-2 rounded-lg border transition text-left ${addedItem ? 'border-amber-400 bg-amber-50' : 'bg-white border-slate-200 hover:border-amber-400 hover:bg-amber-50 cursor-pointer'}`}>
+                                      className={`flex flex-col items-center p-1.5 rounded-lg border transition text-left ${addedItem ? 'border-amber-400 bg-amber-50' : 'bg-white border-slate-200 hover:border-amber-400 hover:bg-amber-50 cursor-pointer'}`}>
                                       {img ? (
-                                        <div className="w-full aspect-square rounded mb-1 bg-slate-50 overflow-hidden flex items-center justify-center">
+                                        <div className="w-12 h-12 rounded mb-1 bg-slate-50 overflow-hidden flex items-center justify-center">
                                           <SampleMediaThumb media={typeof img === 'string' ? { url: img } : img} className="w-full h-full object-contain" />
                                         </div>
                                       ) : (
-                                        <div className="w-full aspect-square rounded mb-1 bg-slate-100 flex items-center justify-center text-slate-300 text-2xl">📦</div>
+                                        <div className="w-12 h-12 rounded mb-1 bg-slate-100 flex items-center justify-center text-slate-300 text-lg">📦</div>
                                       )}
                                       <p className="text-[10px] text-slate-700 text-center leading-tight line-clamp-2">{name}</p>
                                       {isSample && (x.notes || x.material) && (

@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.26.0';
-const BUILD_ID = '20260717-0900';
+const APP_VERSION = 'v1.27.0';
+const BUILD_ID = '20260717-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.27.0',
+    date: '2026-07-17',
+    changes: [
+      '🔗 客戶清單預留正式扣庫存：樣品被清單排走後，樣品庫的「剩餘」即時扣掉（剩餘 = 總數 − 在外未歸還 − 清單預留）',
+      '樣品列表在剩餘數量下顯示「清單排 n」藍色小字，看得出被哪裡佔走',
+      '產品頁「相關樣品」的剩餘數量也同步反映清單預留',
+      '從清單刪除項目或減量，庫存立刻回來',
+    ],
+  },
   {
     version: 'v1.26.0',
     date: '2026-07-17',
@@ -3081,6 +3091,7 @@ export default function ProductRoadmap() {
           featureCodes={featureCodes}
           samples={samples}
           withdrawals={withdrawals}
+          customerLists={customerLists}
           currentUser={currentUser}
           openFrom={openFrom}
           followUpTrigger={followUpTrigger}
@@ -4012,7 +4023,7 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
 }
 
 
-function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, samples = [], withdrawals = [], currentUser, openFrom = null, onReturn, followUpTrigger = null, onFollowUpTriggered }) {
+function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, samples = [], withdrawals = [], customerLists = [], currentUser, openFrom = null, onReturn, followUpTrigger = null, onFollowUpTriggered }) {
   const [showWizard, setShowWizard] = useState(false);
 
   // 收到自動打開請求時，跳出精靈
@@ -4469,6 +4480,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             project={project}
             samples={samples}
             withdrawals={withdrawals}
+            customerLists={customerLists}
             readOnly={isViewer}
           /></div>
 
@@ -6746,19 +6758,20 @@ function DFMSection({ hasDFM, dfmNotes, dfmAttachments, onToggle, onNotesChange,
 // 手板總覽 - 自動彙整所有產品的手板訂單
 // ============= 產品專案下的「相關樣品」區塊 =============
 // 從樣品庫 filter 出此產品有關的樣品
-function RelatedSamplesSection({ project, samples, withdrawals, readOnly }) {
+function RelatedSamplesSection({ project, samples, withdrawals, readOnly, customerLists = [] }) {
   const [editingSample, setEditingSample] = useState(null);
   const [viewingGallery, setViewingGallery] = useState(null); // {images, index}
 
   // Filter 出此產品的樣品
   const relatedSamples = useMemo(() => {
+    const reservedMap = computeReservedMap(customerLists);
     return samples.filter(s => s.relatedProjectId === project.id)
       .map(s => {
-        const { remaining, effectiveTotal } = computeRemaining(s, withdrawals);
-        return { ...s, _remaining: remaining, _effectiveTotal: effectiveTotal };
+        const { remaining, effectiveTotal, reserved } = computeRemaining(s, withdrawals, reservedMap.get(s.id) || 0);
+        return { ...s, _remaining: remaining, _effectiveTotal: effectiveTotal, _reserved: reserved };
       })
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  }, [samples, withdrawals, project.id]);
+  }, [samples, withdrawals, project.id, customerLists]);
 
   const totalRemaining = relatedSamples.reduce((sum, s) => sum + s._remaining, 0);
 
@@ -6984,7 +6997,18 @@ const SAMPLE_TYPE_COLORS = {
 //   不歸還的領用 → 永久消耗，從「總數」和「剩餘」都扣
 //   已歸還的領用 → 不影響剩餘（已回來了）
 //   在外未歸還的領用 → 影響剩餘（但總數不變）
-function computeRemaining(sample, withdrawalsList) {
+// 客戶清單預留量：sampleId → 已被所有清單排走的數量
+function computeReservedMap(customerLists) {
+  const m = new Map();
+  (customerLists || []).forEach(l => (l.items || []).forEach(it => {
+    if (it.sourceType === 'sample' && it.refId) {
+      m.set(it.refId, (m.get(it.refId) || 0) + (Number(it.qty) || 1));
+    }
+  }));
+  return m;
+}
+
+function computeRemaining(sample, withdrawalsList, reservedQty = 0) {
   const sampleWithdrawals = withdrawalsList.filter(w => w.sampleId === sample.id);
 
   // 不歸還的：永久消耗，從總數扣
@@ -6998,9 +7022,10 @@ function computeRemaining(sample, withdrawalsList) {
     .reduce((sum, w) => sum + Number(w.quantity || 0), 0);
 
   const effectiveTotal = Math.max(0, Number(sample.initialQuantity || 0) - noReturnQty);
-  const remaining = Math.max(0, effectiveTotal - outQty);
+  // 剩餘 = 總數 − 在外未歸還 − 客戶清單預留
+  const remaining = Math.max(0, effectiveTotal - outQty - (Number(reservedQty) || 0));
 
-  return { remaining, effectiveTotal };
+  return { remaining, effectiveTotal, reserved: Number(reservedQty) || 0 };
 }
 
 // 樣品列表元件（可獨立使用，供分組和不分組共用）
@@ -7072,6 +7097,7 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
               <span className="text-sm font-semibold tabular-nums">
                 <span className={isOut ? 'text-rose-600' : remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}>{remaining}</span>
                 <span className="text-slate-400 text-xs font-normal"> / {s._effectiveTotal ?? s.initialQuantity ?? 0}</span>
+                {(s._reserved || 0) > 0 && <span className="block text-[9px] text-blue-400 font-normal" title="被客戶清單預留的數量">清單排 {s._reserved}</span>}
               </span>
               <span className="text-xs text-emerald-700 truncate">{s.location ? `📍 ${s.location}` : <span className="text-slate-300">—</span>}</span>
               <span className="text-xs text-slate-600 truncate">{s.material || <span className="text-slate-300">—</span>}</span>
@@ -7844,7 +7870,8 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     if (it.sourceType === 'sample') {
       const s = samplesWithRemaining.find(x => x.id === it.refId);
       if (!s) return null;
-      return Math.max(0, s._remaining - getReservedQty('sample', it.refId, it.id));
+      // _remaining 已扣掉所有清單預留（含自己），所以自己的上限要加回自己的量
+      return Math.max(0, s._remaining + (Number(it.qty) || 0));
     }
     if (it.sourceType === 'request') {
       let reqQty = null;
@@ -7998,22 +8025,24 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
 
   // 計算每個樣品的剩餘數量 + 連動關聯產品的即時名稱/料號
   const samplesWithRemaining = useMemo(() => {
+    const reservedMap = computeReservedMap(customerLists);
     return samples.map(s => {
       const relatedProj = s.relatedProjectId
         ? projects.find(p => String(p.id) === String(s.relatedProjectId))
         : null;
-      const { remaining, effectiveTotal } = computeRemaining(s, withdrawals);
+      const { remaining, effectiveTotal, reserved } = computeRemaining(s, withdrawals, reservedMap.get(s.id) || 0);
       return {
         ...s,
         _remaining: remaining,
         _effectiveTotal: effectiveTotal,
+        _reserved: reserved,
         // 優先用樣品自己填的名稱；沒填或和產品名一樣才用產品名
         _displayName: (s.name && s.name.trim()) ? s.name : (relatedProj ? relatedProj.name : s.name),
         _displayCode: relatedProj ? (relatedProj.code || '') : (s.relatedProjectCode || ''),
         _projectExists: !!relatedProj,
       };
     });
-  }, [samples, withdrawals, projects]);
+  }, [samples, withdrawals, projects, customerLists]);
 
   const filtered = useMemo(() => {
     return samplesWithRemaining.filter(s => {
@@ -9323,12 +9352,13 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   const refId = isSample ? x.id : (x._isManual ? (x._docId || x.id) : x.id);
                                   const srcType = isSample ? 'sample' : 'request';
                                   const addedItem = items.find(it => it.sourceType === srcType && it.refId === refId);
-                                  // 總量：樣品庫=即時庫存、樣品申請=申請數量
-                                  const totalQty = isSample ? x._remaining : (x.quantity || 1);
-                                  // 可用量 = 總量 − 所有客戶清單已排走的量（不含此清單這一項自己）
-                                  const availQty = Math.max(0, totalQty - getReservedQty(srcType, refId, addedItem?.id || null));
-                                  const stock = isSample ? x._remaining : null;
-                                  const maxQty = availQty; // 此項目數量上限（已扣掉其他清單的預留）
+                                  // 樣品庫：_remaining 已扣掉「所有清單的預留」，此項目的上限 = 淨剩餘 + 自己已排的量
+                                  // 樣品申請：申請數量 − 其他清單已排走的量
+                                  const availQty = isSample
+                                    ? Math.max(0, x._remaining + (addedItem ? (Number(addedItem.qty) || 1) : 0))
+                                    : Math.max(0, (x.quantity || 1) - getReservedQty('request', refId, addedItem?.id || null));
+                                  const stock = isSample ? x._remaining : null; // 淨庫存（已扣預留）
+                                  const maxQty = availQty;
                                   const addNew = () => {
                                     if (maxQty <= 0) { alert('這個樣品已經沒有可用數量了（庫存已被其他清單排走或為 0）'); return; }
                                     const item = {
@@ -9362,8 +9392,8 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         </p>
                                       )}
                                       {stock !== null && (
-                                        <p className={`text-[9px] font-medium ${availQty === 0 ? 'text-rose-500' : availQty < 3 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                                          {availQty < stock ? `可用 ${availQty}／庫存 ${stock}` : `庫存 ${stock}`}
+                                        <p className={`text-[9px] font-medium ${stock === 0 ? 'text-rose-500' : stock < 3 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                          庫存 {stock}{(x._reserved || 0) > 0 ? `（含預留 ${x._reserved}）` : ''}
                                         </p>
                                       )}
                                       {/* 已加入：顯示 − 數量 ＋ 直接調整要帶幾個 */}

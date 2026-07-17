@@ -49,10 +49,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.23.6';
-const BUILD_ID = '20260715-2300';
+const APP_VERSION = 'v1.23.7';
+const BUILD_ID = '20260716-0900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.23.7',
+    date: '2026-07-16',
+    changes: [
+      '🎨 移除客戶清單備註框右下角的拉高手把（高度仍會依內容行數自動調整，換行功能不變）',
+    ],
+  },
   {
     version: 'v1.23.6',
     date: '2026-07-15',
@@ -9419,7 +9426,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         <textarea defaultValue={it.note || ''} placeholder="備註（客人要黑色...，可換行）"
                                           rows={Math.max(1, (it.note || '').split('\n').length)}
                                           onBlur={e => { if (e.target.value !== (it.note || '')) updateListItem(list, it.id, { note: e.target.value }); }}
-                                          className="w-full mt-0.5 text-xs text-slate-500 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5 resize-y leading-snug" />
+                                          className="w-full mt-0.5 text-xs text-slate-500 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5 resize-none leading-snug" />
                                       ) : (
                                         it.note && <p className="text-xs text-slate-400 mt-0.5 whitespace-pre-line">{it.note}</p>
                                       )}

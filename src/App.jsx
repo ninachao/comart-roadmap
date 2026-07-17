@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.24.0';
-const BUILD_ID = '20260716-1100';
+const APP_VERSION = 'v1.25.0';
+const BUILD_ID = '20260716-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.25.0',
+    date: '2026-07-16',
+    changes: [
+      '👤 樣品申請新增「主責人員」欄位：新增表單可填、申請卡片可行內編輯',
+      '客戶清單全來源支援主責人員：從樣品申請挑（自動帶入）、從樣品庫挑、手動新增都可填/改',
+      '匯出 PDF / Excel 新增「主責」欄',
+    ],
+  },
   {
     version: 'v1.24.0',
     date: '2026-07-16',
@@ -7232,6 +7241,7 @@ function exportCustomerListPDF(list, items) {
       <td class="c-img">${src ? `<img src="${src}" class="pimg" />` : '<span style="color:#cbd5e1;font-size:11px;">—</span>'}</td>
       <td class="c-name"><b>${it.name || '—'}</b>${it.code ? `<br/><span class="code">${it.code}</span>` : ''}</td>
       <td class="c-qty">${it.qty || 1}</td>
+      <td class="c-owner">${it.owner || '—'}</td>
       <td class="c-note">${it.note || ''}</td>
     </tr>`;
   });
@@ -7244,7 +7254,7 @@ function exportCustomerListPDF(list, items) {
     th{background:#1e293b;color:#fff;padding:8px 6px;font-size:12px;text-align:left;white-space:nowrap;}
     td{border-bottom:1px solid #e2e8f0;vertical-align:middle;padding:8px 6px;font-size:12px;word-break:break-word;}
     .c-img{width:70px;} .c-qty{width:44px;text-align:center;white-space:nowrap;}
-    .c-status{width:64px;text-align:center;} .c-name{width:30%;}
+    .c-owner{width:72px;white-space:nowrap;} .c-name{width:28%;}
     .c-name b{font-size:13px;font-weight:600;}
     .code{font-size:11px;color:#94a3b8;font-family:Consolas,monospace;}
     .c-note{color:#475569;white-space:pre-line;}
@@ -7257,7 +7267,7 @@ function exportCustomerListPDF(list, items) {
   <h1>${list.name || '客戶樣品清單'}</h1>
   <p class="meta">${list.customer ? `客戶：${list.customer}　` : ''}${list.visitDate ? `日期：${list.visitDate}　` : ''}匯出：${today}　共 ${items.length} 項</p>
   <table>
-    <thead><tr><th class="c-img">圖片</th><th class="c-name">品名</th><th class="c-qty">數量</th><th>備註</th></tr></thead>
+    <thead><tr><th class="c-img">圖片</th><th class="c-name">品名</th><th class="c-qty">數量</th><th class="c-owner">主責</th><th>備註</th></tr></thead>
   <tbody>${rows}</tbody></table>
   <script>window.onload=()=>window.print();<\/script></body></html>`;
   const w = window.open('', '_blank');
@@ -7274,6 +7284,7 @@ async function exportCustomerListXLSX(list, items) {
     { header: '品名', width: 32 },
     { header: '代碼', width: 16 },
     { header: '數量', width: 8 },
+    { header: '主責', width: 10 },
     { header: '備註', width: 36 },
   ];
   const headerRow = ws.getRow(1);
@@ -7292,7 +7303,7 @@ async function exportCustomerListXLSX(list, items) {
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     const row = ws.getRow(i + 2);
-    row.values = ['', it.name || '', it.code || '', it.qty || 1, it.note || ''];
+    row.values = ['', it.name || '', it.code || '', it.qty || 1, it.owner || '', it.note || ''];
     row.height = 64;
     row.alignment = { vertical: 'middle', wrapText: true };
     const b64 = await toBase64(it._exportImg);
@@ -7606,7 +7617,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [reqStatusFilter, setReqStatusFilter] = useState('全部');
   const [showNewReqForm, setShowNewReqForm] = useState(false);
   const [showProductPicker, setShowProductPicker] = useState(false);
-  const BLANK_REQ = { isManual: false, projectId: '', productName: '', productCode: '', coverImage: null, quantity: 1, unit: '個', neededBy: '', note: '' };
+  const BLANK_REQ = { isManual: false, projectId: '', productName: '', productCode: '', coverImage: null, quantity: 1, unit: '個', neededBy: '', note: '', owner: '' };
   const [newReq, setNewReq] = useState(BLANK_REQ);
   const [reqImageUploading, setReqImageUploading] = useState(null);
 
@@ -7738,6 +7749,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       requestedBy: currentUser?.name || '',
       requestedAt: today,
       images: [],
+      owner: (newReq.owner || '').trim(),
     };
     if (newReq.isManual) {
       // 手動申請：存到獨立 collection（圖片已壓縮，體積小）
@@ -7777,7 +7789,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [newList, setNewList] = useState({ name: '', customer: '', visitDate: '', importRequests: true });
   const [listPicker, setListPicker] = useState(null);        // {listId, mode: 'sample' | 'request' | 'manual'}
   const [listPickerSearch, setListPickerSearch] = useState('');
-  const [manualItem, setManualItem] = useState({ name: '', code: '', qty: 1, note: '', image: null });
+  const [manualItem, setManualItem] = useState({ name: '', code: '', qty: 1, note: '', owner: '', image: null });
   const [dragItemId, setDragItemId] = useState(null);     // 拖曳排序中的項目
   const [imgEditItemId, setImgEditItemId] = useState(null); // 換圖面板開啟的項目
 
@@ -7879,6 +7891,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
         code: r.productCode || '',
         qty: r.quantity || 1,
         note: r.note || '',
+        owner: r.owner || '',
         prepared: false,
       }));
   };
@@ -8927,6 +8940,12 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                       className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
                   </div>
                   <div className="col-span-2">
+                    <label className="text-xs text-slate-500 mb-1 block">主責人員</label>
+                    <input type="text" value={newReq.owner} placeholder="例：福威 / Nina..."
+                      onChange={e => setNewReq(v => ({ ...v, owner: e.target.value }))}
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
+                  </div>
+                  <div className="col-span-2">
                     <label className="text-xs text-slate-500 mb-1 block">備註</label>
                     <textarea value={newReq.note} rows={2} placeholder="規格說明、特殊要求..."
                       onChange={e => setNewReq(v => ({ ...v, note: e.target.value }))}
@@ -9063,6 +9082,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                               onBlur={e => { if (e.target.value !== (r.neededBy || '')) updateReqField(r, 'neededBy', e.target.value); }}
                               disabled={!canEdit}
                               className="text-sm border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
+                            <span className="text-xs text-slate-400">主責</span>
+                            <input defaultValue={r.owner || ''} placeholder="主責人員"
+                              onBlur={e => { if (e.target.value !== (r.owner || '')) updateReqField(r, 'owner', e.target.value); }}
+                              disabled={!canEdit}
+                              className="w-24 text-sm border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400 disabled:bg-transparent disabled:border-transparent disabled:cursor-default" />
                           </div>
 
                           {/* 備註 */}
@@ -9229,7 +9253,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                 className="px-2.5 py-1 text-[11px] text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50 transition">📦 從樣品庫挑</button>
                               <button onClick={() => { setListPicker({ listId: list.id, mode: 'request' }); setListPickerSearch(''); }}
                                 className="px-2.5 py-1 text-[11px] text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50 transition">📋 從樣品申請挑</button>
-                              <button onClick={() => { setListPicker({ listId: list.id, mode: 'manual' }); setManualItem({ name: '', code: '', qty: 1, note: '', image: null }); }}
+                              <button onClick={() => { setListPicker({ listId: list.id, mode: 'manual' }); setManualItem({ name: '', code: '', qty: 1, note: '', owner: '', image: null }); }}
                                 className="px-2.5 py-1 text-[11px] text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50 transition">✏️ 手動新增</button>
                               <button onClick={() => {
                                 const fresh = buildItemsFromRequests(items);
@@ -9277,7 +9301,9 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                       refId,
                                       projectId: isSample ? null : (x._project ? x._project.id : null),
                                       name: name || '', code: code || '',
-                                      qty: 1, note: '', prepared: false,
+                                      qty: 1, note: '',
+                                      owner: isSample ? '' : (x.owner || ''),
+                                      prepared: false,
                                     };
                                     saveCustomerList({ ...list, items: [...items, item] });
                                   };
@@ -9367,6 +9393,9 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                               <input value={manualItem.code} onChange={e => setManualItem(v => ({ ...v, code: e.target.value }))}
                                 placeholder="代碼"
                                 className="w-28 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
+                              <input value={manualItem.owner || ''} onChange={e => setManualItem(v => ({ ...v, owner: e.target.value }))}
+                                placeholder="主責"
+                                className="w-24 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
                               <input type="number" min="1" value={manualItem.qty}
                                 onChange={e => setManualItem(v => ({ ...v, qty: Number(e.target.value) || 1 }))}
                                 className="w-16 px-2 py-1.5 text-sm text-center border border-slate-200 rounded bg-white" />
@@ -9375,11 +9404,12 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   const item = {
                                     id: newItemId(), sourceType: 'manual', refId: null, projectId: null,
                                     name: manualItem.name.trim(), code: manualItem.code.trim(),
-                                    qty: manualItem.qty || 1, note: manualItem.note || '', prepared: false,
+                                    qty: manualItem.qty || 1, note: manualItem.note || '',
+                                    owner: manualItem.owner || '', prepared: false,
                                     image: manualItem.image || null,
                                   };
                                   saveCustomerList({ ...list, items: [...items, item] });
-                                  setManualItem({ name: '', code: '', qty: 1, note: '', image: null });
+                                  setManualItem({ name: '', code: '', qty: 1, note: '', owner: '', image: null });
                                 }}
                                 className="px-3 py-1.5 text-xs text-white rounded disabled:opacity-40 flex-shrink-0" style={{ background: '#1e293b' }}>
                                 加入
@@ -9448,6 +9478,14 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         )}
                                         {it.sourceType === 'sample' && !linkedSample && (
                                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-500">樣品已刪除</span>
+                                        )}
+                                        <span className="text-[10px] text-slate-400 ml-1">主責</span>
+                                        {canEdit ? (
+                                          <input defaultValue={it.owner || ''} placeholder="—"
+                                            onBlur={e => { if (e.target.value !== (it.owner || '')) updateListItem(list, it.id, { owner: e.target.value }); }}
+                                            className="w-20 text-[11px] text-slate-600 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5" />
+                                        ) : (
+                                          it.owner && <span className="text-[11px] text-slate-500">{it.owner}</span>
                                         )}
                                       </div>
                                       {/* 來源樣品自己的備註/材質（即時帶入，和給客戶的備註分開） */}

@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.23.0';
-const BUILD_ID = '20260715-1700';
+const APP_VERSION = 'v1.23.1';
+const BUILD_ID = '20260715-1800';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.23.1',
+    date: '2026-07-15',
+    changes: [
+      '🔢 客戶清單挑選面板可直接調數量：點格子加入後，格子上出現「− 數量 ＋」控制，不用到下面清單再改',
+      '數量減到 0 會自動從清單移除該項目',
+    ],
+  },
   {
     version: 'v1.23.0',
     date: '2026-07-15',
@@ -9139,22 +9147,23 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   const name = isSample ? x._displayName : x.productName;
                                   const code = isSample ? (x.sampleNo || x._displayCode) : x.productCode;
                                   const refId = isSample ? x.id : (x._isManual ? (x._docId || x.id) : x.id);
-                                  const already = items.some(it => it.sourceType === (isSample ? 'sample' : 'request') && it.refId === refId);
+                                  const addedItem = items.find(it => it.sourceType === (isSample ? 'sample' : 'request') && it.refId === refId);
                                   const stock = isSample ? x._remaining : null; // 即時庫存（樣品庫模式）
+                                  const addNew = () => {
+                                    const item = {
+                                      id: newItemId(),
+                                      sourceType: isSample ? 'sample' : 'request',
+                                      refId,
+                                      projectId: isSample ? null : (x._project ? x._project.id : null),
+                                      name: name || '', code: code || '',
+                                      qty: 1, note: '', prepared: false,
+                                    };
+                                    saveCustomerList({ ...list, items: [...items, item] });
+                                  };
                                   return (
-                                    <button key={refId} disabled={already}
-                                      onClick={() => {
-                                        const item = {
-                                          id: newItemId(),
-                                          sourceType: isSample ? 'sample' : 'request',
-                                          refId,
-                                          projectId: isSample ? null : (x._project ? x._project.id : null),
-                                          name: name || '', code: code || '',
-                                          qty: 1, note: '', prepared: false,
-                                        };
-                                        saveCustomerList({ ...list, items: [...items, item] });
-                                      }}
-                                      className="flex flex-col items-center p-1.5 rounded-lg border bg-white transition text-left disabled:opacity-30 border-slate-200 hover:border-amber-400 hover:bg-amber-50">
+                                    <div key={refId}
+                                      onClick={() => { if (!addedItem) addNew(); }}
+                                      className={`flex flex-col items-center p-1.5 rounded-lg border transition text-left ${addedItem ? 'border-amber-400 bg-amber-50' : 'bg-white border-slate-200 hover:border-amber-400 hover:bg-amber-50 cursor-pointer'}`}>
                                       {src ? (
                                         <img src={src} alt="" className="w-12 h-12 object-contain rounded mb-1 bg-slate-50" />
                                       ) : (
@@ -9171,8 +9180,23 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                           庫存 {stock}
                                         </p>
                                       )}
-                                      {already && <p className="text-[9px] text-amber-600">已加入</p>}
-                                    </button>
+                                      {/* 已加入：顯示 − 數量 ＋ 直接調整要帶幾個 */}
+                                      {addedItem && (
+                                        <div className="flex items-center gap-1 mt-0.5" onClick={e => e.stopPropagation()}>
+                                          <button
+                                            onClick={() => {
+                                              const q = (addedItem.qty || 1) - 1;
+                                              if (q <= 0) removeListItem(list, addedItem.id);
+                                              else updateListItem(list, addedItem.id, { qty: q });
+                                            }}
+                                            className="w-5 h-5 flex items-center justify-center rounded-full border border-amber-300 bg-white text-amber-700 text-xs hover:bg-amber-100 leading-none">−</button>
+                                          <span className="text-xs font-semibold text-amber-800 w-5 text-center tabular-nums">{addedItem.qty || 1}</span>
+                                          <button
+                                            onClick={() => updateListItem(list, addedItem.id, { qty: (addedItem.qty || 1) + 1 })}
+                                            className="w-5 h-5 flex items-center justify-center rounded-full border border-amber-300 bg-white text-amber-700 text-xs hover:bg-amber-100 leading-none">＋</button>
+                                        </div>
+                                      )}
+                                    </div>
                                   );
                                 })}
                               </div>

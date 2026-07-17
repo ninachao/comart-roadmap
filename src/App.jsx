@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.25.1';
-const BUILD_ID = '20260716-1300';
+const APP_VERSION = 'v1.26.0';
+const BUILD_ID = '20260717-0900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.26.0',
+    date: '2026-07-17',
+    changes: [
+      '🗄 全部樣品的「存放位置」已清空（重新規劃倉位、重新清點用），共 132 筆',
+      '📍 存放位置改為下拉選單：不用再手打；點「編輯選項」可新增、改名、刪除位置（全公司共用，即時同步）',
+      '位置選項存在雲端（app_settings/sample_locations），所有人看到同一份',
+    ],
+  },
   {
     version: 'v1.25.1',
     date: '2026-07-16',
@@ -10154,6 +10163,27 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
   });
   const [uploading, setUploading] = useState(false);
   const [pasteHint, setPasteHint] = useState(false);
+
+  // ── 存放位置選項（全公司共用，存在 app_settings/sample_locations）──
+  const [locationOptionList, setLocationOptionList] = useState([]);
+  const [editingLocations, setEditingLocations] = useState(false);
+  const [newLocationName, setNewLocationName] = useState('');
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'app_settings', 'sample_locations'), (snap) => {
+      setLocationOptionList(snap.exists() ? (snap.data().list || []) : []);
+    });
+    return () => unsub();
+  }, []);
+  const saveLocationOptions = async (list) => {
+    await setDoc(doc(db, 'app_settings', 'sample_locations'), { list });
+  };
+  const addLocationOption = () => {
+    const v = newLocationName.trim();
+    if (!v || locationOptionList.includes(v)) { setNewLocationName(''); return; }
+    saveLocationOptions([...locationOptionList, v]);
+    setNewLocationName('');
+  };
+
   const [showProjPicker, setShowProjPicker] = useState(false); // 關聯產品圖片格選擇器
   const [projSearch, setProjSearch] = useState('');
   const [cropTarget, setCropTarget] = useState(null); // { imgIndex, url }
@@ -10400,16 +10430,53 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-600 mb-1">存放位置</label>
-              <input
-                type="text"
-                value={data.location}
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs text-slate-600">存放位置</label>
+                <button type="button" onClick={() => setEditingLocations(v => !v)}
+                  className="text-[10px] text-blue-500 hover:underline">{editingLocations ? '完成' : '編輯選項'}</button>
+              </div>
+              <select
+                value={data.location || ''}
                 onChange={(e) => setData(prev => ({ ...prev, location: e.target.value }))}
-                placeholder="辦公室 A-3"
-                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
-              />
+                className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white"
+              >
+                <option value="">— 未指定 —</option>
+                {/* 目前值不在選項裡時也要能顯示（避免舊資料被吃掉） */}
+                {data.location && !locationOptionList.includes(data.location) && (
+                  <option value={data.location}>{data.location}</option>
+                )}
+                {locationOptionList.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+              </select>
             </div>
           </div>
+
+          {/* 位置選項管理（新增 / 改名 / 刪除，全公司共用） */}
+          {editingLocations && (
+            <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/50 space-y-1.5">
+              <p className="text-[10px] text-slate-500">位置選項是全公司共用的，改了大家都會看到（改名不影響已填在樣品上的舊位置文字）</p>
+              {locationOptionList.map((loc, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <input defaultValue={loc}
+                    onBlur={e => {
+                      const v = e.target.value.trim();
+                      if (v && v !== loc) saveLocationOptions(locationOptionList.map((x, j) => j === i ? v : x));
+                    }}
+                    className="flex-1 px-2 py-1 text-xs border border-slate-200 rounded bg-white focus:outline-none focus:border-blue-400" />
+                  <button type="button"
+                    onClick={() => { if (confirm(`刪除位置選項「${loc}」？`)) saveLocationOptions(locationOptionList.filter((_, j) => j !== i)); }}
+                    className="p-1 text-slate-300 hover:text-rose-500"><X className="w-3.5 h-3.5" /></button>
+                </div>
+              ))}
+              <div className="flex items-center gap-1.5">
+                <input value={newLocationName} onChange={e => setNewLocationName(e.target.value)}
+                  placeholder="新增位置，例：樣品櫃1"
+                  onKeyDown={e => { if (e.key === 'Enter') addLocationOption(); }}
+                  className="flex-1 px-2 py-1 text-xs border border-dashed border-blue-300 rounded bg-white focus:outline-none focus:border-blue-400" />
+                <button type="button" onClick={addLocationOption}
+                  className="px-2 py-1 text-[11px] text-white rounded" style={{ background: '#2563eb' }}>加入</button>
+              </div>
+            </div>
+          )}
 
           {/* 材質 + 來源 */}
           <div className="grid grid-cols-2 gap-3">

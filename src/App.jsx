@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.23.2';
-const BUILD_ID = '20260715-1900';
+const APP_VERSION = 'v1.23.3';
+const BUILD_ID = '20260715-2000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.23.3',
+    date: '2026-07-15',
+    changes: [
+      '🔧 修正客戶清單圖片顯示不出來：存在雲端 Storage 的樣品圖（網址會過期）改用會自動重抓的 StorageImage 元件顯示（挑選格、清單縮圖、換圖面板）',
+      '匯出 PDF / Excel 前自動換取新鮮的圖片下載網址，匯出檔案裡的圖不再空白',
+    ],
+  },
   {
     version: 'v1.23.2',
     date: '2026-07-15',
@@ -9093,15 +9101,23 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                   const items = list.items || [];
                   const isOpen = openListId === list.id;
                   const preparedCount = items.filter(i => i.prepared).length;
-                  const exportItems = () => items.map(it => {
+                  const exportItems = () => Promise.all(items.map(async it => {
                     const ls = it.sourceType === 'sample' ? samplesWithRemaining.find(x => x.id === it.refId) : null;
                     const sampleInfo = ls ? [ls.material, ls.notes].filter(Boolean).join('｜') : '';
+                    let img = getListItemImage(it);
+                    // Storage 路徑型圖片：先換一個新鮮的下載網址（舊網址會過期）
+                    if (img && typeof img === 'object' && !img.dataUrl && img.path) {
+                      try {
+                        const freshUrl = await getStorageUrl(img.path);
+                        if (freshUrl) img = { ...img, url: freshUrl };
+                      } catch { /* 換不到就用原本的 url 試試 */ }
+                    }
                     return {
                       ...it,
-                      _exportImg: getListItemImage(it),
+                      _exportImg: img,
                       note: [sampleInfo, it.note].filter(Boolean).join('\n'),
                     };
-                  });
+                  }));
                   return (
                     <div key={list.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden">
                       {/* 清單標題列 */}
@@ -9114,11 +9130,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                             {list.customer && `客戶：${list.customer} · `}{list.visitDate && `${list.visitDate} · `}{items.length} 項 · 已準備 {preparedCount}/{items.length}
                           </p>
                         </div>
-                        <button onClick={e => { e.stopPropagation(); exportCustomerListPDF(list, exportItems()); }}
+                        <button onClick={async e => { e.stopPropagation(); exportCustomerListPDF(list, await exportItems()); }}
                           className="px-2 py-1 text-[11px] text-slate-500 border border-slate-200 rounded hover:bg-slate-50 transition">🖨 PDF</button>
                         <button onClick={async e => {
                           e.stopPropagation();
-                          try { await exportCustomerListXLSX(list, exportItems()); }
+                          try { await exportCustomerListXLSX(list, await exportItems()); }
                           catch (err) { console.error(err); alert('匯出 Excel 失敗，請再試一次'); }
                         }}
                           className="px-2 py-1 text-[11px] text-slate-500 border border-slate-200 rounded hover:bg-slate-50 transition">📊 Excel</button>
@@ -9193,8 +9209,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                     <div key={refId}
                                       onClick={() => { if (!addedItem) addNew(); }}
                                       className={`flex flex-col items-center p-1.5 rounded-lg border transition text-left ${addedItem ? 'border-amber-400 bg-amber-50' : 'bg-white border-slate-200 hover:border-amber-400 hover:bg-amber-50 cursor-pointer'}`}>
-                                      {src ? (
-                                        <img src={src} alt="" className="w-12 h-12 object-contain rounded mb-1 bg-slate-50" />
+                                      {img ? (
+                                        <div className="w-12 h-12 rounded mb-1 bg-slate-50 overflow-hidden flex items-center justify-center">
+                                          <SampleMediaThumb media={typeof img === 'string' ? { url: img } : img} className="w-full h-full object-contain" />
+                                        </div>
                                       ) : (
                                         <div className="w-12 h-12 rounded mb-1 bg-slate-100 flex items-center justify-center text-slate-300 text-lg">📦</div>
                                       )}
@@ -9331,8 +9349,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         onChange={e => updateListItem(list, it.id, { prepared: e.target.checked })} />
                                     )}
                                     <div className="flex-shrink-0 flex flex-col items-center gap-0.5">
-                                      {src ? (
-                                        <img src={src} alt="" className="w-12 h-12 object-contain rounded border border-slate-200 bg-white" />
+                                      {img ? (
+                                        <div className="w-12 h-12 rounded border border-slate-200 bg-white overflow-hidden flex items-center justify-center">
+                                          <SampleMediaThumb media={typeof img === 'string' ? { url: img } : img} className="w-full h-full object-contain" />
+                                        </div>
                                       ) : (
                                         <div className="w-12 h-12 rounded border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-slate-300">📦</div>
                                       )}
@@ -9409,18 +9429,14 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                     <div className="px-2 pb-2 pl-10">
                                       <div className="p-2 rounded-lg border border-amber-200 bg-amber-50/50">
                                         <div className="flex items-center gap-1.5 flex-wrap">
-                                          {getListItemImageCandidates(it).map((img, ci) => {
-                                            const cSrc = reqImgSrc(img);
-                                            if (!cSrc) return null;
-                                            return (
-                                              <button key={ci}
-                                                onClick={() => { updateListItem(list, it.id, { image: img }); setImgEditItemId(null); }}
-                                                title="用這張圖"
-                                                className={`w-12 h-12 rounded border-2 overflow-hidden bg-white transition ${src === cSrc ? 'border-amber-400' : 'border-slate-200 hover:border-amber-400'}`}>
-                                                <img src={cSrc} alt="" className="w-full h-full object-contain" />
-                                              </button>
-                                            );
-                                          })}
+                                          {getListItemImageCandidates(it).map((cImg, ci) => (
+                                            <button key={ci}
+                                              onClick={() => { updateListItem(list, it.id, { image: cImg }); setImgEditItemId(null); }}
+                                              title="用這張圖"
+                                              className="w-12 h-12 rounded border-2 overflow-hidden bg-white transition border-slate-200 hover:border-amber-400 flex items-center justify-center">
+                                              <SampleMediaThumb media={typeof cImg === 'string' ? { url: cImg } : cImg} className="w-full h-full object-contain" />
+                                            </button>
+                                          ))}
                                           <label className="w-12 h-12 flex flex-col items-center justify-center border border-dashed border-slate-300 rounded cursor-pointer hover:bg-white text-slate-400 text-center bg-white/50">
                                             <span className="text-base leading-none">+</span>
                                             <span className="text-[8px]">上傳</span>

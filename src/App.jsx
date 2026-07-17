@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.23.1';
-const BUILD_ID = '20260715-1800';
+const APP_VERSION = 'v1.23.2';
+const BUILD_ID = '20260715-1900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.23.2',
+    date: '2026-07-15',
+    changes: [
+      '🔒 客戶清單數量加上限規則：從樣品庫挑＝即時庫存數、從樣品申請挑＝申請數量（手動項目不設限）',
+      '挑選面板「＋」到達上限自動鎖住；庫存 0 的樣品無法加入；清單數量欄超過上限會自動修正並提示',
+    ],
+  },
   {
     version: 'v1.23.1',
     date: '2026-07-15',
@@ -7724,6 +7732,24 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     saveCustomerList({ ...list, items: arr });
   };
 
+  // 項目數量上限：樣品庫 → 即時庫存；樣品申請 → 申請數量；手動 → 不設限
+  const getListItemMaxQty = (it) => {
+    if (it.sourceType === 'sample') {
+      const s = samplesWithRemaining.find(x => x.id === it.refId);
+      return s ? s._remaining : null;
+    }
+    if (it.sourceType === 'request') {
+      if (it.projectId) {
+        const p = projects.find(x => String(x.id) === String(it.projectId));
+        const r = p && (p.sampleRequests || []).find(x => x.id === it.refId);
+        return r ? (r.quantity || 1) : null;
+      }
+      const m = manualRequests.find(x => (x._docId || x.id) === it.refId);
+      return m ? (m.quantity || 1) : null;
+    }
+    return null;
+  };
+
   // 換圖面板的候選圖片：來源樣品的圖 / 產品圖 / 申請附圖
   const getListItemImageCandidates = (item) => {
     const out = [];
@@ -9149,7 +9175,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   const refId = isSample ? x.id : (x._isManual ? (x._docId || x.id) : x.id);
                                   const addedItem = items.find(it => it.sourceType === (isSample ? 'sample' : 'request') && it.refId === refId);
                                   const stock = isSample ? x._remaining : null; // 即時庫存（樣品庫模式）
+                                  // 數量上限：樣品庫=庫存、樣品申請=申請數量
+                                  const maxQty = isSample ? x._remaining : (x.quantity || 1);
                                   const addNew = () => {
+                                    if (maxQty !== null && maxQty <= 0) { alert('這個樣品目前庫存為 0，無法加入'); return; }
                                     const item = {
                                       id: newItemId(),
                                       sourceType: isSample ? 'sample' : 'request',
@@ -9192,8 +9221,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                             className="w-5 h-5 flex items-center justify-center rounded-full border border-amber-300 bg-white text-amber-700 text-xs hover:bg-amber-100 leading-none">−</button>
                                           <span className="text-xs font-semibold text-amber-800 w-5 text-center tabular-nums">{addedItem.qty || 1}</span>
                                           <button
+                                            disabled={maxQty !== null && (addedItem.qty || 1) >= maxQty}
+                                            title={maxQty !== null ? `上限 ${maxQty}（${isSample ? '庫存' : '申請數量'}）` : ''}
                                             onClick={() => updateListItem(list, addedItem.id, { qty: (addedItem.qty || 1) + 1 })}
-                                            className="w-5 h-5 flex items-center justify-center rounded-full border border-amber-300 bg-white text-amber-700 text-xs hover:bg-amber-100 leading-none">＋</button>
+                                            className="w-5 h-5 flex items-center justify-center rounded-full border border-amber-300 bg-white text-amber-700 text-xs hover:bg-amber-100 leading-none disabled:opacity-30 disabled:cursor-not-allowed">＋</button>
                                         </div>
                                       )}
                                     </div>
@@ -9343,11 +9374,25 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                     </div>
                                     <div className="flex items-center gap-1 text-xs text-slate-400">
                                       <span>×</span>
-                                      {canEdit ? (
-                                        <input type="number" min="1" defaultValue={it.qty || 1}
-                                          onBlur={e => { const n = Number(e.target.value) || 1; if (n !== (it.qty || 1)) updateListItem(list, it.id, { qty: n }); }}
-                                          className="w-12 text-sm text-center border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400" />
-                                      ) : (
+                                      {canEdit ? (() => {
+                                        const maxQty = getListItemMaxQty(it);
+                                        return (
+                                          <div className="flex flex-col items-center">
+                                            <input type="number" min="1" max={maxQty ?? undefined} defaultValue={it.qty || 1}
+                                              onBlur={e => {
+                                                let n = Number(e.target.value) || 1;
+                                                if (maxQty !== null && n > maxQty) {
+                                                  n = Math.max(1, maxQty);
+                                                  e.target.value = n;
+                                                  alert(`最多只能帶 ${maxQty} 個（${it.sourceType === 'sample' ? '目前庫存' : '申請數量'}）`);
+                                                }
+                                                if (n !== (it.qty || 1)) updateListItem(list, it.id, { qty: n });
+                                              }}
+                                              className="w-12 text-sm text-center border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400" />
+                                            {maxQty !== null && <span className="text-[9px] text-slate-300">上限 {maxQty}</span>}
+                                          </div>
+                                        );
+                                      })() : (
                                         <span className="text-sm text-slate-600">{it.qty || 1}</span>
                                       )}
                                     </div>

@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.23.3';
-const BUILD_ID = '20260715-2000';
+const APP_VERSION = 'v1.23.4';
+const BUILD_ID = '20260715-2100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.23.4',
+    date: '2026-07-15',
+    changes: [
+      '🎨 客戶清單挑選面板改為左右滑動（兩排橫向捲動），跟樣品申請一致，不用一直上下捲',
+      '📝 清單項目備註改為可換行的多行輸入框，顯示與匯出都保留分行',
+      '🔧 圖片根因修正：只存 Storage 路徑（沒有網址）的圖片現在會主動抓下載網址——全系統受惠（樣品庫、領用紀錄、客戶清單）',
+    ],
+  },
   {
     version: 'v1.23.3',
     date: '2026-07-15',
@@ -5239,12 +5248,19 @@ function StorageImage({ src, path, alt, className, onClick, style }) {
   const [retryCount, setRetryCount] = useState(0);
   const [loadFailed, setLoadFailed] = useState(false);
 
-  // 當 src 變更時更新
+  // 當 src 變更時更新；只有 path（沒有 url）的圖片主動抓下載網址
   useEffect(() => {
     setCurrentSrc(src);
     setRetryCount(0);
     setLoadFailed(false);
-  }, [src]);
+    if (!src && path) {
+      let cancelled = false;
+      getStorageUrl(path)
+        .then(u => { if (!cancelled) { if (u) setCurrentSrc(u); else setLoadFailed(true); } })
+        .catch(() => { if (!cancelled) setLoadFailed(true); });
+      return () => { cancelled = true; };
+    }
+  }, [src, path]);
 
   const handleError = async () => {
     if (!path || retryCount >= 3) {
@@ -9178,7 +9194,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-amber-400" />
                                 <button onClick={() => setListPicker(null)} className="text-xs text-slate-400 hover:text-slate-700 underline">關閉</button>
                               </div>
-                              <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 max-h-56 overflow-y-auto pr-1">
+                              <div className="grid grid-rows-2 grid-flow-col auto-cols-max gap-1.5 overflow-x-auto pb-1.5">
                                 {(listPicker.mode === 'sample'
                                   ? samplesWithRemaining.filter(s => !listPickerSearch || [s._displayName, s._displayCode, s.sampleNo].some(v => (v || '').toLowerCase().includes(listPickerSearch.toLowerCase())))
                                   : allRequests.filter(r => !listPickerSearch || [r.productName, r.productCode].some(v => (v || '').toLowerCase().includes(listPickerSearch.toLowerCase())))
@@ -9208,7 +9224,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   return (
                                     <div key={refId}
                                       onClick={() => { if (!addedItem) addNew(); }}
-                                      className={`flex flex-col items-center p-1.5 rounded-lg border transition text-left ${addedItem ? 'border-amber-400 bg-amber-50' : 'bg-white border-slate-200 hover:border-amber-400 hover:bg-amber-50 cursor-pointer'}`}>
+                                      className={`flex flex-col items-center p-1.5 rounded-lg border transition text-left w-28 ${addedItem ? 'border-amber-400 bg-amber-50' : 'bg-white border-slate-200 hover:border-amber-400 hover:bg-amber-50 cursor-pointer'}`}>
                                       {img ? (
                                         <div className="w-12 h-12 rounded mb-1 bg-slate-50 overflow-hidden flex items-center justify-center">
                                           <SampleMediaThumb media={typeof img === 'string' ? { url: img } : img} className="w-full h-full object-contain" />
@@ -9385,11 +9401,12 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         </p>
                                       )}
                                       {canEdit ? (
-                                        <input defaultValue={it.note || ''} placeholder="備註（客人要黑色...）"
+                                        <textarea defaultValue={it.note || ''} placeholder="備註（客人要黑色...，可換行）"
+                                          rows={Math.max(1, (it.note || '').split('\n').length)}
                                           onBlur={e => { if (e.target.value !== (it.note || '')) updateListItem(list, it.id, { note: e.target.value }); }}
-                                          className="w-full mt-0.5 text-xs text-slate-500 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5" />
+                                          className="w-full mt-0.5 text-xs text-slate-500 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5 resize-y leading-snug" />
                                       ) : (
-                                        it.note && <p className="text-xs text-slate-400 mt-0.5">{it.note}</p>
+                                        it.note && <p className="text-xs text-slate-400 mt-0.5 whitespace-pre-line">{it.note}</p>
                                       )}
                                     </div>
                                     <div className="flex items-center gap-1 text-xs text-slate-400">

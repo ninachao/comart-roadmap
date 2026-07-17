@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.23.8';
-const BUILD_ID = '20260716-1000';
+const APP_VERSION = 'v1.24.0';
+const BUILD_ID = '20260716-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.24.0',
+    date: '2026-07-16',
+    changes: [
+      '🔗 客戶清單庫存跨清單連動：所有清單共享同一庫存池，A 清單排走的數量 B 清單不能再拿（樣品庫和樣品申請的項目都適用）',
+      '挑選格顯示「可用 n／庫存 m」（被其他清單排走時），可用 0 無法加入；清單裡的數量上限也同步扣除其他清單的預留',
+      '🖨 匯出 PDF / Excel 移除「狀態」欄',
+    ],
+  },
   {
     version: 'v1.23.8',
     date: '2026-07-16',
@@ -7224,7 +7233,6 @@ function exportCustomerListPDF(list, items) {
       <td class="c-name"><b>${it.name || '—'}</b>${it.code ? `<br/><span class="code">${it.code}</span>` : ''}</td>
       <td class="c-qty">${it.qty || 1}</td>
       <td class="c-note">${it.note || ''}</td>
-      <td class="c-status">${it.prepared ? '<span class="pill" style="background:#22c55e;">已準備</span>' : '<span class="pill" style="background:#94a3b8;">未備</span>'}</td>
     </tr>`;
   });
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${list.name || '客戶樣品清單'}</title>
@@ -7249,7 +7257,7 @@ function exportCustomerListPDF(list, items) {
   <h1>${list.name || '客戶樣品清單'}</h1>
   <p class="meta">${list.customer ? `客戶：${list.customer}　` : ''}${list.visitDate ? `日期：${list.visitDate}　` : ''}匯出：${today}　共 ${items.length} 項</p>
   <table>
-    <thead><tr><th class="c-img">圖片</th><th class="c-name">品名</th><th class="c-qty">數量</th><th>備註</th><th class="c-status">狀態</th></tr></thead>
+    <thead><tr><th class="c-img">圖片</th><th class="c-name">品名</th><th class="c-qty">數量</th><th>備註</th></tr></thead>
   <tbody>${rows}</tbody></table>
   <script>window.onload=()=>window.print();<\/script></body></html>`;
   const w = window.open('', '_blank');
@@ -7267,7 +7275,6 @@ async function exportCustomerListXLSX(list, items) {
     { header: '代碼', width: 16 },
     { header: '數量', width: 8 },
     { header: '備註', width: 36 },
-    { header: '狀態', width: 10 },
   ];
   const headerRow = ws.getRow(1);
   headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -7285,7 +7292,7 @@ async function exportCustomerListXLSX(list, items) {
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     const row = ws.getRow(i + 2);
-    row.values = ['', it.name || '', it.code || '', it.qty || 1, it.note || '', it.prepared ? '已準備' : '未備'];
+    row.values = ['', it.name || '', it.code || '', it.qty || 1, it.note || ''];
     row.height = 64;
     row.alignment = { vertical: 'middle', wrapText: true };
     const b64 = await toBase64(it._exportImg);
@@ -7786,20 +7793,39 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     saveCustomerList({ ...list, items: arr });
   };
 
-  // 項目數量上限：樣品庫 → 即時庫存；樣品申請 → 申請數量；手動 → 不設限
+  // 已被「所有客戶清單」排走的數量（可排除某個項目自己，避免自己算到自己）
+  const getReservedQty = (sourceType, refId, excludeItemId = null) => {
+    let sum = 0;
+    (customerLists || []).forEach(l => (l.items || []).forEach(x => {
+      if (x.sourceType === sourceType && x.refId === refId && x.id !== excludeItemId) {
+        sum += Number(x.qty) || 1;
+      }
+    }));
+    return sum;
+  };
+
+  // 項目數量上限（跨清單連動）：
+  //   樣品庫 → 即時庫存 − 其他清單已排走的量
+  //   樣品申請 → 申請數量 − 其他清單已排走的量
+  //   手動 → 不設限
   const getListItemMaxQty = (it) => {
     if (it.sourceType === 'sample') {
       const s = samplesWithRemaining.find(x => x.id === it.refId);
-      return s ? s._remaining : null;
+      if (!s) return null;
+      return Math.max(0, s._remaining - getReservedQty('sample', it.refId, it.id));
     }
     if (it.sourceType === 'request') {
+      let reqQty = null;
       if (it.projectId) {
         const p = projects.find(x => String(x.id) === String(it.projectId));
         const r = p && (p.sampleRequests || []).find(x => x.id === it.refId);
-        return r ? (r.quantity || 1) : null;
+        reqQty = r ? (r.quantity || 1) : null;
+      } else {
+        const m = manualRequests.find(x => (x._docId || x.id) === it.refId);
+        reqQty = m ? (m.quantity || 1) : null;
       }
-      const m = manualRequests.find(x => (x._docId || x.id) === it.refId);
-      return m ? (m.quantity || 1) : null;
+      if (reqQty === null) return null;
+      return Math.max(0, reqQty - getReservedQty('request', it.refId, it.id));
     }
     return null;
   };
@@ -9235,12 +9261,16 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   const name = isSample ? x._displayName : x.productName;
                                   const code = isSample ? (x.sampleNo || x._displayCode) : x.productCode;
                                   const refId = isSample ? x.id : (x._isManual ? (x._docId || x.id) : x.id);
-                                  const addedItem = items.find(it => it.sourceType === (isSample ? 'sample' : 'request') && it.refId === refId);
-                                  const stock = isSample ? x._remaining : null; // 即時庫存（樣品庫模式）
-                                  // 數量上限：樣品庫=庫存、樣品申請=申請數量
-                                  const maxQty = isSample ? x._remaining : (x.quantity || 1);
+                                  const srcType = isSample ? 'sample' : 'request';
+                                  const addedItem = items.find(it => it.sourceType === srcType && it.refId === refId);
+                                  // 總量：樣品庫=即時庫存、樣品申請=申請數量
+                                  const totalQty = isSample ? x._remaining : (x.quantity || 1);
+                                  // 可用量 = 總量 − 所有客戶清單已排走的量（不含此清單這一項自己）
+                                  const availQty = Math.max(0, totalQty - getReservedQty(srcType, refId, addedItem?.id || null));
+                                  const stock = isSample ? x._remaining : null;
+                                  const maxQty = availQty; // 此項目數量上限（已扣掉其他清單的預留）
                                   const addNew = () => {
-                                    if (maxQty !== null && maxQty <= 0) { alert('這個樣品目前庫存為 0，無法加入'); return; }
+                                    if (maxQty <= 0) { alert('這個樣品已經沒有可用數量了（庫存已被其他清單排走或為 0）'); return; }
                                     const item = {
                                       id: newItemId(),
                                       sourceType: isSample ? 'sample' : 'request',
@@ -9269,8 +9299,8 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         </p>
                                       )}
                                       {stock !== null && (
-                                        <p className={`text-[9px] font-medium ${stock === 0 ? 'text-rose-500' : stock < 3 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                                          庫存 {stock}
+                                        <p className={`text-[9px] font-medium ${availQty === 0 ? 'text-rose-500' : availQty < 3 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                          {availQty < stock ? `可用 ${availQty}／庫存 ${stock}` : `庫存 ${stock}`}
                                         </p>
                                       )}
                                       {/* 已加入：顯示 − 數量 ＋ 直接調整要帶幾個 */}

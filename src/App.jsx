@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.25.0';
-const BUILD_ID = '20260716-1200';
+const APP_VERSION = 'v1.25.1';
+const BUILD_ID = '20260716-1300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.25.1',
+    date: '2026-07-16',
+    changes: [
+      '🎨 客戶清單來源按鈕加狀態色：正在用的挑選面板（樣品庫/樣品申請/手動）按鈕變琥珀色，再點一次可關閉',
+      '「匯入全部樣品申請」改為低調的灰色樣式（少用的功能不再搶眼）',
+      '📝 從樣品申請挑選時，申請的備註會跟著帶入清單項目',
+      '🔧 沒有網址也沒路徑的壞圖改顯示佔位符，不再露出「圖片 1.png」文字',
+    ],
+  },
   {
     version: 'v1.25.0',
     date: '2026-07-16',
@@ -5301,6 +5311,7 @@ function StorageImage({ src, path, alt, className, onClick, style }) {
     setCurrentSrc(src);
     setRetryCount(0);
     setLoadFailed(false);
+    if (!src && !path) { setLoadFailed(true); return; } // 沒網址也沒路徑：直接顯示佔位符，不要露出 alt 文字
     if (!src && path) {
       let cancelled = false;
       getStorageUrl(path)
@@ -9249,18 +9260,34 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                           {/* 加項目按鈕列 */}
                           {canEdit && (
                             <div className="flex flex-wrap gap-1.5 mb-3">
-                              <button onClick={() => { setListPicker({ listId: list.id, mode: 'sample' }); setListPickerSearch(''); }}
-                                className="px-2.5 py-1 text-[11px] text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50 transition">📦 從樣品庫挑</button>
-                              <button onClick={() => { setListPicker({ listId: list.id, mode: 'request' }); setListPickerSearch(''); }}
-                                className="px-2.5 py-1 text-[11px] text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50 transition">📋 從樣品申請挑</button>
-                              <button onClick={() => { setListPicker({ listId: list.id, mode: 'manual' }); setManualItem({ name: '', code: '', qty: 1, note: '', owner: '', image: null }); }}
-                                className="px-2.5 py-1 text-[11px] text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50 transition">✏️ 手動新增</button>
+                              {[
+                                { mode: 'sample', label: '📦 從樣品庫挑' },
+                                { mode: 'request', label: '📋 從樣品申請挑' },
+                                { mode: 'manual', label: '✏️ 手動新增' },
+                              ].map(btn => {
+                                const active = listPicker && listPicker.listId === list.id && listPicker.mode === btn.mode;
+                                return (
+                                  <button key={btn.mode}
+                                    onClick={() => {
+                                      if (active) { setListPicker(null); return; }
+                                      setListPicker({ listId: list.id, mode: btn.mode });
+                                      if (btn.mode === 'manual') setManualItem({ name: '', code: '', qty: 1, note: '', owner: '', image: null });
+                                      else setListPickerSearch('');
+                                    }}
+                                    className="px-2.5 py-1 text-[11px] rounded-full border transition"
+                                    style={active
+                                      ? { background: '#f59e0b', color: '#fff', borderColor: '#f59e0b' }
+                                      : { background: '#fff', color: '#475569', borderColor: '#e2e8f0' }}>
+                                    {btn.label}
+                                  </button>
+                                );
+                              })}
                               <button onClick={() => {
                                 const fresh = buildItemsFromRequests(items);
                                 if (fresh.length === 0) { alert('所有樣品申請都已在清單裡了'); return; }
                                 saveCustomerList({ ...list, items: [...items, ...fresh] });
                               }}
-                                className="px-2.5 py-1 text-[11px] text-amber-700 border border-amber-200 bg-amber-50 rounded-full hover:bg-amber-100 transition">⬇ 匯入全部樣品申請</button>
+                                className="px-2.5 py-1 text-[11px] text-slate-500 border border-slate-200 rounded-full hover:bg-slate-50 transition">⬇ 匯入全部樣品申請</button>
                             </div>
                           )}
 
@@ -9301,7 +9328,8 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                       refId,
                                       projectId: isSample ? null : (x._project ? x._project.id : null),
                                       name: name || '', code: code || '',
-                                      qty: 1, note: '',
+                                      qty: 1,
+                                      note: isSample ? '' : (x.note || ''),
                                       owner: isSample ? '' : (x.owner || ''),
                                       prepared: false,
                                     };

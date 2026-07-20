@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.29.0';
-const BUILD_ID = '20260718-0900';
+const APP_VERSION = 'v1.29.1';
+const BUILD_ID = '20260718-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.29.1',
+    date: '2026-07-18',
+    changes: [
+      '🎨 建立組合品時，庫存 0 的樣品改為灰底且不可選（剩 0 標紅），一眼看出沒庫存',
+      '🚫 建立組合品時，已在該清單裡的樣品（散件或其他組合品成員）標「已在清單」且不可重複選',
+    ],
+  },
   {
     version: 'v1.29.0',
     date: '2026-07-18',
@@ -9883,6 +9891,15 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
           <CreateBundleModal
             exhibition={undefined}
             samples={samplesWithRemaining}
+            usedSampleIds={(() => {
+              const list = customerLists.find(l => l.id === bundleForListId);
+              const ids = new Set();
+              (list?.items || []).forEach(it => {
+                if (it.sourceType === 'sample' && it.refId) ids.add(it.refId);
+                if (it.sourceType === 'bundle') (it.members || []).forEach(m => m.refId && ids.add(m.refId));
+              });
+              return ids;
+            })()}
             onConfirm={(bundle) => {
               const list = customerLists.find(l => l.id === bundleForListId);
               if (!list) { setBundleForListId(null); return; }
@@ -10246,16 +10263,19 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
 }
 
 // === 建立組合品 Modal ===
-function CreateBundleModal({ exhibition, samples, onConfirm, onClose }) {
+function CreateBundleModal({ exhibition, samples, onConfirm, onClose, usedSampleIds }) {
   const [bundleName, setBundleName] = useState('');
   const [selected, setSelected] = useState(new Set());
   const [search, setSearch] = useState('');
 
-  const alreadyIn = new Set(
-    (exhibition?.items || [])
-      .filter(it => it.type !== 'bundle')
-      .map(it => it.sampleId)
-  );
+  // 已在清單/展覽裡的樣品（不重複顯示為可選）
+  const alreadyIn = usedSampleIds instanceof Set
+    ? usedSampleIds
+    : new Set(
+        (exhibition?.items || [])
+          .filter(it => it.type !== 'bundle')
+          .map(it => it.sampleId)
+      );
 
   const filtered = samples.filter(s => {
     if (!search) return true;
@@ -10312,13 +10332,22 @@ function CreateBundleModal({ exhibition, samples, onConfirm, onClose }) {
             {filtered.map(s => {
               const mainImage = (s.images || [])[0];
               const isSel = selected.has(s.id);
+              const noStock = (s._remaining || 0) <= 0;
+              const used = alreadyIn.has(s.id);
+              const disabled = noStock || used;
               return (
                 <div
                   key={s.id}
-                  onClick={() => toggle(s.id)}
-                  className={`flex gap-2 items-center p-2 rounded-lg border cursor-pointer transition ${isSel ? 'bg-purple-50 border-purple-300' : 'bg-white border-slate-200 hover:border-slate-300'}`}
+                  onClick={() => { if (!disabled) toggle(s.id); }}
+                  className={`flex gap-2 items-center p-2 rounded-lg border transition ${
+                    disabled
+                      ? 'bg-slate-100 border-slate-200 opacity-60 cursor-not-allowed'
+                      : isSel
+                        ? 'bg-purple-50 border-purple-300 cursor-pointer'
+                        : 'bg-white border-slate-200 hover:border-slate-300 cursor-pointer'
+                  }`}
                 >
-                  <input type="checkbox" checked={isSel} readOnly className="w-4 h-4 flex-shrink-0 accent-purple-600" />
+                  <input type="checkbox" checked={isSel} readOnly disabled={disabled} className="w-4 h-4 flex-shrink-0 accent-purple-600" />
                   <div className="flex-shrink-0 w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
                     <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                   </div>
@@ -10326,10 +10355,11 @@ function CreateBundleModal({ exhibition, samples, onConfirm, onClose }) {
                     <div className="flex items-baseline gap-1.5">
                       <span className="text-xs font-medium text-slate-900 truncate">{s._displayName || s.name}</span>
                       <span className={`text-[9px] px-1 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
+                      {used && <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700">已在清單</span>}
                     </div>
                     <div className="text-[10px] text-slate-500">
                       {s.location && <span>📍 {s.location} · </span>}
-                      剩 {s._remaining}
+                      <span className={noStock ? 'text-rose-500 font-medium' : ''}>剩 {s._remaining}</span>
                     </div>
                   </div>
                 </div>

@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.31.1';
-const BUILD_ID = '20260718-1500';
+const APP_VERSION = 'v1.32.0';
+const BUILD_ID = '20260718-1600';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.32.0',
+    date: '2026-07-18',
+    changes: [
+      '🔢 組合品每個成員可各自設數量：成員縮圖旁加「− 數量 ＋」（例：磁鐵頭 ×2、冷氣支架 ×1）',
+      '庫存預留與匯出都依「成員數量 × 套數」正確計算與列出',
+    ],
+  },
   {
     version: 'v1.31.1',
     date: '2026-07-18',
@@ -8143,6 +8151,15 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const removeListItem = (list, itemId) => {
     saveCustomerList({ ...list, items: (list.items || []).filter(it => it.id !== itemId) });
   };
+  // 更新組合品裡某個成員的欄位（例如各自的數量）
+  const updateBundleMember = (list, itemId, memberIdx, patch) => {
+    saveCustomerList({
+      ...list,
+      items: (list.items || []).map(it => it.id === itemId
+        ? { ...it, members: (it.members || []).map((m, i) => i === memberIdx ? { ...m, ...patch } : m) }
+        : it),
+    });
+  };
 
   // 清單項目的顯示圖片：手動項目用自己的圖；連結項目即時從樣品庫/申請/產品取
   const getListItemImage = (item) => {
@@ -9732,17 +9749,27 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                                 className="w-20 text-[11px] text-slate-600 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5" />
                                             ) : (it.owner && <span className="text-[11px] text-slate-500">{it.owner}</span>)}
                                           </div>
-                                          {/* 成員縮圖列 */}
+                                          {/* 成員縮圖列（每個成員可各自設數量） */}
                                           <div className="flex gap-1 flex-wrap mt-1">
                                             {(it.members || []).map((m, mi) => {
                                               const ms = samplesWithRemaining.find(x => x.id === m.refId);
                                               const mimg = ms ? (ms.images || [])[0] : null;
+                                              const mqty = Number(m.qty) || 1;
                                               return (
                                                 <div key={mi} className="flex items-center gap-1 bg-white border border-slate-200 rounded px-1 py-0.5" title={m.name}>
                                                   <div className="w-6 h-6 bg-slate-50 rounded overflow-hidden flex items-center justify-center flex-shrink-0">
                                                     <SampleMediaThumb media={mimg} className="w-full h-full object-contain" />
                                                   </div>
-                                                  <span className="text-[10px] text-slate-600 max-w-[7rem] truncate">{m.name}{(Number(m.qty) || 1) > 1 ? ` ×${m.qty}` : ''}</span>
+                                                  <span className="text-[10px] text-slate-600 max-w-[7rem] truncate">{m.name}</span>
+                                                  {canEdit ? (
+                                                    <span className="flex items-center gap-0.5 ml-0.5">
+                                                      <button onClick={() => updateBundleMember(list, it.id, mi, { qty: Math.max(1, mqty - 1) })}
+                                                        className="w-4 h-4 flex items-center justify-center rounded-full border border-slate-200 text-slate-500 text-[10px] leading-none hover:bg-slate-100">−</button>
+                                                      <span className="text-[10px] font-medium text-slate-700 w-3 text-center tabular-nums">{mqty}</span>
+                                                      <button onClick={() => updateBundleMember(list, it.id, mi, { qty: mqty + 1 })}
+                                                        className="w-4 h-4 flex items-center justify-center rounded-full border border-slate-200 text-slate-500 text-[10px] leading-none hover:bg-slate-100">＋</button>
+                                                    </span>
+                                                  ) : (mqty > 1 && <span className="text-[10px] text-slate-500 ml-0.5">×{mqty}</span>)}
                                                 </div>
                                               );
                                             })}

@@ -49,10 +49,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.30.0';
-const BUILD_ID = '20260718-1200';
+const APP_VERSION = 'v1.30.1';
+const BUILD_ID = '20260718-1300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.30.1',
+    date: '2026-07-18',
+    changes: [
+      '🔧 修正裁切框無法拖曳：預設框從「整張圖」改為「置中正方形」，自動去掉白邊又留出拖曳與縮放空間',
+    ],
+  },
   {
     version: 'v1.30.0',
     date: '2026-07-18',
@@ -5129,8 +5136,16 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
           const drawY = Math.round((size - drawH) / 2);
           drawParamsRef.current = { drawX, drawY, drawW, drawH, size };
           canvas.width = size; canvas.height = size;
-          // 裁剪框預設包住整張圖（全選）
-          const sq = { x: 0, y: 0, w: 100, h: 100 };
+          // 裁剪框預設 = 圖片內容區的置中正方形（自動去掉 letterbox 白邊，且留出拖曳空間）
+          const side = Math.min(drawW, drawH);
+          const sqX = drawX + (drawW - side) / 2;
+          const sqY = drawY + (drawH - side) / 2;
+          const sq = {
+            x: sqX / size * 100,
+            y: sqY / size * 100,
+            w: side / size * 100,
+            h: side / size * 100,
+          };
           setCrop(sq);
           cropRef.current = sq;
           draw();

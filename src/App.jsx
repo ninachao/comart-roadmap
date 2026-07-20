@@ -49,10 +49,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.29.1';
-const BUILD_ID = '20260718-1000';
+const APP_VERSION = 'v1.29.2';
+const BUILD_ID = '20260718-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.29.2',
+    date: '2026-07-18',
+    changes: [
+      '🖼 樣品庫列表縮圖改為填滿裁切（object-cover）：手機拍的長方形照片不再有兩側白邊；點開放大仍看完整原圖',
+    ],
+  },
   {
     version: 'v1.29.1',
     date: '2026-07-18',
@@ -7114,7 +7121,7 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
             onClick={() => { const imgs = s.images || []; if (imgs.length > 0) onViewGallery({ images: imgs, index: 0 }); }}
             title={`點擊放大（共 ${(s.images || []).length} 張）`}
           >
-            <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
+            <SampleMediaThumb media={mainImage} className="w-full h-full object-cover" />
             {(s.images || []).length > 1 && (
               <span className="absolute bottom-0 right-0 text-[9px] bg-slate-800/70 text-white px-0.5 rounded-tl">{(s.images || []).length}</span>
             )}

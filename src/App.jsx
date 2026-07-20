@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.28.0';
-const BUILD_ID = '20260717-1200';
+const APP_VERSION = 'v1.28.1';
+const BUILD_ID = '20260717-1300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.28.1',
+    date: '2026-07-17',
+    changes: [
+      '🔧 修正跨來源庫存不同步：從「樣品申請」挑進客戶清單的預留，現在會連動扣除對應樣品的庫存（透過轉入時記錄的來源 fromRequestId；舊資料用「轉入備註＋同名」比對）',
+      '「從樣品庫挑」與「從樣品申請挑」看到的可用量現在一致',
+    ],
+  },
   {
     version: 'v1.28.0',
     date: '2026-07-17',
@@ -6780,7 +6788,7 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly, custom
 
   // Filter 出此產品的樣品
   const relatedSamples = useMemo(() => {
-    const reservedMap = computeReservedMap(customerLists);
+    const reservedMap = computeReservedMap(customerLists, samples);
     return samples.filter(s => s.relatedProjectId === project.id)
       .map(s => {
         const { remaining, effectiveTotal, reserved } = computeRemaining(s, withdrawals, reservedMap.get(s.id) || 0);
@@ -7014,14 +7022,30 @@ const SAMPLE_TYPE_COLORS = {
 //   已歸還的領用 → 不影響剩餘（已回來了）
 //   在外未歸還的領用 → 影響剩餘（但總數不變）
 // 客戶清單預留量：sampleId → 已被所有清單排走的數量
-function computeReservedMap(customerLists) {
-  const m = new Map();
+function computeReservedMap(customerLists, samples = []) {
+  const bySample = new Map();      // sampleId -> 預留量（直接從樣品庫挑）
+  const byRequestId = new Map();   // 申請 refId -> 預留量
+  const byRequestName = new Map(); // 申請項目名稱 -> 預留量（fromRequestId 缺失時的備援）
   (customerLists || []).forEach(l => (l.items || []).forEach(it => {
+    const q = Number(it.qty) || 1;
     if (it.sourceType === 'sample' && it.refId) {
-      m.set(it.refId, (m.get(it.refId) || 0) + (Number(it.qty) || 1));
+      bySample.set(it.refId, (bySample.get(it.refId) || 0) + q);
+    } else if (it.sourceType === 'request' && it.refId) {
+      byRequestId.set(it.refId, (byRequestId.get(it.refId) || 0) + q);
+      if (it.name) byRequestName.set(it.name, (byRequestName.get(it.name) || 0) + q);
     }
   }));
-  return m;
+  // 「申請」的預留連動到已轉入樣品庫的對應樣品（優先用 fromRequestId，其次用轉入備註＋同名）
+  (samples || []).forEach(s => {
+    let add = 0;
+    if (s.fromRequestId && byRequestId.has(s.fromRequestId)) {
+      add = byRequestId.get(s.fromRequestId);
+    } else if ((s.notes || '').startsWith('由樣品申請轉入') && byRequestName.has(s.name)) {
+      add = byRequestName.get(s.name);
+    }
+    if (add > 0) bySample.set(s.id, (bySample.get(s.id) || 0) + add);
+  });
+  return bySample;
 }
 
 function computeRemaining(sample, withdrawalsList, reservedQty = 0) {
@@ -8047,7 +8071,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
 
   // 計算每個樣品的剩餘數量 + 連動關聯產品的即時名稱/料號
   const samplesWithRemaining = useMemo(() => {
-    const reservedMap = computeReservedMap(customerLists);
+    const reservedMap = computeReservedMap(customerLists, samples);
     return samples.map(s => {
       const relatedProj = s.relatedProjectId
         ? projects.find(p => String(p.id) === String(s.relatedProjectId))

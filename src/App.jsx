@@ -49,10 +49,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.32.0';
-const BUILD_ID = '20260718-1600';
+const APP_VERSION = 'v1.32.1';
+const BUILD_ID = '20260718-1700';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.32.1',
+    date: '2026-07-18',
+    changes: [
+      '🔒 組合品數量以實際庫存為上限：成員「＋」到達該樣品可用量會鎖住；外層套數也依成員庫存自動夾住（顯示上限）',
+    ],
+  },
   {
     version: 'v1.32.0',
     date: '2026-07-18',
@@ -9755,8 +9762,13 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                               const ms = samplesWithRemaining.find(x => x.id === m.refId);
                                               const mimg = ms ? (ms.images || [])[0] : null;
                                               const mqty = Number(m.qty) || 1;
+                                              const sets = Math.max(1, Number(it.qty) || 1);
+                                              // 此成員可設的最大量 = (目前占用 + 剩餘可用) ÷ 套數
+                                              // ms._remaining 已扣掉本成員目前的占用（mqty×sets），故加回再除
+                                              const maxMember = ms ? Math.max(1, Math.floor((mqty * sets + (ms._remaining || 0)) / sets)) : null;
+                                              const atMax = maxMember !== null && mqty >= maxMember;
                                               return (
-                                                <div key={mi} className="flex items-center gap-1 bg-white border border-slate-200 rounded px-1 py-0.5" title={m.name}>
+                                                <div key={mi} className="flex items-center gap-1 bg-white border border-slate-200 rounded px-1 py-0.5" title={ms ? `${m.name}（庫存可用 ${ms._remaining}）` : m.name}>
                                                   <div className="w-6 h-6 bg-slate-50 rounded overflow-hidden flex items-center justify-center flex-shrink-0">
                                                     <SampleMediaThumb media={mimg} className="w-full h-full object-contain" />
                                                   </div>
@@ -9766,8 +9778,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                                       <button onClick={() => updateBundleMember(list, it.id, mi, { qty: Math.max(1, mqty - 1) })}
                                                         className="w-4 h-4 flex items-center justify-center rounded-full border border-slate-200 text-slate-500 text-[10px] leading-none hover:bg-slate-100">−</button>
                                                       <span className="text-[10px] font-medium text-slate-700 w-3 text-center tabular-nums">{mqty}</span>
-                                                      <button onClick={() => updateBundleMember(list, it.id, mi, { qty: mqty + 1 })}
-                                                        className="w-4 h-4 flex items-center justify-center rounded-full border border-slate-200 text-slate-500 text-[10px] leading-none hover:bg-slate-100">＋</button>
+                                                      <button
+                                                        disabled={atMax}
+                                                        title={atMax ? `已達庫存上限（可用 ${ms ? ms._remaining : 0}）` : ''}
+                                                        onClick={() => { if (!atMax) updateBundleMember(list, it.id, mi, { qty: mqty + 1 }); }}
+                                                        className="w-4 h-4 flex items-center justify-center rounded-full border border-slate-200 text-slate-500 text-[10px] leading-none hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed">＋</button>
                                                     </span>
                                                   ) : (mqty > 1 && <span className="text-[10px] text-slate-500 ml-0.5">×{mqty}</span>)}
                                                 </div>
@@ -9781,15 +9796,37 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                               className="w-full mt-1 text-xs text-slate-500 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5 resize-none leading-snug" />
                                           ) : (it.note && <p className="text-xs text-slate-400 mt-0.5 whitespace-pre-line">{it.note}</p>)}
                                         </div>
-                                        <div className="flex items-center gap-1 text-xs text-slate-400">
-                                          <span>×</span>
-                                          {canEdit ? (
-                                            <input type="number" min="1" defaultValue={it.qty || 1}
-                                              onBlur={e => { const n = Number(e.target.value) || 1; if (n !== (it.qty || 1)) updateListItem(list, it.id, { qty: n }); }}
-                                              className="w-12 text-sm text-center border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400" />
-                                          ) : (<span className="text-sm text-slate-600">{it.qty || 1}</span>)}
-                                          <span className="text-[10px]">套</span>
-                                        </div>
+                                        {(() => {
+                                          const curSets = Math.max(1, Number(it.qty) || 1);
+                                          // 這組最多能開幾套 = 每個成員各自能撐的套數取最小
+                                          let maxSets = Infinity;
+                                          (it.members || []).forEach(m => {
+                                            const ms = samplesWithRemaining.find(x => x.id === m.refId);
+                                            if (!ms) return;
+                                            const perSet = Math.max(1, Number(m.qty) || 1);
+                                            const totalAvail = perSet * curSets + (ms._remaining || 0); // 加回本組目前占用
+                                            maxSets = Math.min(maxSets, Math.floor(totalAvail / perSet));
+                                          });
+                                          if (!isFinite(maxSets)) maxSets = null;
+                                          return (
+                                            <div className="flex flex-col items-center">
+                                              <div className="flex items-center gap-1 text-xs text-slate-400">
+                                                <span>×</span>
+                                                {canEdit ? (
+                                                  <input type="number" min="1" max={maxSets ?? undefined} defaultValue={it.qty || 1}
+                                                    onBlur={e => {
+                                                      let n = Number(e.target.value) || 1;
+                                                      if (maxSets !== null && n > maxSets) { n = Math.max(1, maxSets); e.target.value = n; alert(`最多只能 ${maxSets} 套（受成員庫存限制）`); }
+                                                      if (n !== (it.qty || 1)) updateListItem(list, it.id, { qty: n });
+                                                    }}
+                                                    className="w-12 text-sm text-center border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400" />
+                                                ) : (<span className="text-sm text-slate-600">{it.qty || 1}</span>)}
+                                                <span className="text-[10px]">套</span>
+                                              </div>
+                                              {canEdit && maxSets !== null && <span className="text-[9px] text-slate-300">上限 {maxSets}</span>}
+                                            </div>
+                                          );
+                                        })()}
                                         {canEdit && (
                                           <button onClick={() => removeListItem(list, it.id)}
                                             className="text-slate-300 hover:text-rose-500 transition p-1"><X className="w-3.5 h-3.5" /></button>

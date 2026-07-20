@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.27.1';
-const BUILD_ID = '20260717-1100';
+const APP_VERSION = 'v1.28.0';
+const BUILD_ID = '20260717-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.28.0',
+    date: '2026-07-17',
+    changes: [
+      '🔍 樣品編輯照片可點圖直接放大檢視（原本要 hover 找放大鈕）',
+      '⭐ 新增「設為主圖」：非主圖的照片 hover 點 ★ 即設為主圖，主圖以琥珀色外框 +「★ 主圖」標示；主圖會用在所有列表、卡片與匯出',
+    ],
+  },
   {
     version: 'v1.27.1',
     date: '2026-07-17',
@@ -10301,6 +10309,17 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
     setData(prev => ({ ...prev, images: prev.images.filter((_, idx) => idx !== i) }));
   };
 
+  // 設為主圖：把第 i 張移到最前面（列表/卡片各處都以 images[0] 為主圖）
+  const setAsMainImage = (i) => {
+    setData(prev => {
+      const imgs = [...(prev.images || [])];
+      if (i <= 0 || i >= imgs.length) return prev;
+      const [picked] = imgs.splice(i, 1);
+      imgs.unshift(picked);
+      return { ...prev, images: imgs };
+    });
+  };
+
   const submit = () => {
     if (!data.name.trim()) {
       alert('請輸入名稱');
@@ -10716,7 +10735,7 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
           {/* 圖片 */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs text-slate-600">照片</label>
+              <label className="block text-xs text-slate-600">照片 <span className="text-slate-400 font-normal">（點圖放大 · ★ 設為主圖）</span></label>
               <span className="text-[10px] text-slate-400">
                 {data.images?.length > 0 && sample.isNew ? '已帶入產品圖，可刪除或替換' : pasteHint ? '· Ctrl+V 貼上' : ''}
               </span>
@@ -10725,20 +10744,37 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
               <div className="grid grid-cols-4 gap-1.5 mb-1.5">
                 {data.images.map((img, i) => {
                   const isVid = img.isVideo || (img.type && img.type.startsWith('video/'));
+                  const isMain = i === 0;
                   return (
-                    <div key={i} className="relative aspect-square bg-slate-100 border border-slate-200 rounded overflow-hidden group">
-                      {isVid ? (
-                        <video src={img.url} className="w-full h-full object-contain" preload="metadata" muted playsInline onMouseEnter={e => e.target.play()} onMouseLeave={e => { e.target.pause(); e.target.currentTime = 0; }} />
-                      ) : (
-                        <StorageImage src={img.url || img.dataUrl} path={img.path} alt={img.name} className="w-full h-full" style={{ objectFit: 'contain' }} />
-                      )}
+                    <div key={i} className={`relative aspect-square bg-slate-100 border rounded overflow-hidden group ${isMain ? 'border-amber-400 ring-1 ring-amber-300' : 'border-slate-200'}`}>
+                      <div className="w-full h-full cursor-zoom-in" onClick={() => setViewingIdx(i)}>
+                        {isVid ? (
+                          <video src={img.url} className="w-full h-full object-contain" preload="metadata" muted playsInline onMouseEnter={e => e.target.play()} onMouseLeave={e => { e.target.pause(); e.target.currentTime = 0; }} />
+                        ) : (
+                          <StorageImage src={img.url || img.dataUrl} path={img.path} alt={img.name} className="w-full h-full" style={{ objectFit: 'contain' }} />
+                        )}
+                      </div>
                       {isVid && <div className="absolute bottom-1 left-1 text-[10px] bg-slate-900/70 text-white px-1 rounded">▶</div>}
+                      {/* 主圖標示 */}
+                      {isMain && (
+                        <div className="absolute top-1 left-1 text-[9px] bg-amber-500 text-white px-1.5 py-0.5 rounded-full font-medium pointer-events-none">★ 主圖</div>
+                      )}
                       {/* 操作按鈕 */}
-                      <div className="absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/30 transition flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100">
+                      <div className="absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/30 transition flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 pointer-events-none">
+                        {/* 設為主圖（非第一張才顯示） */}
+                        {!isMain && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setAsMainImage(i); }}
+                            className="p-1 bg-white/90 rounded text-amber-600 hover:bg-white pointer-events-auto"
+                            title="設為主圖"
+                          >
+                            <span className="text-[11px] leading-none">★</span>
+                          </button>
+                        )}
                         {/* 放大 */}
                         <button
-                          onClick={() => setViewingIdx(i)}
-                          className="p-1 bg-white/90 rounded text-slate-700 hover:bg-white"
+                          onClick={(e) => { e.stopPropagation(); setViewingIdx(i); }}
+                          className="p-1 bg-white/90 rounded text-slate-700 hover:bg-white pointer-events-auto"
                           title="放大"
                         >
                           <Search className="w-3 h-3" />
@@ -10746,8 +10782,8 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                         {/* 裁剪（只有圖片） */}
                         {!isVid && (
                           <button
-                            onClick={() => setCropTarget({ imgIndex: i, url: img.url })}
-                            className="p-1 bg-white/90 rounded text-slate-700 hover:bg-white"
+                            onClick={(e) => { e.stopPropagation(); setCropTarget({ imgIndex: i, url: img.url }); }}
+                            className="p-1 bg-white/90 rounded text-slate-700 hover:bg-white pointer-events-auto"
                             title="裁剪"
                           >
                             <span className="text-[10px] font-bold">✂</span>
@@ -10755,8 +10791,8 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                         )}
                         {/* 刪除 */}
                         <button
-                          onClick={() => removeImage(i)}
-                          className="p-1 bg-white/90 rounded text-rose-600 hover:bg-white"
+                          onClick={(e) => { e.stopPropagation(); removeImage(i); }}
+                          className="p-1 bg-white/90 rounded text-rose-600 hover:bg-white pointer-events-auto"
                           title="刪除"
                         >
                           <X className="w-3 h-3" />

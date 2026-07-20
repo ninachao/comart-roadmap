@@ -49,10 +49,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.30.1';
-const BUILD_ID = '20260718-1300';
+const APP_VERSION = 'v1.31.0';
+const BUILD_ID = '20260718-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.31.0',
+    date: '2026-07-18',
+    changes: [
+      '🔄 裁切視窗新增「向左轉／向右轉」按鈕：可 90 度旋轉照片（手機拍歪的可轉正），旋轉後裁切框與預覽同步更新',
+    ],
+  },
   {
     version: 'v1.30.1',
     date: '2026-07-18',
@@ -5028,7 +5035,9 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
 
   const canvasRef = useRef(null);
   const previewRef = useRef(null);
-  const imgRef = useRef(null);
+  const imgRef = useRef(null);      // 目前用於繪製的來源（可能是旋轉後的 canvas）
+  const origImgRef = useRef(null);  // 原始載入的圖片
+  const rotationRef = useRef(0);    // 目前旋轉角度
   const drawParamsRef = useRef({ drawX: 0, drawY: 0, drawW: 0, drawH: 0, size: 420 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragType, setDragType] = useState(null); // 'move' | 'nw'|'ne'|'sw'|'se'
@@ -5109,6 +5118,56 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
     if (sw > 0 && sh > 0) pctx.drawImage(clean, sx, sy, sw, sh, 0, 0, pv.width, pv.height);
   };
 
+  // 依來源（圖片或旋轉後的 canvas）重算 letterbox、重設裁剪框、重畫
+  const setupFromSource = (src) => {
+    imgRef.current = src;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const iw = src.naturalWidth || src.width;
+    const ih = src.naturalHeight || src.height;
+    const size = 420;
+    const scale = Math.min(size / iw, size / ih);
+    const drawW = Math.round(iw * scale);
+    const drawH = Math.round(ih * scale);
+    const drawX = Math.round((size - drawW) / 2);
+    const drawY = Math.round((size - drawH) / 2);
+    drawParamsRef.current = { drawX, drawY, drawW, drawH, size };
+    canvas.width = size; canvas.height = size;
+    const side = Math.min(drawW, drawH);
+    const sq = {
+      x: (drawX + (drawW - side) / 2) / size * 100,
+      y: (drawY + (drawH - side) / 2) / size * 100,
+      w: side / size * 100,
+      h: side / size * 100,
+    };
+    setCrop(sq);
+    cropRef.current = sq;
+    draw();
+  };
+
+  // 把原圖旋轉指定角度，產生一個 canvas 當作新的來源
+  const makeRotated = (img, deg) => {
+    const iw = img.naturalWidth || img.width;
+    const ih = img.naturalHeight || img.height;
+    const swap = deg % 180 !== 0;
+    const c = document.createElement('canvas');
+    c.width = swap ? ih : iw;
+    c.height = swap ? iw : ih;
+    const cx = c.getContext('2d');
+    cx.translate(c.width / 2, c.height / 2);
+    cx.rotate(deg * Math.PI / 180);
+    cx.drawImage(img, -iw / 2, -ih / 2);
+    return c;
+  };
+
+  const rotate = (dir) => {
+    if (!origImgRef.current) return;
+    const next = (((rotationRef.current + dir * 90) % 360) + 360) % 360;
+    rotationRef.current = next;
+    const src = next === 0 ? origImgRef.current : makeRotated(origImgRef.current, next);
+    setupFromSource(src);
+  };
+
   useEffect(() => {
     let blobUrl = null;
     const loadImage = async () => {
@@ -5124,31 +5183,9 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
         }
         const img = new window.Image();
         img.onload = () => {
-          imgRef.current = img;
-          const canvas = canvasRef.current;
-          if (!canvas) return;
-          // 畫布固定為正方形，圖片 letterbox 置中（不拉伸，不裁切）
-          const size = 420;
-          const scale = Math.min(size / img.naturalWidth, size / img.naturalHeight);
-          const drawW = Math.round(img.naturalWidth * scale);
-          const drawH = Math.round(img.naturalHeight * scale);
-          const drawX = Math.round((size - drawW) / 2);
-          const drawY = Math.round((size - drawH) / 2);
-          drawParamsRef.current = { drawX, drawY, drawW, drawH, size };
-          canvas.width = size; canvas.height = size;
-          // 裁剪框預設 = 圖片內容區的置中正方形（自動去掉 letterbox 白邊，且留出拖曳空間）
-          const side = Math.min(drawW, drawH);
-          const sqX = drawX + (drawW - side) / 2;
-          const sqY = drawY + (drawH - side) / 2;
-          const sq = {
-            x: sqX / size * 100,
-            y: sqY / size * 100,
-            w: side / size * 100,
-            h: side / size * 100,
-          };
-          setCrop(sq);
-          cropRef.current = sq;
-          draw();
+          origImgRef.current = img;
+          rotationRef.current = 0;
+          setupFromSource(img);
         };
         img.src = imgSrc;
       } catch (e) {
@@ -5297,6 +5334,10 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
           <button onClick={handleClose} className="p-1.5 hover:bg-slate-100 rounded"><X className="w-4 h-4 text-slate-500" /></button>
         </div>
         <p className="text-xs text-slate-400 mb-2">框框是正方形 · 拖曳移動位置 · 拖曳四個角縮放 · 讓產品完整在框內再儲存</p>
+        <div className="flex justify-center gap-2 mb-2">
+          <button onClick={() => rotate(-1)} className="text-xs px-3 py-1.5 border border-slate-200 rounded hover:bg-slate-50 inline-flex items-center gap-1">↺ 向左轉</button>
+          <button onClick={() => rotate(1)} className="text-xs px-3 py-1.5 border border-slate-200 rounded hover:bg-slate-50 inline-flex items-center gap-1">向右轉 ↻</button>
+        </div>
         <div className="flex justify-center items-start gap-4 mb-3 touch-none">
           <canvas
             ref={canvasRef}

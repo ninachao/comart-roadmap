@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.29.2';
-const BUILD_ID = '20260718-1100';
+const APP_VERSION = 'v1.30.0';
+const BUILD_ID = '20260718-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.30.0',
+    date: '2026-07-18',
+    changes: [
+      '🔧 修正樣品照片「裁切」對貼上/壓縮的圖（只有 dataUrl 沒有 url）無法載入的問題',
+      '👁 裁切視窗新增「裁切後預覽」小圖，拖曳調整時即時顯示儲存後的樣子',
+    ],
+  },
   {
     version: 'v1.29.2',
     date: '2026-07-18',
@@ -5012,6 +5020,7 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
   }, [file]);
 
   const canvasRef = useRef(null);
+  const previewRef = useRef(null);
   const imgRef = useRef(null);
   const drawParamsRef = useRef({ drawX: 0, drawY: 0, drawW: 0, drawH: 0, size: 420 });
   const [isDragging, setIsDragging] = useState(false);
@@ -5069,6 +5078,28 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
     handles.forEach(([hx, hy]) => {
       ctx.fillRect(hx - HANDLE / 2, hy - HANDLE / 2, HANDLE, HANDLE);
     });
+
+    drawPreview();
+  };
+
+  // 即時預覽：把裁剪框內的內容畫到小正方形，就是儲存後的樣子
+  const drawPreview = () => {
+    const pv = previewRef.current;
+    const img = imgRef.current;
+    if (!pv || !img) return;
+    const { drawX, drawY, drawW, drawH, size } = drawParamsRef.current;
+    const clean = document.createElement('canvas');
+    clean.width = size; clean.height = size;
+    const cc = clean.getContext('2d');
+    cc.fillStyle = '#ffffff';
+    cc.fillRect(0, 0, size, size);
+    cc.drawImage(img, drawX, drawY, drawW, drawH);
+    const { x, y, w, h } = cropRef.current;
+    const sx = x / 100 * size, sy = y / 100 * size, sw = w / 100 * size, sh = h / 100 * size;
+    const pctx = pv.getContext('2d');
+    pctx.fillStyle = '#ffffff';
+    pctx.fillRect(0, 0, pv.width, pv.height);
+    if (sw > 0 && sh > 0) pctx.drawImage(clean, sx, sy, sw, sh, 0, 0, pv.width, pv.height);
   };
 
   useEffect(() => {
@@ -5251,7 +5282,7 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
           <button onClick={handleClose} className="p-1.5 hover:bg-slate-100 rounded"><X className="w-4 h-4 text-slate-500" /></button>
         </div>
         <p className="text-xs text-slate-400 mb-2">框框是正方形 · 拖曳移動位置 · 拖曳四個角縮放 · 讓產品完整在框內再儲存</p>
-        <div className="flex justify-center mb-3 touch-none">
+        <div className="flex justify-center items-start gap-4 mb-3 touch-none">
           <canvas
             ref={canvasRef}
             className="max-w-full rounded cursor-crosshair select-none"
@@ -5264,6 +5295,12 @@ function ImageCropModal({ imageUrl, file, onSave, onConfirm, onClose, onCancel }
             onTouchMove={onMouseMove}
             onTouchEnd={onMouseUp}
           />
+          {/* 即時預覽（裁切後的樣子） */}
+          <div className="hidden sm:flex flex-col items-center gap-1 flex-shrink-0">
+            <span className="text-[10px] text-slate-400">裁切後預覽</span>
+            <canvas ref={previewRef} width={120} height={120}
+              className="rounded border border-slate-200 bg-white" style={{ width: 120, height: 120 }} />
+          </div>
         </div>
         <div className="flex justify-end gap-2">
           <button onClick={handleClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
@@ -10978,7 +11015,7 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                         {/* 裁剪（只有圖片） */}
                         {!isVid && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); setCropTarget({ imgIndex: i, url: img.url }); }}
+                            onClick={(e) => { e.stopPropagation(); setCropTarget({ imgIndex: i, url: img.url || img.dataUrl }); }}
                             className="p-1 bg-white/90 rounded text-slate-700 hover:bg-white pointer-events-auto"
                             title="裁剪"
                           >

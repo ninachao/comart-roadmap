@@ -49,10 +49,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.32.1';
-const BUILD_ID = '20260718-1700';
+const APP_VERSION = 'v1.32.2';
+const BUILD_ID = '20260718-1800';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.32.2',
+    date: '2026-07-18',
+    changes: [
+      '🎨 「從樣品庫挑 / 從樣品申請挑」面板：無可用量（庫存 0 或已被排走）的項目反灰且不可選',
+    ],
+  },
   {
     version: 'v1.32.1',
     date: '2026-07-18',
@@ -9604,10 +9611,17 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                     };
                                     saveCustomerList({ ...list, items: [...items, item] });
                                   };
+                                  const soldOut = !addedItem && maxQty <= 0; // 沒在清單裡且無可用量 → 反灰不可選
                                   return (
                                     <div key={refId}
-                                      onClick={() => { if (!addedItem) addNew(); }}
-                                      className={`flex flex-col items-center p-1.5 rounded-lg border transition text-left ${addedItem ? 'border-amber-400 bg-amber-50' : 'bg-white border-slate-200 hover:border-amber-400 hover:bg-amber-50 cursor-pointer'}`}>
+                                      onClick={() => { if (!addedItem && !soldOut) addNew(); }}
+                                      className={`flex flex-col items-center p-1.5 rounded-lg border transition text-left ${
+                                        soldOut
+                                          ? 'bg-slate-100 border-slate-200 opacity-60 cursor-not-allowed'
+                                          : addedItem
+                                            ? 'border-amber-400 bg-amber-50'
+                                            : 'bg-white border-slate-200 hover:border-amber-400 hover:bg-amber-50 cursor-pointer'
+                                      }`}>
                                       {img ? (
                                         <div className="w-12 h-12 rounded mb-1 bg-slate-50 overflow-hidden flex items-center justify-center">
                                           <SampleMediaThumb media={typeof img === 'string' ? { url: img } : img} className="w-full h-full object-contain" />

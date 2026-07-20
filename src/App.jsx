@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.31.0';
-const BUILD_ID = '20260718-1400';
+const APP_VERSION = 'v1.31.1';
+const BUILD_ID = '20260718-1500';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.31.1',
+    date: '2026-07-18',
+    changes: [
+      '🔧 修正客戶清單圖片不同步：從「樣品申請」挑的項目若已轉入樣品庫，改樣品主圖後清單縮圖會即時跟著更新',
+      '🗑 移除客戶清單「⬇ 匯入全部樣品申請」按鈕與新增清單時的「匯入目前所有樣品申請」勾選（用不到）',
+    ],
+  },
   {
     version: 'v1.31.0',
     date: '2026-07-18',
@@ -8114,7 +8122,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const createCustomerList = async () => {
     if (!newList.name.trim()) return;
     const id = 'cl_' + Date.now();
-    const items = newList.importRequests ? buildItemsFromRequests([]) : [];
+    const items = [];
     await saveCustomerList({
       id,
       name: newList.name.trim(),
@@ -8144,6 +8152,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       return s ? ((s.images || [])[0] || null) : null;
     }
     if (item.sourceType === 'request') {
+      // 若該申請已轉入樣品庫，優先用樣品的即時主圖（改樣品主圖這裡就會跟著變）
+      const linkedSample = samples.find(s => s.fromRequestId === item.refId)
+        || samples.find(s => (s.notes || '').startsWith('由樣品申請轉入') && s.name === item.name);
+      if (linkedSample && (linkedSample.images || [])[0]) return linkedSample.images[0];
       if (item.projectId) {
         const p = projects.find(x => String(x.id) === String(item.projectId));
         if (!p) return null;
@@ -9395,11 +9407,6 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                     <input type="date" value={newList.visitDate} onChange={e => setNewList(v => ({ ...v, visitDate: e.target.value }))}
                       className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white" />
                   </div>
-                  <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
-                    <input type="checkbox" checked={newList.importRequests}
-                      onChange={e => setNewList(v => ({ ...v, importRequests: e.target.checked }))} />
-                    建立時匯入目前所有樣品申請（{allRequests.length} 筆）
-                  </label>
                 </div>
                 <div className="flex gap-2 mt-3 justify-end">
                   <button onClick={() => setShowNewListForm(false)} className="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 rounded">取消</button>
@@ -9525,12 +9532,6 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                               <button onClick={() => { setBundleForListId(list.id); setListPicker(null); }}
                                 className="px-2.5 py-1 text-[11px] rounded-full border transition"
                                 style={{ background: '#fff', color: '#7c3aed', borderColor: '#ddd6fe' }}>🧩 組合品</button>
-                              <button onClick={() => {
-                                const fresh = buildItemsFromRequests(items);
-                                if (fresh.length === 0) { alert('所有樣品申請都已在清單裡了'); return; }
-                                saveCustomerList({ ...list, items: [...items, ...fresh] });
-                              }}
-                                className="px-2.5 py-1 text-[11px] text-slate-500 border border-slate-200 rounded-full hover:bg-slate-50 transition">⬇ 匯入全部樣品申請</button>
                             </div>
                           )}
 

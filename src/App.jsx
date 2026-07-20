@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.28.1';
-const BUILD_ID = '20260717-1300';
+const APP_VERSION = 'v1.29.0';
+const BUILD_ID = '20260718-0900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.29.0',
+    date: '2026-07-18',
+    changes: [
+      '🧩 客戶清單新增「組合品」功能（跟展覽一樣）：把多個樣品組成一個命名套組，顯示成員縮圖列',
+      '組合品可設份數（×N 套），會依「成員量 × 份數」正確預留每個樣品的庫存',
+      '組合品支援拖曳排序、主責、備註、已準備；匯出 PDF / Excel 會列出組合品與其成員',
+    ],
+  },
   {
     version: 'v1.28.1',
     date: '2026-07-17',
@@ -7033,6 +7042,11 @@ function computeReservedMap(customerLists, samples = []) {
     } else if (it.sourceType === 'request' && it.refId) {
       byRequestId.set(it.refId, (byRequestId.get(it.refId) || 0) + q);
       if (it.name) byRequestName.set(it.name, (byRequestName.get(it.name) || 0) + q);
+    } else if (it.sourceType === 'bundle') {
+      // 組合品：每個成員（樣品）依 成員量 × 組合品份數 預留
+      (it.members || []).forEach(m => {
+        if (m.refId) bySample.set(m.refId, (bySample.get(m.refId) || 0) + (Number(m.qty) || 1) * q);
+      });
     }
   }));
   // 「申請」的預留連動到已轉入樣品庫的對應樣品（優先用 fromRequestId，其次用轉入備註＋同名）
@@ -7883,6 +7897,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [manualItem, setManualItem] = useState({ name: '', code: '', qty: 1, note: '', owner: '', image: null });
   const [dragItemId, setDragItemId] = useState(null);     // 拖曳排序中的項目
   const [imgEditItemId, setImgEditItemId] = useState(null); // 換圖面板開啟的項目
+  const [bundleForListId, setBundleForListId] = useState(null); // 正在建組合品的清單 id
 
   // 拖曳排序：把 dragId 移到 targetId 的位置
   const moveListItem = (list, dragId, targetId) => {
@@ -9303,6 +9318,29 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                   const isOpen = openListId === list.id;
                   const preparedCount = items.filter(i => i.prepared).length;
                   const exportItems = () => Promise.all(items.map(async it => {
+                    // 組合品：品名用組合品名稱、備註列出成員、圖用第一個成員的圖
+                    if (it.sourceType === 'bundle') {
+                      const memberLines = (it.members || []).map(m => `· ${m.name}${(Number(m.qty) || 1) > 1 ? ` ×${m.qty}` : ''}`).join('\n');
+                      let img = null;
+                      const first = (it.members || []).find(m => {
+                        const s = samplesWithRemaining.find(x => x.id === m.refId);
+                        return s && (s.images || [])[0];
+                      });
+                      if (first) {
+                        const s = samplesWithRemaining.find(x => x.id === first.refId);
+                        img = (s.images || [])[0];
+                        if (img && typeof img === 'object' && !img.dataUrl && img.path) {
+                          try { const u = await getStorageUrl(img.path); if (u) img = { ...img, url: u }; } catch {}
+                        }
+                      }
+                      return {
+                        ...it,
+                        name: `🧩 ${it.name || '組合品'}`,
+                        code: '',
+                        _exportImg: img,
+                        note: [`【組合品，共 ${(it.members || []).length} 件】`, memberLines, it.note].filter(Boolean).join('\n'),
+                      };
+                    }
                     const ls = it.sourceType === 'sample' ? samplesWithRemaining.find(x => x.id === it.refId) : null;
                     const sampleInfo = ls ? [ls.material, ls.notes].filter(Boolean).join('｜') : '';
                     let img = getListItemImage(it);
@@ -9376,6 +9414,9 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   </button>
                                 );
                               })}
+                              <button onClick={() => { setBundleForListId(list.id); setListPicker(null); }}
+                                className="px-2.5 py-1 text-[11px] rounded-full border transition"
+                                style={{ background: '#fff', color: '#7c3aed', borderColor: '#ddd6fe' }}>🧩 組合品</button>
                               <button onClick={() => {
                                 const fresh = buildItemsFromRequests(items);
                                 if (fresh.length === 0) { alert('所有樣品申請都已在清單裡了'); return; }
@@ -9547,6 +9588,80 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                           ) : (
                             <div className="space-y-1.5">
                               {items.map(it => {
+                                // === 組合品 ===
+                                if (it.sourceType === 'bundle') {
+                                  return (
+                                    <div key={it.id}
+                                      onDragOver={e => { if (dragItemId) e.preventDefault(); }}
+                                      onDrop={() => { moveListItem(list, dragItemId, it.id); setDragItemId(null); }}
+                                      className={`rounded-lg border transition ${dragItemId === it.id ? 'opacity-40' : ''} ${it.prepared ? 'border-emerald-300 bg-emerald-50/40' : 'border-violet-200 bg-violet-50/30'}`}>
+                                      <div className="flex items-center gap-2.5 p-2">
+                                        {canEdit && (
+                                          <span draggable onDragStart={() => setDragItemId(it.id)} onDragEnd={() => setDragItemId(null)}
+                                            title="拖曳調整順序"
+                                            className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 select-none leading-none text-sm px-0.5">⋮⋮</span>
+                                        )}
+                                        {canEdit && (
+                                          <input type="checkbox" checked={!!it.prepared} title="已準備"
+                                            onChange={e => updateListItem(list, it.id, { prepared: e.target.checked })} />
+                                        )}
+                                        <span className="text-lg flex-shrink-0">🧩</span>
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-medium">組合品</span>
+                                            {canEdit ? (
+                                              <input defaultValue={it.name || ''} placeholder="組合品名稱"
+                                                onBlur={e => { if (e.target.value !== (it.name || '')) updateListItem(list, it.id, { name: e.target.value }); }}
+                                                className="text-sm font-medium text-slate-800 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5" />
+                                            ) : (
+                                              <span className="text-sm font-medium text-slate-800">{it.name}</span>
+                                            )}
+                                            <span className="text-[10px] text-slate-400 ml-1">主責</span>
+                                            {canEdit ? (
+                                              <input defaultValue={it.owner || ''} placeholder="—"
+                                                onBlur={e => { if (e.target.value !== (it.owner || '')) updateListItem(list, it.id, { owner: e.target.value }); }}
+                                                className="w-20 text-[11px] text-slate-600 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5" />
+                                            ) : (it.owner && <span className="text-[11px] text-slate-500">{it.owner}</span>)}
+                                          </div>
+                                          {/* 成員縮圖列 */}
+                                          <div className="flex gap-1 flex-wrap mt-1">
+                                            {(it.members || []).map((m, mi) => {
+                                              const ms = samplesWithRemaining.find(x => x.id === m.refId);
+                                              const mimg = ms ? (ms.images || [])[0] : null;
+                                              return (
+                                                <div key={mi} className="flex items-center gap-1 bg-white border border-slate-200 rounded px-1 py-0.5" title={m.name}>
+                                                  <div className="w-6 h-6 bg-slate-50 rounded overflow-hidden flex items-center justify-center flex-shrink-0">
+                                                    <SampleMediaThumb media={mimg} className="w-full h-full object-contain" />
+                                                  </div>
+                                                  <span className="text-[10px] text-slate-600 max-w-[7rem] truncate">{m.name}{(Number(m.qty) || 1) > 1 ? ` ×${m.qty}` : ''}</span>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                          {canEdit ? (
+                                            <textarea defaultValue={it.note || ''} placeholder="備註（可換行）"
+                                              rows={Math.max(1, (it.note || '').split('\n').length)}
+                                              onBlur={e => { if (e.target.value !== (it.note || '')) updateListItem(list, it.id, { note: e.target.value }); }}
+                                              className="w-full mt-1 text-xs text-slate-500 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5 resize-none leading-snug" />
+                                          ) : (it.note && <p className="text-xs text-slate-400 mt-0.5 whitespace-pre-line">{it.note}</p>)}
+                                        </div>
+                                        <div className="flex items-center gap-1 text-xs text-slate-400">
+                                          <span>×</span>
+                                          {canEdit ? (
+                                            <input type="number" min="1" defaultValue={it.qty || 1}
+                                              onBlur={e => { const n = Number(e.target.value) || 1; if (n !== (it.qty || 1)) updateListItem(list, it.id, { qty: n }); }}
+                                              className="w-12 text-sm text-center border border-slate-200 rounded px-1 py-0.5 focus:outline-none focus:border-slate-400" />
+                                          ) : (<span className="text-sm text-slate-600">{it.qty || 1}</span>)}
+                                          <span className="text-[10px]">套</span>
+                                        </div>
+                                        {canEdit && (
+                                          <button onClick={() => removeListItem(list, it.id)}
+                                            className="text-slate-300 hover:text-rose-500 transition p-1"><X className="w-3.5 h-3.5" /></button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                }
                                 const img = getListItemImage(it);
                                 const src = reqImgSrc(img);
                                 const reqStatus = getListItemStatus(it);
@@ -9760,6 +9875,26 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             samples={samplesWithRemaining}
             onConfirm={(bundle) => handleAddBundleToExhibition(addingBundleToExId, bundle)}
             onClose={() => setAddingBundleToExId(null)}
+          />
+        )}
+
+        {/* 客戶清單：建立組合品 */}
+        {bundleForListId && (
+          <CreateBundleModal
+            exhibition={undefined}
+            samples={samplesWithRemaining}
+            onConfirm={(bundle) => {
+              const list = customerLists.find(l => l.id === bundleForListId);
+              if (!list) { setBundleForListId(null); return; }
+              const members = bundle.sampleIds.map(sid => {
+                const s = samples.find(x => x.id === sid);
+                return { refId: sid, name: s ? (s.name || '') : '', code: s ? (s.sampleNo || '') : '', qty: 1 };
+              });
+              const item = { id: newItemId(), sourceType: 'bundle', name: bundle.name, qty: 1, note: '', owner: '', prepared: false, members };
+              saveCustomerList({ ...list, items: [...(list.items || []), item] });
+              setBundleForListId(null);
+            }}
+            onClose={() => setBundleForListId(null)}
           />
         )}
 

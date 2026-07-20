@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.27.0';
-const BUILD_ID = '20260717-1000';
+const APP_VERSION = 'v1.27.1';
+const BUILD_ID = '20260717-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.27.1',
+    date: '2026-07-17',
+    changes: [
+      '🕐 樣品庫新增「最近新增」排序按鈕：點了就按建立時間新→舊排列，再點恢復預設（同名聚合）排序',
+      '🆕 7 天內新增的樣品名稱旁自動顯示紅色「新」徽章',
+    ],
+  },
   {
     version: 'v1.27.0',
     date: '2026-07-17',
@@ -7083,7 +7091,12 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
               style={{gridTemplateColumns:'44px minmax(140px,1fr) 58px 72px minmax(100px,1fr) 60px 112px'}}>
               {thumbEl}
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-slate-900 truncate">{s._displayName || s.name}</p>
+                <p className="text-sm font-semibold text-slate-900 truncate">
+                  {s._displayName || s.name}
+                  {Date.now() - (s.createdAt || 0) < 7 * 86400000 && (
+                    <span className="ml-1.5 text-[9px] px-1.5 py-0.5 bg-rose-500 text-white rounded-full font-medium align-middle">新</span>
+                  )}
+                </p>
                 <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                   {s.sampleNo && <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1 rounded">{s.sampleNo}</span>}
                   {s.sampleNo && s._displayCode && !compact && <span className="text-[10px] text-slate-300">·</span>}
@@ -8001,6 +8014,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   };
   const [typeFilter, setTypeFilter] = useState('全部');
   const [groupByProduct, setGroupByProduct] = useState(false); // 依產品分組
+  const [sortRecent, setSortRecent] = useState(false); // 最近新增排序
   const [locationFilter, setLocationFilter] = useState('全部');
   const [searchTerm, setSearchTerm] = useState('');
   const [withdrawalSearch, setWithdrawalSearch] = useState('');
@@ -8053,12 +8067,14 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       ].some(v => (v || '').toLowerCase().includes(searchTerm.toLowerCase()));
       return matchType && matchLocation && matchSearch;
     }).sort((a, b) => {
-      // 相同產品排在一起（先按名稱聚合，同名之間新的在前）
+      // 「最近新增」模式：純粹按建立時間新→舊
+      if (sortRecent) return (b.createdAt || 0) - (a.createdAt || 0);
+      // 預設：相同產品排在一起（先按名稱聚合，同名之間新的在前）
       const nameCmp = (a._displayName || a.name || '').localeCompare(b._displayName || b.name || '', 'zh-Hant');
       if (nameCmp !== 0) return nameCmp;
       return (b.createdAt || 0) - (a.createdAt || 0);
     });
-  }, [samplesWithRemaining, typeFilter, locationFilter, searchTerm]);
+  }, [samplesWithRemaining, typeFilter, locationFilter, searchTerm, sortRecent]);
 
   const handleSaveSample = async (sample) => {
     const sampleId = sample.id || `s${Date.now()}`;
@@ -8289,6 +8305,14 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                 <option value="全部">全部位置</option>
                 {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
               </select>
+              {/* 最近新增排序 */}
+              <button
+                onClick={() => setSortRecent(v => !v)}
+                className={`text-xs px-3 py-1.5 rounded border transition ${sortRecent ? 'bg-amber-50 text-amber-700 border-amber-300' : 'text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                title="按新增時間排序，最新的在最上面"
+              >
+                🕐 最近新增
+              </button>
               {/* 依產品分組切換 */}
               <button
                 onClick={() => setGroupByProduct(p => !p)}

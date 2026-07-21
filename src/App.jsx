@@ -49,10 +49,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.32.2';
-const BUILD_ID = '20260718-1800';
+const APP_VERSION = 'v1.33.0';
+const BUILD_ID = '20260718-1900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.33.0',
+    date: '2026-07-18',
+    changes: [
+      '🖼 組合品可放封面圖：左側新增圖框，可上傳/貼上自訂封面（沒放就自動用第一個成員的圖）；匯出 PDF/Excel 優先用此封面',
+    ],
+  },
   {
     version: 'v1.32.2',
     date: '2026-07-18',
@@ -9467,17 +9474,19 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                     // 組合品：品名用組合品名稱、備註列出成員、圖用第一個成員的圖
                     if (it.sourceType === 'bundle') {
                       const memberLines = (it.members || []).map(m => `· ${m.name}${(Number(m.qty) || 1) > 1 ? ` ×${m.qty}` : ''}`).join('\n');
-                      let img = null;
-                      const first = (it.members || []).find(m => {
-                        const s = samplesWithRemaining.find(x => x.id === m.refId);
-                        return s && (s.images || [])[0];
-                      });
-                      if (first) {
-                        const s = samplesWithRemaining.find(x => x.id === first.refId);
-                        img = (s.images || [])[0];
-                        if (img && typeof img === 'object' && !img.dataUrl && img.path) {
-                          try { const u = await getStorageUrl(img.path); if (u) img = { ...img, url: u }; } catch {}
+                      let img = it.image || null; // 優先用組合品自訂封面圖
+                      if (!img) {
+                        const first = (it.members || []).find(m => {
+                          const s = samplesWithRemaining.find(x => x.id === m.refId);
+                          return s && (s.images || [])[0];
+                        });
+                        if (first) {
+                          const s = samplesWithRemaining.find(x => x.id === first.refId);
+                          img = (s.images || [])[0];
                         }
+                      }
+                      if (img && typeof img === 'object' && !img.dataUrl && img.path) {
+                        try { const u = await getStorageUrl(img.path); if (u) img = { ...img, url: u }; } catch {}
                       }
                       return {
                         ...it,
@@ -9752,7 +9761,44 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                           <input type="checkbox" checked={!!it.prepared} title="已準備"
                                             onChange={e => updateListItem(list, it.id, { prepared: e.target.checked })} />
                                         )}
-                                        <span className="text-lg flex-shrink-0">🧩</span>
+                                        {/* 組合品封面圖（可上傳/貼上，沒放就用第一個成員的圖） */}
+                                        {(() => {
+                                          let coverImg = it.image;
+                                          if (!coverImg) {
+                                            const fm = (it.members || []).find(m => { const s = samplesWithRemaining.find(x => x.id === m.refId); return s && (s.images || [])[0]; });
+                                            if (fm) { const s = samplesWithRemaining.find(x => x.id === fm.refId); coverImg = (s.images || [])[0]; }
+                                          }
+                                          const cSrc = reqImgSrc(coverImg);
+                                          return (
+                                            <div className="flex-shrink-0 flex flex-col items-center gap-0.5">
+                                              <div className="w-12 h-12 rounded border border-violet-200 bg-white overflow-hidden flex items-center justify-center">
+                                                {cSrc ? <SampleMediaThumb media={typeof coverImg === 'string' ? { url: coverImg } : coverImg} className="w-full h-full object-cover" />
+                                                  : <span className="text-lg text-violet-300">🧩</span>}
+                                              </div>
+                                              {canEdit && (
+                                                <div className="flex gap-0.5">
+                                                  <label className="text-[9px] text-slate-400 border border-dashed border-slate-200 rounded px-1 cursor-pointer hover:bg-slate-50" title="上傳封面圖">
+                                                    +圖
+                                                    <input type="file" accept="image/*" className="hidden" onChange={async e => {
+                                                      if (e.target.files[0]) { const dataUrl = await reqImageToDataUrl(e.target.files[0]); updateListItem(list, it.id, { image: { dataUrl } }); e.target.value = ''; }
+                                                    }} />
+                                                  </label>
+                                                  <button className="text-[9px] text-slate-400 border border-dashed border-slate-200 rounded px-1 hover:bg-slate-50" title="貼上封面圖"
+                                                    onClick={async () => {
+                                                      try {
+                                                        const clip = await navigator.clipboard.read();
+                                                        for (const ci of clip) { const t = ci.types.find(x => x.startsWith('image/')); if (t) { const blob = await ci.getType(t); const dataUrl = await reqImageToDataUrl(new File([blob], 'p.png', { type: blob.type })); updateListItem(list, it.id, { image: { dataUrl } }); break; } }
+                                                      } catch { alert('請先複製一張圖片'); }
+                                                    }}>📋</button>
+                                                  {it.image && (
+                                                    <button className="text-[9px] text-slate-400 hover:text-rose-500" title="還原（改用成員圖）"
+                                                      onClick={() => updateListItem(list, it.id, { image: null })}>×</button>
+                                                  )}
+                                                </div>
+                                              )}
+                                            </div>
+                                          );
+                                        })()}
                                         <div className="flex-1 min-w-0">
                                           <div className="flex items-center gap-1.5 flex-wrap">
                                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-medium">組合品</span>

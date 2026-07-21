@@ -49,10 +49,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.33.0';
-const BUILD_ID = '20260718-1900';
+const APP_VERSION = 'v1.33.1';
+const BUILD_ID = '20260718-2000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.33.1',
+    date: '2026-07-18',
+    changes: [
+      '📋 新增/編輯樣品的照片區加「貼上圖片」按鈕；Ctrl+V 也改為視窗開啟時直接可貼（不用先把滑鼠移到照片區）',
+    ],
+  },
   {
     version: 'v1.33.0',
     date: '2026-07-18',
@@ -10700,7 +10707,7 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
 
   useEffect(() => {
     const handlePaste = (e) => {
-      if (!pasteHint) return;
+      // 樣品編輯視窗開著時，直接 Ctrl+V 就能貼圖（不需先把滑鼠移到照片區）
       const items = e.clipboardData?.items;
       if (!items) return;
       const files = [];
@@ -10717,7 +10724,7 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
     };
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, [pasteHint]);
+  }, []);
 
   const removeImage = (i) => {
     setData(prev => ({ ...prev, images: prev.images.filter((_, idx) => idx !== i) }));
@@ -11231,6 +11238,27 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                 className="text-xs px-2 py-1 text-emerald-700 bg-emerald-50 border border-emerald-200 rounded hover:bg-emerald-100 inline-flex items-center gap-1"
               >
                 <Upload className="w-3 h-3" />選照片／影片
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const clip = await navigator.clipboard.read();
+                    for (const item of clip) {
+                      const t = item.types.find(x => x.startsWith('image/'));
+                      if (t) {
+                        const blob = await item.getType(t);
+                        await handleFiles([new File([blob], `貼上_${Date.now()}.png`, { type: blob.type })]);
+                        return;
+                      }
+                    }
+                    alert('剪貼簿裡沒有圖片，請先複製一張圖片再貼上');
+                  } catch { alert('無法讀取剪貼簿，請先複製一張圖片，或改用「選照片」'); }
+                }}
+                disabled={uploading}
+                className="text-xs px-2 py-1 text-slate-600 bg-slate-50 border border-slate-200 rounded hover:bg-slate-100 inline-flex items-center gap-1"
+                title="先複製圖片再點這裡（或直接 Ctrl+V）"
+              >
+                📋 貼上圖片
               </button>
               {uploading && <span className="text-xs text-slate-500">上傳中...</span>}
               <input ref={cameraRef} type="file" accept="image/*,video/*" capture="environment" onChange={(e) => { handleFiles(Array.from(e.target.files || [])); e.target.value = ''; }} className="hidden" />

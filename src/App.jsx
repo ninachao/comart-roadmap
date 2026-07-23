@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.33.1';
-const BUILD_ID = '20260718-2000';
+const APP_VERSION = 'v1.34.0';
+const BUILD_ID = '20260723-1700';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.34.0',
+    date: '2026-07-23',
+    changes: [
+      '📁 參考資料庫升級為「四維標籤」：產品類別 / 廠商 / 性質 / 關鍵字，皆可自訂文字、一檔可掛多個標籤，篩選改為分維度（維度內與跨維度皆為 AND）',
+      '🔍 搜尋列升級為「全域搜尋」：打關鍵字時同時列出符合的產品卡片，點擊即可跳到該產品，老闆不用先判斷東西放在卡片還是參考資料',
+      '🏷️ 性質維度預設沿用檔案夾分類（外購／供應商／專利／客戶專屬／RFP／迭代版本／其他），可自行增修文字',
+    ],
+  },
   {
     version: 'v1.33.1',
     date: '2026-07-18',
@@ -7578,33 +7587,129 @@ async function exportCustomerListXLSX(list, items) {
 }
 
 // ============= 參考資料庫 =============
-// 競品、靈感、客戶提供、還沒立案的雜檔都放這裡；可選填關聯產品
+// 競品、靈感、客戶提供、外購品、還沒立案的雜檔都放這裡；可選填關聯產品
+// 四個標籤維度：產品類別 / 廠商 / 性質 / 關鍵字，皆可自訂文字、一檔可多標籤
+
+// 性質維度的預設選項（沿用老闆資料夾的分類；使用者可自行新增其他文字）
+const REF_NATURE_PRESET = ['外購', '供應商', '專利', '客戶專屬', 'RFP', '迭代版本', '其他'];
+
+// 四個標籤維度定義（key 對應存進 Firestore 的欄位；color 是 chip 顏色）
+const REF_DIMS = [
+  { key: 'cats', label: '產品類別', color: '#0ea5e9', bg: '#e0f2fe', ph: '例：車用支架、Qi無線充電' },
+  { key: 'vendors', label: '廠商', color: '#f59e0b', bg: '#fef3c7', ph: '例：凱博、Avane、生生' },
+  { key: 'natures', label: '性質', color: '#7c3aed', bg: '#ede9fe', ph: '例：外購、專利、迭代版本' },
+  { key: 'tags', label: '關鍵字', color: '#64748b', bg: '#f1f5f9', ph: '例：黑色、折疊、供 2025 展會' },
+];
+
+// 讀取某維度的值（tags 相容舊資料）
+function refDimVals(it, key) { return it[key] || []; }
+
+// 可重用的標籤輸入欄：打字 + Enter/逗號 新增，chip 可刪，下方可從既有值快速點選
+function RefTagField({ dim, values, options, onChange }) {
+  const [draft, setDraft] = useState('');
+  const addRaw = (raw) => {
+    const parts = (raw || '').split(/[,，、\n]/).map(s => s.trim()).filter(Boolean);
+    if (!parts.length) return;
+    const next = [...values];
+    parts.forEach(p => { if (!next.includes(p)) next.push(p); });
+    onChange(next);
+    setDraft('');
+  };
+  const remove = (v) => onChange(values.filter(x => x !== v));
+  const suggestions = options.filter(o => !values.includes(o));
+  return (
+    <div>
+      <label className="block text-xs text-slate-600 mb-1">
+        <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: dim.color }} />
+        {dim.label}
+      </label>
+      <div className="flex flex-wrap gap-1 mb-1">
+        {values.map(v => (
+          <span key={v} className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded"
+            style={{ background: dim.bg, color: dim.color }}>
+            {v}
+            <button onClick={() => remove(v)} className="hover:opacity-60 font-bold leading-none">×</button>
+          </span>
+        ))}
+      </div>
+      <input value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addRaw(draft); } }}
+        onBlur={() => addRaw(draft)}
+        placeholder={dim.ph + '（打字後按 Enter 或逗號）'}
+        className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
+      {suggestions.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-1">
+          {suggestions.slice(0, 20).map(o => (
+            <button key={o} onClick={() => addRaw(o)}
+              className="text-[10px] px-1.5 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">+ {o}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose, onJumpToProject }) {
   const [search, setSearch] = useState('');
-  const [tagFilter, setTagFilter] = useState(null);
-  const [editing, setEditing] = useState(null); // {isNew, id, title, tagsText, note, images, relatedProjectId}
+  const [filters, setFilters] = useState({ cats: [], vendors: [], natures: [], tags: [] });
+  const [editing, setEditing] = useState(null); // {isNew, id, title, cats, vendors, natures, tags, note, images, relatedProjectId}
   const [projSearch, setProjSearch] = useState('');
   const [showProjPicker, setShowProjPicker] = useState(false);
   const [viewingImg, setViewingImg] = useState(null); // 放大預覽 src
 
-  // 所有出現過的標籤（做篩選 chips）
-  const allTags = useMemo(() => {
-    const set = new Set();
-    items.forEach(it => (it.tags || []).forEach(t => set.add(t)));
-    return [...set].sort();
+  // 每個維度出現過的值（做篩選 chips + 編輯時的快速選項）；性質額外帶入預設選項
+  const dimOptions = useMemo(() => {
+    const out = {};
+    REF_DIMS.forEach(d => {
+      const set = new Set(d.key === 'natures' ? REF_NATURE_PRESET : []);
+      items.forEach(it => refDimVals(it, d.key).forEach(v => set.add(v)));
+      // 性質維持預設在前、其餘照字母；其他維度直接排序
+      if (d.key === 'natures') {
+        const extras = [...set].filter(v => !REF_NATURE_PRESET.includes(v)).sort();
+        out[d.key] = [...REF_NATURE_PRESET.filter(v => set.has(v) || true), ...extras];
+      } else {
+        out[d.key] = [...set].sort();
+      }
+    });
+    return out;
   }, [items]);
+
+  const toggleFilter = (key, val) => setFilters(f => ({
+    ...f, [key]: f[key].includes(val) ? f[key].filter(x => x !== val) : [...f[key], val],
+  }));
+  const clearFilters = () => setFilters({ cats: [], vendors: [], natures: [], tags: [] });
+  const hasFilters = REF_DIMS.some(d => filters[d.key].length > 0);
 
   const filtered = useMemo(() => {
     const kw = search.trim().toLowerCase();
     return items.filter(it => {
-      if (tagFilter && !(it.tags || []).includes(tagFilter)) return false;
+      // 每個維度：所選值必須全部命中（維度內 AND、跨維度也 AND）
+      for (const d of REF_DIMS) {
+        const vals = refDimVals(it, d.key);
+        if (filters[d.key].some(sel => !vals.includes(sel))) return false;
+      }
       if (!kw) return true;
-      return [it.title, it.note, ...(it.tags || [])].some(v => (v || '').toLowerCase().includes(kw));
+      const hay = [it.title, it.note, ...REF_DIMS.flatMap(d => refDimVals(it, d.key))].join(' ').toLowerCase();
+      return hay.includes(kw);
     });
-  }, [items, search, tagFilter]);
+  }, [items, search, filters]);
 
-  const startAdd = () => setEditing({ isNew: true, id: 'ref_' + Date.now(), title: '', tagsText: '', note: '', images: [], relatedProjectId: '' });
-  const startEdit = (it) => setEditing({ isNew: false, id: it.id, title: it.title || '', tagsText: (it.tags || []).join(', '), note: it.note || '', images: it.images || [], relatedProjectId: it.relatedProjectId || '' });
+  // 全域搜尋：有輸入關鍵字時，一併帶出符合的產品卡片，讓老闆不用先判斷東西在哪
+  const matchedProjects = useMemo(() => {
+    const kw = search.trim().toLowerCase();
+    if (!kw) return [];
+    return projects.filter(p =>
+      (p.name || '').toLowerCase().includes(kw) || (p.code || '').toLowerCase().includes(kw)
+    ).slice(0, 12);
+  }, [projects, search]);
+
+  const startAdd = () => setEditing({ isNew: true, id: 'ref_' + Date.now(), title: '', cats: [], vendors: [], natures: [], tags: [], note: '', images: [], relatedProjectId: '' });
+  const startEdit = (it) => setEditing({
+    isNew: false, id: it.id, title: it.title || '',
+    cats: it.cats || [], vendors: it.vendors || [], natures: it.natures || [], tags: it.tags || [],
+    note: it.note || '', images: it.images || [], relatedProjectId: it.relatedProjectId || '',
+  });
 
   const saveEditing = async () => {
     if (!editing.title.trim()) return;
@@ -7612,7 +7717,10 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     const docData = {
       id: editing.id,
       title: editing.title.trim(),
-      tags: editing.tagsText.split(/[,，、]/).map(t => t.trim()).filter(Boolean),
+      cats: editing.cats || [],
+      vendors: editing.vendors || [],
+      natures: editing.natures || [],
+      tags: editing.tags || [],
       note: editing.note,
       images: editing.images,
       relatedProjectId: editing.relatedProjectId || '',
@@ -7654,7 +7762,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-300 absolute left-3 top-1/2 -translate-y-1/2" />
             <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="搜尋標題、標籤、備註..."
+              placeholder="全域搜尋：產品卡片 + 參考資料庫，打關鍵字一次找..."
               className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400" />
           </div>
           {canEdit && (
@@ -7664,25 +7772,61 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
             </button>
           )}
         </div>
-        {allTags.length > 0 && (
-          <div className="flex gap-1 mb-3 flex-wrap">
-            <button onClick={() => setTagFilter(null)}
-              className="px-2 py-0.5 text-[11px] rounded-full border transition"
-              style={!tagFilter ? { background: '#1e293b', color: '#fff', borderColor: '#1e293b' } : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
-              全部
-            </button>
-            {allTags.map(t => (
-              <button key={t} onClick={() => setTagFilter(tagFilter === t ? null : t)}
-                className="px-2 py-0.5 text-[11px] rounded-full border transition"
-                style={tagFilter === t ? { background: '#7c3aed', color: '#fff', borderColor: '#7c3aed' } : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
-                #{t}
-              </button>
+        {/* 分維度標籤篩選 */}
+        {REF_DIMS.some(d => dimOptions[d.key].length > 0) && (
+          <div className="space-y-1 mb-2 border border-slate-100 rounded-lg p-2 bg-slate-50/50">
+            {REF_DIMS.filter(d => dimOptions[d.key].length > 0).map(d => (
+              <div key={d.key} className="flex items-start gap-1.5">
+                <span className="text-[11px] text-slate-500 w-14 flex-shrink-0 pt-0.5 flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: d.color }} />{d.label}
+                </span>
+                <div className="flex gap-1 flex-wrap flex-1">
+                  {dimOptions[d.key].map(v => {
+                    const on = filters[d.key].includes(v);
+                    return (
+                      <button key={v} onClick={() => toggleFilter(d.key, v)}
+                        className="px-2 py-0.5 text-[11px] rounded-full border transition"
+                        style={on ? { background: d.color, color: '#fff', borderColor: d.color } : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+                        {v}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             ))}
+            {hasFilters && (
+              <button onClick={clearFilters} className="text-[11px] text-slate-400 hover:text-rose-500 underline mt-0.5">清除篩選</button>
+            )}
           </div>
         )}
 
-        {/* 資料卡片格 */}
         <div className="flex-1 overflow-y-auto">
+          {/* 全域搜尋：符合的產品卡片 */}
+          {matchedProjects.length > 0 && (
+            <div className="mb-3">
+              <p className="text-[11px] text-slate-400 mb-1.5">📦 產品卡片（{matchedProjects.length}）· 點擊跳到該產品</p>
+              <div className="flex gap-2 flex-wrap">
+                {matchedProjects.map(p => {
+                  const pimg = (p.productImages || [])[0];
+                  const psrc = pimg ? (pimg.dataUrl || pimg.url) : null;
+                  return (
+                    <button key={p.id} onClick={() => onJumpToProject(p.id)}
+                      className="flex items-center gap-2 border border-blue-100 bg-blue-50/50 rounded-lg p-1.5 pr-2.5 hover:bg-blue-50 text-left max-w-[220px]">
+                      <div className="w-9 h-9 rounded bg-white flex items-center justify-center flex-shrink-0 overflow-hidden border border-slate-100">
+                        {psrc ? <img src={psrc} alt="" className="w-full h-full object-contain" /> : <span className="text-slate-300 text-xs">📦</span>}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-slate-700 truncate">{p.name}</p>
+                        {p.code && <p className="text-[10px] text-slate-400 truncate">{p.code}</p>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="border-b border-slate-100 mt-3" />
+              <p className="text-[11px] text-slate-400 mt-2">📁 參考資料庫（{filtered.length}）</p>
+            </div>
+          )}
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center text-center py-16 text-slate-400">
               <p className="text-4xl mb-3">📁</p>
@@ -7720,12 +7864,13 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                           </div>
                         )}
                       </div>
-                      {(it.tags || []).length > 0 && (
+                      {REF_DIMS.some(d => refDimVals(it, d.key).length > 0) && (
                         <div className="flex gap-1 flex-wrap mt-1">
-                          {it.tags.map(t => (
-                            <button key={t} onClick={() => setTagFilter(t)}
-                              className="text-[10px] px-1.5 py-0.5 bg-violet-50 text-violet-600 rounded hover:bg-violet-100">#{t}</button>
-                          ))}
+                          {REF_DIMS.flatMap(d => refDimVals(it, d.key).map(v => (
+                            <button key={d.key + ':' + v} onClick={() => toggleFilter(d.key, v)}
+                              className="text-[10px] px-1.5 py-0.5 rounded hover:opacity-80"
+                              style={{ background: d.bg, color: d.color }}>{v}</button>
+                          )))}
                         </div>
                       )}
                       {it.note && <p className="text-xs text-slate-500 mt-1 line-clamp-2 whitespace-pre-line" title={it.note}>{it.note}</p>}
@@ -7763,12 +7908,12 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                     placeholder="例：競品 XX 牌磁吸支架" autoFocus
                     className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
                 </div>
-                <div>
-                  <label className="block text-xs text-slate-600 mb-1">標籤（逗號分隔）</label>
-                  <input value={editing.tagsText} onChange={e => setEditing(v => ({ ...v, tagsText: e.target.value }))}
-                    placeholder="競品, 靈感, 客戶提供..."
-                    className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
-                </div>
+                {REF_DIMS.map(d => (
+                  <RefTagField key={d.key} dim={d}
+                    values={editing[d.key] || []}
+                    options={dimOptions[d.key]}
+                    onChange={vals => setEditing(v => ({ ...v, [d.key]: vals }))} />
+                ))}
                 <div>
                   <label className="block text-xs text-slate-600 mb-1">備註</label>
                   <textarea value={editing.note} onChange={e => setEditing(v => ({ ...v, note: e.target.value }))}

@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.34.0';
-const BUILD_ID = '20260723-1700';
+const APP_VERSION = 'v1.34.1';
+const BUILD_ID = '20260728-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.34.1',
+    date: '2026-07-28',
+    changes: [
+      '🔗 產品卡片新增「相關參考檔案」區：把參考資料庫中「關聯」到此產品的檔案（圖檔＋標籤＋備註）直接顯示在卡片裡，圖可點擊放大，不用再另外跑到參考資料庫找',
+      '↗️ 該區可一鍵「在參考資料庫開啟」，並自動以產品名帶入搜尋',
+    ],
+  },
   {
     version: 'v1.34.0',
     date: '2026-07-23',
@@ -2416,6 +2424,7 @@ export default function ProductRoadmap() {
   const [showPrototypeOverview, setShowPrototypeOverview] = useState(false);
   const [showSampleLibrary, setShowSampleLibrary] = useState(false);
   const [showRefLibrary, setShowRefLibrary] = useState(false);
+  const [refLibraryInitialSearch, setRefLibraryInitialSearch] = useState('');
   const [openFrom, setOpenFrom] = useState(null);
   const [followUpTrigger, setFollowUpTrigger] = useState(null); // 從提醒面板點「已跟追」帶過來的 update // 'samples' | 'reminders' | 'prototype' | null
   const [showReminders, setShowReminders] = useState(false);
@@ -3210,6 +3219,12 @@ export default function ProductRoadmap() {
           autoOpenWizard={autoOpenCodeWizard}
           onWizardClose={() => setAutoOpenCodeWizard(false)}
           existingCodes={projects.filter(p => p.id !== selectedProject.id).map(p => p.code).filter(Boolean)}
+          refFiles={refFiles}
+          onOpenRefLibrary={(p) => {
+            setRefLibraryInitialSearch(p?.name || p?.code || '');
+            setSelectedProject(null);
+            setShowRefLibrary(true);
+          }}
           categoryCodes={categoryCodes}
           featureCodes={featureCodes}
           samples={samples}
@@ -3348,12 +3363,14 @@ export default function ProductRoadmap() {
           projects={projects}
           currentUser={currentUser}
           canEdit={canEditSamples}
-          onClose={() => setShowRefLibrary(false)}
+          initialSearch={refLibraryInitialSearch}
+          onClose={() => { setShowRefLibrary(false); setRefLibraryInitialSearch(''); }}
           onJumpToProject={(id) => {
             const target = projects.find(p => p.id === id);
             if (target) {
               setSelectedProject(target);
               setShowRefLibrary(false);
+              setRefLibraryInitialSearch('');
             }
           }}
         />
@@ -4146,7 +4163,66 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
 }
 
 
-function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, samples = [], withdrawals = [], customerLists = [], currentUser, openFrom = null, onReturn, followUpTrigger = null, onFollowUpTriggered }) {
+// 產品卡片內：顯示連結到此產品的參考資料庫檔案（讓人在卡片上就看到相關圖檔，不用另跑參考資料庫）
+function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary }) {
+  const [viewing, setViewing] = useState(null); // 放大預覽 src
+  const linked = useMemo(
+    () => (refFiles || []).filter(r => String(r.relatedProjectId) === String(project.id)),
+    [refFiles, project.id]
+  );
+  if (linked.length === 0) return null;
+  const totalImgs = linked.reduce((n, it) => n + ((it.images || []).length || 0), 0);
+  return (
+    <section id="pd-reffiles">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+          🔗 相關參考檔案
+          <span className="text-[10px] text-slate-400 normal-case">（{linked.length} 筆 · {totalImgs} 張圖）</span>
+        </h3>
+        {onOpenRefLibrary && (
+          <button onClick={() => onOpenRefLibrary(project)}
+            className="text-[11px] text-violet-600 hover:underline">在參考資料庫開啟 →</button>
+        )}
+      </div>
+      <div className="space-y-2">
+        {linked.map(it => {
+          const imgs = it.images || [];
+          return (
+            <div key={it.id} className="border border-slate-100 rounded-lg p-2 bg-slate-50/40">
+              <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+                <span className="text-xs font-medium text-slate-700">{it.title}</span>
+                {REF_DIMS.flatMap(d => refDimVals(it, d.key).map(v => (
+                  <span key={d.key + ':' + v} className="text-[10px] px-1.5 py-0.5 rounded"
+                    style={{ background: d.bg, color: d.color }}>{v}</span>
+                )))}
+              </div>
+              {it.note && <p className="text-[11px] text-slate-500 mb-1.5 whitespace-pre-line line-clamp-2">{it.note}</p>}
+              {imgs.length > 0 && (
+                <div className="flex gap-1.5 flex-wrap">
+                  {imgs.map((img, i) => {
+                    const src = img.dataUrl || img.url;
+                    return src ? (
+                      <img key={i} src={src} alt="" onClick={() => setViewing(src)}
+                        className="w-16 h-16 object-contain rounded border border-slate-200 bg-white cursor-pointer hover:ring-2 hover:ring-violet-300" />
+                    ) : null;
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {viewing && (
+        <div className="fixed inset-0 bg-slate-900/80 z-[70] flex items-center justify-center p-6" onClick={() => setViewing(null)}>
+          <img src={viewing} alt="" className="max-w-full max-h-full object-contain rounded-lg" />
+        </div>
+      )}
+    </section>
+  );
+}
+
+
+function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEditUpdate, onDeleteUpdate, onUpdateField, onToggleStage, onDelete, onDuplicate, autoOpenWizard, onWizardClose, existingCodes = [], categoryCodes = DEFAULT_CATEGORY_CODES, featureCodes = DEFAULT_FEATURE_CODES, samples = [], withdrawals = [], customerLists = [], currentUser, openFrom = null, onReturn, followUpTrigger = null, onFollowUpTriggered, refFiles = [], onOpenRefLibrary }) {
   const [showWizard, setShowWizard] = useState(false);
 
   // 收到自動打開請求時，跳出精靈
@@ -4458,6 +4534,12 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           <ProductImagesSection
             images={project.productImages || []}
             onChange={(imgs) => onUpdateField('productImages', imgs)}
+          />
+
+          <LinkedRefFilesSection
+            project={project}
+            refFiles={refFiles}
+            onOpenRefLibrary={onOpenRefLibrary}
           />
 
           <PhaseTimeline
@@ -7650,8 +7732,8 @@ function RefTagField({ dim, values, options, onChange }) {
   );
 }
 
-function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose, onJumpToProject }) {
-  const [search, setSearch] = useState('');
+function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose, onJumpToProject, initialSearch = '' }) {
+  const [search, setSearch] = useState(initialSearch);
   const [filters, setFilters] = useState({ cats: [], vendors: [], natures: [], tags: [] });
   const [editing, setEditing] = useState(null); // {isNew, id, title, cats, vendors, natures, tags, note, images, relatedProjectId}
   const [projSearch, setProjSearch] = useState('');

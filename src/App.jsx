@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.34.1';
-const BUILD_ID = '20260728-1200';
+const APP_VERSION = 'v1.34.2';
+const BUILD_ID = '20260731-1500';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.34.2',
+    date: '2026-07-31',
+    changes: [
+      '🔗 產品卡片「相關參考檔案」區改為編輯模式下永遠顯示：沒有關聯檔案時給提示，並可直接從卡片點「＋ 關聯檔案」挑參考資料建立關聯，不用特地跑到參考資料庫設',
+      '➖ 每筆已關聯檔案可就地「取消關聯」',
+    ],
+  },
   {
     version: 'v1.34.1',
     date: '2026-07-28',
@@ -4164,54 +4172,128 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
 
 
 // 產品卡片內：顯示連結到此產品的參考資料庫檔案（讓人在卡片上就看到相關圖檔，不用另跑參考資料庫）
-function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary }) {
+// 編輯模式下永遠顯示：沒有關聯檔案時給提示 + 可直接從卡片挑參考資料建立關聯
+function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEdit = false }) {
   const [viewing, setViewing] = useState(null); // 放大預覽 src
+  const [picking, setPicking] = useState(false); // 是否展開「選檔案來關聯」
+  const [pickSearch, setPickSearch] = useState('');
   const linked = useMemo(
     () => (refFiles || []).filter(r => String(r.relatedProjectId) === String(project.id)),
     [refFiles, project.id]
   );
-  if (linked.length === 0) return null;
+  // 可供關聯的候選：尚未關聯到此產品的參考資料
+  const candidates = useMemo(() => {
+    const kw = pickSearch.trim().toLowerCase();
+    return (refFiles || [])
+      .filter(r => String(r.relatedProjectId) !== String(project.id))
+      .filter(r => !kw || [r.title, ...REF_DIMS.flatMap(d => refDimVals(r, d.key))].join(' ').toLowerCase().includes(kw))
+      .slice(0, 40);
+  }, [refFiles, project.id, pickSearch]);
+
+  const setLink = async (refId, toThisProject) => {
+    await setDoc(doc(db, REFERENCE_COL, refId), { relatedProjectId: toThisProject ? project.id : '' }, { merge: true });
+  };
+
+  // 檢視者且無關聯 → 不佔版面
+  if (linked.length === 0 && !canEdit) return null;
   const totalImgs = linked.reduce((n, it) => n + ((it.images || []).length || 0), 0);
+
   return (
     <section id="pd-reffiles">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
           🔗 相關參考檔案
-          <span className="text-[10px] text-slate-400 normal-case">（{linked.length} 筆 · {totalImgs} 張圖）</span>
+          {linked.length > 0 && <span className="text-[10px] text-slate-400 normal-case">（{linked.length} 筆 · {totalImgs} 張圖）</span>}
         </h3>
-        {onOpenRefLibrary && (
-          <button onClick={() => onOpenRefLibrary(project)}
-            className="text-[11px] text-violet-600 hover:underline">在參考資料庫開啟 →</button>
-        )}
+        <div className="flex items-center gap-2">
+          {canEdit && (
+            <button onClick={() => { setPicking(v => !v); setPickSearch(''); }}
+              className="text-[11px] text-violet-600 hover:underline">{picking ? '收合' : '＋ 關聯檔案'}</button>
+          )}
+          {onOpenRefLibrary && (
+            <button onClick={() => onOpenRefLibrary(project)}
+              className="text-[11px] text-slate-400 hover:text-violet-600 hover:underline">參考資料庫 →</button>
+          )}
+        </div>
       </div>
-      <div className="space-y-2">
-        {linked.map(it => {
-          const imgs = it.images || [];
-          return (
-            <div key={it.id} className="border border-slate-100 rounded-lg p-2 bg-slate-50/40">
-              <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
-                <span className="text-xs font-medium text-slate-700">{it.title}</span>
-                {REF_DIMS.flatMap(d => refDimVals(it, d.key).map(v => (
-                  <span key={d.key + ':' + v} className="text-[10px] px-1.5 py-0.5 rounded"
-                    style={{ background: d.bg, color: d.color }}>{v}</span>
-                )))}
-              </div>
-              {it.note && <p className="text-[11px] text-slate-500 mb-1.5 whitespace-pre-line line-clamp-2">{it.note}</p>}
-              {imgs.length > 0 && (
-                <div className="flex gap-1.5 flex-wrap">
-                  {imgs.map((img, i) => {
-                    const src = img.dataUrl || img.url;
-                    return src ? (
-                      <img key={i} src={src} alt="" onClick={() => setViewing(src)}
-                        className="w-16 h-16 object-contain rounded border border-slate-200 bg-white cursor-pointer hover:ring-2 hover:ring-violet-300" />
-                    ) : null;
-                  })}
+
+      {/* 挑選要關聯的參考資料 */}
+      {canEdit && picking && (
+        <div className="mb-2 p-2 rounded-lg border border-violet-200 bg-violet-50/40">
+          <input value={pickSearch} onChange={e => setPickSearch(e.target.value)}
+            placeholder="搜尋參考資料庫的檔案標題 / 標籤..." autoFocus
+            className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-white focus:outline-none focus:border-violet-400 mb-1.5" />
+          <div className="max-h-44 overflow-y-auto space-y-1">
+            {candidates.length === 0 ? (
+              <p className="text-[11px] text-slate-400 px-1 py-2 text-center">
+                參考資料庫沒有可關聯的檔案。<br />可先到「參考資料庫」新增檔案。
+              </p>
+            ) : candidates.map(r => {
+              const cover = (r.images || [])[0];
+              const csrc = cover ? (cover.dataUrl || cover.url) : null;
+              const already = r.relatedProjectId ? '（原關聯將移到此產品）' : '';
+              return (
+                <button key={r.id} onClick={() => setLink(r.id, true)}
+                  className="w-full flex items-center gap-2 p-1 rounded hover:bg-white text-left">
+                  <div className="w-9 h-9 rounded bg-white border border-slate-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    {csrc ? <img src={csrc} alt="" className="w-full h-full object-contain" /> : <span className="text-slate-300 text-xs">📄</span>}
+                  </div>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs text-slate-700 truncate">{r.title}</span>
+                    {already && <span className="block text-[10px] text-amber-500">{already}</span>}
+                  </span>
+                  <span className="text-[11px] text-violet-600 flex-shrink-0">＋ 關聯</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {linked.length === 0 ? (
+        canEdit && !picking && (
+          <button onClick={() => { setPicking(true); setPickSearch(''); }}
+            className="w-full py-3 text-[11px] text-slate-400 border border-dashed border-slate-200 rounded-lg hover:bg-slate-50">
+            尚無關聯此產品的參考檔案 · 點此從參考資料庫挑一筆關聯進來
+          </button>
+        )
+      ) : (
+        <div className="space-y-2">
+          {linked.map(it => {
+            const imgs = it.images || [];
+            return (
+              <div key={it.id} className="border border-slate-100 rounded-lg p-2 bg-slate-50/40">
+                <div className="flex items-start justify-between gap-1 mb-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-xs font-medium text-slate-700">{it.title}</span>
+                    {REF_DIMS.flatMap(d => refDimVals(it, d.key).map(v => (
+                      <span key={d.key + ':' + v} className="text-[10px] px-1.5 py-0.5 rounded"
+                        style={{ background: d.bg, color: d.color }}>{v}</span>
+                    )))}
+                  </div>
+                  {canEdit && (
+                    <button onClick={() => setLink(it.id, false)}
+                      className="text-[10px] text-slate-300 hover:text-rose-500 flex-shrink-0 whitespace-nowrap">取消關聯</button>
+                  )}
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                {it.note && <p className="text-[11px] text-slate-500 mb-1.5 whitespace-pre-line line-clamp-2">{it.note}</p>}
+                {imgs.length > 0 && (
+                  <div className="flex gap-1.5 flex-wrap">
+                    {imgs.map((img, i) => {
+                      const src = img.dataUrl || img.url;
+                      return src ? (
+                        <img key={i} src={src} alt="" onClick={() => setViewing(src)}
+                          className="w-16 h-16 object-contain rounded border border-slate-200 bg-white cursor-pointer hover:ring-2 hover:ring-violet-300" />
+                      ) : null;
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {viewing && (
         <div className="fixed inset-0 bg-slate-900/80 z-[70] flex items-center justify-center p-6" onClick={() => setViewing(null)}>
           <img src={viewing} alt="" className="max-w-full max-h-full object-contain rounded-lg" />
@@ -4540,6 +4622,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             project={project}
             refFiles={refFiles}
             onOpenRefLibrary={onOpenRefLibrary}
+            canEdit={!isViewer}
           />
 
           <PhaseTimeline

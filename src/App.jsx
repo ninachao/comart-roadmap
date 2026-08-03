@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.37.2';
-const BUILD_ID = '20260804-0030';
+const APP_VERSION = 'v1.38.0';
+const BUILD_ID = '20260804-0130';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.38.0',
+    date: '2026-08-04',
+    changes: [
+      '⬇ 產品卡片「相關文件」新增一鍵匯入：把進度紀錄各設計版本底下的附件與 BOM 檔整批建立成文件，自動關聯產品、依 ID／3D／BOM 與版本貼好標籤、沿用原檔日期',
+      '♻️ 匯入沿用同一份 Storage 檔案，不重新上傳、不重複佔空間；原本的進度紀錄完全不更動',
+      '🔒 已匯入的組合會記錄來源並自動略過，重複按不會產生重複文件',
+    ],
+  },
   {
     version: 'v1.37.2',
     date: '2026-08-04',
@@ -4272,6 +4281,64 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
     await setDoc(doc(db, REFERENCE_COL, r.id), { relatedProjectIds: next, relatedProjectId: '' }, { merge: true });
   };
 
+  // 把「進度紀錄」各設計版本底下的附件，整批建立成文件中心的文件
+  // 沿用同一份 Storage 檔案（url/path 直接複製），不重新上傳、不重複佔空間；原本的進度紀錄完全不動
+  const migrationJobs = useMemo(() => {
+    const designs = project.designs || {};
+    const done = new Set((refFiles || []).map(r => r.sourceKey).filter(Boolean));
+    const jobs = [];
+    ['ID', '3D', 'BOM'].forEach(type => {
+      (designs[type] || []).forEach(d => {
+        [
+          { docType: type, files: d.attachments || [], kind: 'att' },
+          { docType: 'BOM', files: d.bomAttachments || [], kind: 'bom' },
+        ].forEach(({ docType, files, kind }) => {
+          if (!files.length) return;
+          const sourceKey = `design:${project.id}:${type}:${d.version || ''}:${kind}`;
+          if (done.has(sourceKey)) return;
+          jobs.push({ sourceKey, docType, files, version: d.version || '', date: d.date || '', notes: d.notes || '' });
+        });
+      });
+    });
+    return jobs;
+  }, [project, refFiles]);
+
+  const runMigration = async () => {
+    const fileCount = migrationJobs.reduce((n, j) => n + j.files.length, 0);
+    if (!window.confirm(
+      `要把「進度紀錄」裡的 ${fileCount} 個檔案（共 ${migrationJobs.length} 組）建立到文件中心嗎？\n\n` +
+      `· 自動關聯到這個產品，並依版本與類型貼好標籤\n` +
+      `· 沿用同一份檔案，不會重複佔用空間\n` +
+      `· 原本的進度紀錄不會被更動`
+    )) return;
+    let ok = 0;
+    for (let i = 0; i < migrationJobs.length; i++) {
+      const j = migrationJobs[i];
+      const id = `ref_${Date.now()}_${i}`;
+      try {
+        await setDoc(doc(db, REFERENCE_COL, id), {
+          id,
+          title: [project.code, project.name, j.docType].filter(Boolean).join('_'),
+          natures: [j.docType],
+          versions: j.version ? [j.version] : [],
+          vendors: [], parts: [], cats: [], tags: [],
+          note: j.notes,
+          images: j.files,
+          relatedProjectIds: [project.id],
+          relatedProjectId: '',
+          createdAt: dateInputToTs(j.date, Date.now()),
+          createdBy: '',
+          sourceKey: j.sourceKey,
+        });
+        ok++;
+      } catch (err) {
+        alert(`第 ${i + 1} 組匯入失敗：${err.message}`);
+        break;
+      }
+    }
+    if (ok) alert(`✅ 已建立 ${ok} 份文件到文件中心（原進度紀錄未更動）`);
+  };
+
   // 檢視者且無關聯 → 不佔版面
   if (linked.length === 0 && !canEdit) return null;
   const totalImgs = linked.reduce((n, it) => n + ((it.images || []).length || 0), 0);
@@ -4284,6 +4351,13 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
           {linked.length > 0 && <span className="text-[10px] text-slate-400 normal-case">（{linked.length} 筆 · {totalImgs} 張圖）</span>}
         </h3>
         <div className="flex items-center gap-2">
+          {canEdit && migrationJobs.length > 0 && (
+            <button onClick={runMigration}
+              title="把進度紀錄各版本底下的附件建立成文件（沿用同一份檔案，不重複佔空間）"
+              className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100">
+              ⬇ 匯入進度紀錄的檔案（{migrationJobs.reduce((n, j) => n + j.files.length, 0)}）
+            </button>
+          )}
           {canEdit && (
             <button onClick={() => { setPicking(v => !v); setPickSearch(''); }}
               className="text-[11px] text-violet-600 hover:underline">{picking ? '收合' : '＋ 關聯文件'}</button>

@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.41.0';
-const BUILD_ID = '20260804-0530';
+const APP_VERSION = 'v1.41.1';
+const BUILD_ID = '20260804-0630';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.41.1',
+    date: '2026-08-04',
+    changes: [
+      '⚡ 自動命名支援跨多個產品：兩個產品時組成「編碼A+編碼B_類型」，三個以上為「編碼A+其他N個_類型」，不再只掛第一個產品',
+      '📄 新增「用檔名」按鈕：檔名本身已說明清楚時（例：球窩+QI風扇電性規格.xls）可一鍵沿用為標題',
+    ],
+  },
   {
     version: 'v1.41.0',
     date: '2026-08-04',
@@ -9053,24 +9061,41 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-xs text-slate-600">標題 *</label>
                     {(() => {
-                      // 依「編碼 _ 產品名稱 _ 文件類型」組出建議檔名，避免出現只叫「ID」這種沒情境的標題
-                      const p = projects.find(x => String(x.id) === String((editing.relatedProjectIds || [])[0]));
+                      // 建議命名：單一產品用「編碼_產品名稱_類型」；跨多個產品時改用編碼並列，避免只掛第一個產品造成誤解
+                      const ps = (editing.relatedProjectIds || [])
+                        .map(id => projects.find(x => String(x.id) === String(id))).filter(Boolean);
                       const typeVal = (editing.natures || [])[0] || (editing.versions || [])[0] || '';
-                      const parts = [p?.code || '', p?.name || '', typeVal].filter(Boolean);
-                      if (parts.length < 2) return null;
-                      const suggestion = parts.join('_');
-                      if (suggestion === editing.title) return null;
+                      let base = '';
+                      if (ps.length === 1) base = [ps[0].code, ps[0].name].filter(Boolean).join('_');
+                      else if (ps.length === 2) base = ps.map(p => p.code || p.name).join('+');
+                      else if (ps.length > 2) base = `${ps[0].code || ps[0].name}+其他${ps.length - 1}個`;
+                      const suggestion = [base, typeVal].filter(Boolean).join('_');
+                      // 檔名本身常常已經講得很清楚（例：球窩+QI风扇电性规格.xls），提供一鍵沿用
+                      const f0 = (editing.images || [])[0];
+                      const fileBase = f0?.name ? String(f0.name).replace(/\.[^.]+$/, '') : '';
                       return (
-                        <button onClick={() => setEditing(v => ({ ...v, title: suggestion }))}
-                          title={`套用：${suggestion}`}
-                          className="text-[11px] text-violet-600 hover:underline">⚡ 自動命名</button>
+                        <span className="flex items-center gap-2">
+                          {fileBase && fileBase !== editing.title && (
+                            <button onClick={() => setEditing(v => ({ ...v, title: fileBase }))}
+                              title={`套用：${fileBase}`}
+                              className="text-[11px] text-slate-500 hover:text-violet-600 hover:underline">📄 用檔名</button>
+                          )}
+                          {suggestion && suggestion !== editing.title && (
+                            <button onClick={() => setEditing(v => ({ ...v, title: suggestion }))}
+                              title={`套用：${suggestion}`}
+                              className="text-[11px] text-violet-600 hover:underline">⚡ 自動命名</button>
+                          )}
+                        </span>
                       );
                     })()}
                   </div>
                   <input value={editing.title} onChange={e => setEditing(v => ({ ...v, title: e.target.value }))}
                     placeholder="例：HDRH0001_鎖定式平板支架-拉伸版_ID" autoFocus
                     className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
-                  <p className="text-[10px] text-slate-400 mt-0.5">建議格式：編碼_產品名稱_文件類型（選好關聯產品與文件類型後，按「⚡ 自動命名」；上傳 PDF／STP／Excel 會自動帶入 ID／3D／BOM）</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    建議格式：編碼_產品名稱_文件類型。跨多個產品時會自動改成「編碼A+編碼B_類型」；
+                    若檔名本身已說明清楚，可直接按「📄 用檔名」。
+                  </p>
                 </div>
                 <div>
                   <label className="block text-xs text-slate-600 mb-1">日期</label>

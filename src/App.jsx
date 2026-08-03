@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.35.1';
-const BUILD_ID = '20260803-1600';
+const APP_VERSION = 'v1.36.0';
+const BUILD_ID = '20260803-1800';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.36.0',
+    date: '2026-08-03',
+    changes: [
+      '📦 文件中心新增「依產品」檢視（預設）：外層以產品為卡片（含產品圖、文件數、圖片數），點進去就看到該產品集結的所有文件；沒關聯產品的文件收在「未關聯產品」',
+      '🖼 關聯產品改為圖像式挑選：搜尋後以縮圖網格選產品，已選的產品也顯示縮圖，不再只有純文字',
+      '🖱 編輯文件時可直接把圖片／檔案拖曳進來；非圖片檔（PDF、Excel…）也能加入，顯示為可點開的附件',
+      '➕ 在某產品底下按「新增文件」會自動帶入該產品的關聯',
+    ],
+  },
   {
     version: 'v1.35.1',
     date: '2026-08-03',
@@ -7962,6 +7972,9 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const [projSearch, setProjSearch] = useState('');
   const [showProjPicker, setShowProjPicker] = useState(false);
   const [viewingImg, setViewingImg] = useState(null); // 放大預覽 src
+  const [viewMode, setViewMode] = useState('products'); // 'products' 以產品為卡片 | 'docs' 所有文件
+  const [drillPid, setDrillPid] = useState(null); // 點進某個產品後，看它集結的所有檔案
+  const [formDragOver, setFormDragOver] = useState(false); // 編輯表單拖曳上傳
 
   // 供應商 / 外購件的共用清單（存 app_settings，讓名字打法一致；選填、可現場新增）
   const [registry, setRegistry] = useState({ vendors: [], parts: [] });
@@ -8030,8 +8043,36 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     ).slice(0, 12);
   }, [projects, search]);
 
+  // 以產品為主的分組：一份文件關聯 N 個產品就會出現在 N 個產品底下（不重複存檔，只是同時被列出）
+  const grouped = useMemo(() => {
+    const map = new Map();
+    const orphans = [];
+    filtered.forEach(it => {
+      const pids = refLinkedProjIds(it).filter(pid => projects.some(p => String(p.id) === String(pid)));
+      if (pids.length === 0) { orphans.push(it); return; }
+      pids.forEach(pid => {
+        const key = String(pid);
+        if (!map.has(key)) map.set(key, { project: projects.find(p => String(p.id) === key), docs: [] });
+        map.get(key).docs.push(it);
+      });
+    });
+    const groups = [...map.values()].sort((a, b) =>
+      b.docs.length - a.docs.length || (a.project.name || '').localeCompare(b.project.name || '')
+    );
+    return { groups, orphans };
+  }, [filtered, projects]);
+
+  const drillGroup = useMemo(() => {
+    if (!drillPid) return null;
+    if (drillPid === '__none__') return { project: null, docs: grouped.orphans };
+    return grouped.groups.find(g => String(g.project.id) === String(drillPid)) || null;
+  }, [drillPid, grouped]);
+
   const blankDims = () => Object.fromEntries(REF_DIMS.map(d => [d.key, []]));
-  const startAdd = () => setEditing({ isNew: true, id: 'ref_' + Date.now(), title: '', ...blankDims(), note: '', images: [], relatedProjectIds: [] });
+  const startAdd = (presetPid) => setEditing({
+    isNew: true, id: 'ref_' + Date.now(), title: '', ...blankDims(), note: '', images: [],
+    relatedProjectIds: presetPid && presetPid !== '__none__' ? [presetPid] : [],
+  });
   const startEdit = (it) => setEditing({
     isNew: false, id: it.id, title: it.title || '',
     ...Object.fromEntries(REF_DIMS.map(d => [d.key, refDimVals(it, d.key)])),
@@ -8076,6 +8117,84 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     setEditing(v => ({ ...v, images: [...(v.images || []), { dataUrl, name: file.name }] }));
   };
 
+  // 拖曳進表單：圖片直接壓縮存入；非圖片檔上傳到 Storage（沿用產品圖片的上傳機制）
+  const addEditingFiles = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    for (const f of files) {
+      try {
+        if (f.type.startsWith('image/')) {
+          await addEditingImage(f);
+        } else {
+          if (f.size > 10 * 1024 * 1024) { alert(`「${f.name}」超過 10MB，跳過`); continue; }
+          const r = await uploadFileToStorage(f, () => {});
+          setEditing(v => ({
+            ...v,
+            images: [...(v.images || []), { name: r.name, url: r.url, path: r.path, size: r.size, type: r.type }],
+          }));
+        }
+      } catch (err) {
+        alert(`「${f.name}」加入失敗：${err.message}`);
+      }
+    }
+  };
+
+  // 單張文件卡（「所有文件」與「點進產品」兩種檢視共用）
+  const renderDocCard = (it) => {
+    const cover = (it.images || [])[0];
+    const coverSrc = cover ? (cover.dataUrl || cover.url) : null;
+    const linkedProjs = refLinkedProjIds(it)
+      .map(pid => projects.find(p => String(p.id) === String(pid)))
+      .filter(Boolean);
+    return (
+      <div key={it.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden group flex flex-col">
+        <div className="h-32 bg-slate-50 flex items-center justify-center cursor-pointer relative"
+          onClick={() => coverSrc && setViewingImg(coverSrc)}>
+          {coverSrc ? (
+            <img src={coverSrc} alt="" className="w-full h-full object-contain" />
+          ) : (
+            <span className="text-3xl text-slate-200">📄</span>
+          )}
+          {(it.images || []).length > 1 && (
+            <span className="absolute bottom-1 right-1.5 text-[10px] bg-slate-900/60 text-white px-1.5 py-0.5 rounded">+{it.images.length - 1}</span>
+          )}
+        </div>
+        <div className="p-2.5 flex-1 flex flex-col">
+          <div className="flex items-start justify-between gap-1">
+            <p className="text-sm font-medium text-slate-800 leading-tight">{it.title}</p>
+            {canEdit && (
+              <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+                <button onClick={() => startEdit(it)} className="p-0.5 text-slate-400 hover:text-slate-700"><Edit2 className="w-3 h-3" /></button>
+                <button onClick={() => deleteItem(it)} className="p-0.5 text-slate-400 hover:text-rose-600"><Trash2 className="w-3 h-3" /></button>
+              </div>
+            )}
+          </div>
+          {REF_DIMS.some(d => refDimVals(it, d.key).length > 0) && (
+            <div className="flex gap-1 flex-wrap mt-1">
+              {REF_DIMS.flatMap(d => refDimVals(it, d.key).map(v => (
+                <button key={d.key + ':' + v} onClick={() => toggleFilter(d.key, v)}
+                  className="text-[10px] px-1.5 py-0.5 rounded hover:opacity-80"
+                  style={{ background: d.bg, color: d.color }}>{v}</button>
+              )))}
+            </div>
+          )}
+          {it.note && <p className="text-xs text-slate-500 mt-1 line-clamp-2 whitespace-pre-line" title={it.note}>{it.note}</p>}
+          <div className="mt-auto pt-1.5 flex items-end justify-between gap-1">
+            {linkedProjs.length > 0 ? (
+              <div className="flex gap-x-1.5 gap-y-0.5 flex-wrap min-w-0">
+                {linkedProjs.map(p => (
+                  <button key={p.id} onClick={() => onJumpToProject(p.id)}
+                    className="text-[10px] text-blue-500 hover:underline truncate max-w-[110px]">🔗 {p.name}</button>
+                ))}
+              </div>
+            ) : <span />}
+            <span className="text-[10px] text-slate-300 flex-shrink-0">{it.createdAt ? new Date(it.createdAt).toISOString().split('T')[0] : ''}</span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-5xl w-full p-4 sm:p-5 my-auto max-h-[95vh] flex flex-col">
@@ -8092,6 +8211,19 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
           </button>
         </div>
 
+        {/* 檢視切換：以產品為卡片 / 所有文件 */}
+        <div className="flex items-center gap-1 mb-2">
+          {[['products', '📦 依產品'], ['docs', '📄 所有文件']].map(([m, label]) => (
+            <button key={m} onClick={() => { setViewMode(m); setDrillPid(null); }}
+              className="px-2.5 py-1 text-[11px] rounded-full border transition"
+              style={viewMode === m
+                ? { background: '#1e293b', color: '#fff', borderColor: '#1e293b' }
+                : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
         {/* 搜尋 + 標籤篩選 + 新增 */}
         <div className="flex items-center gap-2 mb-2">
           <div className="relative flex-1">
@@ -8101,7 +8233,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400" />
           </div>
           {canEdit && (
-            <button onClick={startAdd}
+            <button onClick={() => startAdd(drillPid)}
               className="px-3 py-2 text-xs text-white rounded-lg whitespace-nowrap" style={{ background: '#1e293b' }}>
               + 新增文件
             </button>
@@ -8162,71 +8294,92 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               <p className="text-[11px] text-slate-400 mt-2">📁 文件中心（{filtered.length}）</p>
             </div>
           )}
-          {filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center text-center py-16 text-slate-400">
-              <p className="text-4xl mb-3">📁</p>
-              <p className="text-sm">{items.length === 0 ? '還沒有文件' : '找不到符合的文件'}</p>
-              {canEdit && items.length === 0 && <button onClick={startAdd} className="mt-3 text-xs text-violet-600 hover:underline">+ 新增第一筆</button>}
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pb-2">
-              {filtered.map(it => {
-                const cover = (it.images || [])[0];
-                const coverSrc = cover ? (cover.dataUrl || cover.url) : null;
-                const linkedProjs = refLinkedProjIds(it)
-                  .map(pid => projects.find(p => String(p.id) === String(pid)))
-                  .filter(Boolean);
-                return (
-                  <div key={it.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden group flex flex-col">
-                    {/* 圖片區 */}
-                    <div className="h-32 bg-slate-50 flex items-center justify-center cursor-pointer relative"
-                      onClick={() => coverSrc && setViewingImg(coverSrc)}>
-                      {coverSrc ? (
-                        <img src={coverSrc} alt="" className="w-full h-full object-contain" />
-                      ) : (
-                        <span className="text-3xl text-slate-200">📄</span>
-                      )}
-                      {(it.images || []).length > 1 && (
-                        <span className="absolute bottom-1 right-1.5 text-[10px] bg-slate-900/60 text-white px-1.5 py-0.5 rounded">+{it.images.length - 1}</span>
-                      )}
-                    </div>
-                    {/* 文字區 */}
-                    <div className="p-2.5 flex-1 flex flex-col">
-                      <div className="flex items-start justify-between gap-1">
-                        <p className="text-sm font-medium text-slate-800 leading-tight">{it.title}</p>
-                        {canEdit && (
-                          <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
-                            <button onClick={() => startEdit(it)} className="p-0.5 text-slate-400 hover:text-slate-700"><Edit2 className="w-3 h-3" /></button>
-                            <button onClick={() => deleteItem(it)} className="p-0.5 text-slate-400 hover:text-rose-600"><Trash2 className="w-3 h-3" /></button>
-                          </div>
-                        )}
+          {/* ── 檢視 1：以產品為主的卡片牆 ── */}
+          {viewMode === 'products' && !drillPid && (
+            grouped.groups.length === 0 && grouped.orphans.length === 0 ? (
+              <div className="flex flex-col items-center justify-center text-center py-16 text-slate-400">
+                <p className="text-4xl mb-3">📁</p>
+                <p className="text-sm">{items.length === 0 ? '還沒有文件' : '找不到符合的文件'}</p>
+                {canEdit && items.length === 0 && <button onClick={() => startAdd()} className="mt-3 text-xs text-violet-600 hover:underline">+ 新增第一筆</button>}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pb-2">
+                {grouped.groups.map(g => {
+                  const pimg = (g.project.productImages || [])[0];
+                  const psrc = pimg ? (pimg.dataUrl || pimg.url) : null;
+                  const imgCount = g.docs.reduce((n, d) => n + ((d.images || []).length), 0);
+                  return (
+                    <button key={g.project.id} onClick={() => setDrillPid(String(g.project.id))}
+                      className="border border-slate-200 rounded-xl bg-white overflow-hidden hover:border-violet-300 hover:shadow-sm transition text-left flex flex-col">
+                      <div className="h-28 bg-slate-50 flex items-center justify-center">
+                        {psrc ? <img src={psrc} alt="" className="w-full h-full object-contain" /> : <span className="text-3xl text-slate-200">📦</span>}
                       </div>
-                      {REF_DIMS.some(d => refDimVals(it, d.key).length > 0) && (
-                        <div className="flex gap-1 flex-wrap mt-1">
-                          {REF_DIMS.flatMap(d => refDimVals(it, d.key).map(v => (
-                            <button key={d.key + ':' + v} onClick={() => toggleFilter(d.key, v)}
-                              className="text-[10px] px-1.5 py-0.5 rounded hover:opacity-80"
-                              style={{ background: d.bg, color: d.color }}>{v}</button>
-                          )))}
-                        </div>
-                      )}
-                      {it.note && <p className="text-xs text-slate-500 mt-1 line-clamp-2 whitespace-pre-line" title={it.note}>{it.note}</p>}
-                      <div className="mt-auto pt-1.5 flex items-end justify-between gap-1">
-                        {linkedProjs.length > 0 ? (
-                          <div className="flex gap-x-1.5 gap-y-0.5 flex-wrap min-w-0">
-                            {linkedProjs.map(p => (
-                              <button key={p.id} onClick={() => onJumpToProject(p.id)}
-                                className="text-[10px] text-blue-500 hover:underline truncate max-w-[110px]">🔗 {p.name}</button>
-                            ))}
-                          </div>
-                        ) : <span />}
-                        <span className="text-[10px] text-slate-300 flex-shrink-0">{it.createdAt ? new Date(it.createdAt).toISOString().split('T')[0] : ''}</span>
+                      <div className="p-2">
+                        <p className="text-xs font-medium text-slate-800 leading-tight line-clamp-2">{g.project.name}</p>
+                        {g.project.code && <p className="text-[10px] text-slate-400 font-mono truncate">{g.project.code}</p>}
+                        <p className="text-[10px] text-violet-600 mt-1">{g.docs.length} 份文件 · {imgCount} 張圖</p>
                       </div>
+                    </button>
+                  );
+                })}
+                {grouped.orphans.length > 0 && (
+                  <button onClick={() => setDrillPid('__none__')}
+                    className="border border-dashed border-slate-300 rounded-xl bg-white overflow-hidden hover:border-violet-300 transition text-left flex flex-col">
+                    <div className="h-28 bg-slate-50 flex items-center justify-center"><span className="text-3xl text-slate-200">🗂</span></div>
+                    <div className="p-2">
+                      <p className="text-xs font-medium text-slate-600 leading-tight">未關聯產品</p>
+                      <p className="text-[10px] text-slate-400 mt-1">{grouped.orphans.length} 份文件</p>
                     </div>
-                  </div>
-                );
-              })}
+                  </button>
+                )}
+              </div>
+            )
+          )}
+
+          {/* ── 檢視 2：點進某產品，看它集結的所有檔案 ── */}
+          {viewMode === 'products' && drillPid && (
+            <div className="pb-2">
+              <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-100">
+                <button onClick={() => setDrillPid(null)} className="text-xs text-slate-500 hover:text-slate-800">← 返回</button>
+                {drillGroup?.project ? (
+                  <>
+                    <div className="w-9 h-9 rounded bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+                      {(() => {
+                        const pi = (drillGroup.project.productImages || [])[0];
+                        const s = pi ? (pi.dataUrl || pi.url) : null;
+                        return s ? <img src={s} alt="" className="w-full h-full object-contain" /> : <span className="text-slate-300 text-xs">📦</span>;
+                      })()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-800 truncate">{drillGroup.project.name}</p>
+                      <p className="text-[10px] text-slate-400">{(drillGroup.docs || []).length} 份文件</p>
+                    </div>
+                    <button onClick={() => onJumpToProject(drillGroup.project.id)}
+                      className="text-[11px] text-blue-500 hover:underline flex-shrink-0">開啟產品卡片 →</button>
+                  </>
+                ) : (
+                  <p className="text-sm font-medium text-slate-700">未關聯產品的文件</p>
+                )}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                {(drillGroup?.docs || []).map(renderDocCard)}
+              </div>
             </div>
+          )}
+
+          {/* ── 檢視 3：所有文件（不分產品） ── */}
+          {viewMode === 'docs' && (
+            filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center text-center py-16 text-slate-400">
+                <p className="text-4xl mb-3">📁</p>
+                <p className="text-sm">{items.length === 0 ? '還沒有文件' : '找不到符合的文件'}</p>
+                {canEdit && items.length === 0 && <button onClick={() => startAdd()} className="mt-3 text-xs text-violet-600 hover:underline">+ 新增第一筆</button>}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pb-2">
+                {filtered.map(renderDocCard)}
+              </div>
+            )
           )}
         </div>
 
@@ -8261,22 +8414,49 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                     rows={3} placeholder="來源、售價、觀察心得..."
                     className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded resize-none focus:outline-none focus:border-violet-400" />
                 </div>
-                {/* 圖片 */}
-                <div>
-                  <label className="block text-xs text-slate-600 mb-1">圖片</label>
+                {/* 圖片／檔案（支援拖曳） */}
+                <div
+                  onDragOver={e => { e.preventDefault(); setFormDragOver(true); }}
+                  onDragLeave={e => { e.preventDefault(); setFormDragOver(false); }}
+                  onDrop={async e => {
+                    e.preventDefault();
+                    setFormDragOver(false);
+                    await addEditingFiles(e.dataTransfer.files);
+                  }}
+                  className={`rounded-lg transition ${formDragOver ? 'ring-2 ring-violet-400 bg-violet-50/50 p-2 -m-2' : ''}`}
+                >
+                  <label className="block text-xs text-slate-600 mb-1">
+                    圖片／檔案
+                    <span className="text-slate-400 ml-1">
+                      {formDragOver ? '· ↓ 放開以加入' : '· 可直接把檔案拖進來'}
+                    </span>
+                  </label>
                   <div className="flex gap-1.5 flex-wrap items-center">
-                    {(editing.images || []).map((img, i) => (
-                      <div key={i} className="relative group/img">
-                        <img src={img.dataUrl || img.url} alt="" className="w-14 h-14 object-contain rounded border border-slate-200 bg-slate-50" />
-                        <button onClick={() => setEditing(v => ({ ...v, images: v.images.filter((_, j) => j !== i) }))}
-                          className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-500 text-white rounded-full text-[10px] flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition">×</button>
-                      </div>
-                    ))}
+                    {(editing.images || []).map((img, i) => {
+                      const src = img.dataUrl || img.url;
+                      const isImg = !!img.dataUrl || (img.type || '').startsWith('image/');
+                      return (
+                        <div key={i} className="relative group/img">
+                          {isImg ? (
+                            <img src={src} alt="" className="w-14 h-14 object-contain rounded border border-slate-200 bg-slate-50" />
+                          ) : (
+                            <a href={src} target="_blank" rel="noreferrer"
+                              title={img.name}
+                              className="w-14 h-14 flex flex-col items-center justify-center rounded border border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 overflow-hidden">
+                              <span className="text-lg leading-none">📎</span>
+                              <span className="text-[8px] px-0.5 leading-tight line-clamp-2 text-center">{img.name}</span>
+                            </a>
+                          )}
+                          <button onClick={() => setEditing(v => ({ ...v, images: v.images.filter((_, j) => j !== i) }))}
+                            className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-rose-500 text-white rounded-full text-[10px] flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition">×</button>
+                        </div>
+                      );
+                    })}
                     <label className="w-14 h-14 flex flex-col items-center justify-center border border-dashed border-slate-300 rounded cursor-pointer hover:bg-slate-50 text-slate-400 text-center">
                       <span className="text-lg leading-none">+</span>
                       <span className="text-[9px]">上傳</span>
-                      <input type="file" accept="image/*" multiple className="hidden" onChange={async e => {
-                        for (const f of Array.from(e.target.files || [])) await addEditingImage(f);
+                      <input type="file" multiple className="hidden" onChange={async e => {
+                        await addEditingFiles(e.target.files);
                         e.target.value = '';
                       }} />
                     </label>
@@ -8303,14 +8483,19 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                 <div>
                   <label className="block text-xs text-slate-600 mb-1">關聯產品（選填，可多個）</label>
                   {(editing.relatedProjectIds || []).length > 0 && (
-                    <div className="flex flex-wrap gap-1 mb-1">
+                    <div className="flex flex-wrap gap-1.5 mb-1.5">
                       {editing.relatedProjectIds.map(pid => {
                         const proj = projects.find(p => String(p.id) === String(pid));
+                        const pi = proj ? (proj.productImages || [])[0] : null;
+                        const psrc = pi ? (pi.dataUrl || pi.url) : null;
                         return (
-                          <span key={pid} className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">
-                            🔗 {proj ? proj.name : '（產品已刪除）'}
+                          <span key={pid} className="inline-flex items-center gap-1.5 pl-1 pr-1.5 py-1 rounded-lg bg-blue-50 border border-blue-100">
+                            <span className="w-7 h-7 rounded bg-white border border-blue-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+                              {psrc ? <img src={psrc} alt="" className="w-full h-full object-contain" /> : <span className="text-[10px] text-slate-300">📦</span>}
+                            </span>
+                            <span className="text-[11px] text-blue-700 max-w-[110px] truncate">{proj ? proj.name : '（產品已刪除）'}</span>
                             <button onClick={() => setEditing(v => ({ ...v, relatedProjectIds: v.relatedProjectIds.filter(x => x !== pid) }))}
-                              className="hover:opacity-60 font-bold leading-none">×</button>
+                              className="text-blue-400 hover:text-rose-500 font-bold leading-none">×</button>
                           </span>
                         );
                       })}
@@ -8323,22 +8508,33 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                     <div className="p-2 rounded border border-violet-200 bg-violet-50/50">
                       <div className="flex items-center gap-2 mb-1.5">
                         <input value={projSearch} onChange={e => setProjSearch(e.target.value)}
-                          placeholder="搜尋產品..." autoFocus
+                          placeholder="搜尋產品名稱或編碼..." autoFocus
                           className="flex-1 px-2 py-1 text-xs border border-slate-200 rounded bg-white focus:outline-none focus:border-violet-400" />
                         <button onClick={() => setShowProjPicker(false)} className="text-[11px] text-slate-400 underline">關閉</button>
                       </div>
-                      <div className="max-h-36 overflow-y-auto space-y-0.5">
+                      {/* 圖像式挑選：看圖選產品，不用純文字猜 */}
+                      <div className="max-h-56 overflow-y-auto grid grid-cols-3 gap-1.5">
                         {projects
                           .filter(p => !(editing.relatedProjectIds || []).some(x => String(x) === String(p.id)))
                           .filter(p => !projSearch || (p.name || '').toLowerCase().includes(projSearch.toLowerCase()) || (p.code || '').toLowerCase().includes(projSearch.toLowerCase()))
-                          .slice(0, 30)
-                          .map(p => (
-                            <button key={p.id}
-                              onClick={() => setEditing(v => ({ ...v, relatedProjectIds: [...(v.relatedProjectIds || []), p.id] }))}
-                              className="w-full text-left px-2 py-1 text-xs text-slate-700 hover:bg-white rounded truncate">
-                              {p.name}{p.code ? ` (${p.code})` : ''}
-                            </button>
-                          ))}
+                          .slice(0, 60)
+                          .map(p => {
+                            const pi = (p.productImages || [])[0];
+                            const psrc = pi ? (pi.dataUrl || pi.url) : null;
+                            return (
+                              <button key={p.id}
+                                onClick={() => setEditing(v => ({ ...v, relatedProjectIds: [...(v.relatedProjectIds || []), p.id] }))}
+                                className="border border-slate-200 rounded-lg bg-white overflow-hidden hover:border-violet-400 transition text-left">
+                                <div className="h-14 bg-slate-50 flex items-center justify-center">
+                                  {psrc ? <img src={psrc} alt="" className="w-full h-full object-contain" /> : <span className="text-slate-200 text-lg">📦</span>}
+                                </div>
+                                <div className="px-1 py-1">
+                                  <p className="text-[10px] text-slate-700 leading-tight line-clamp-2">{p.name}</p>
+                                  {p.code && <p className="text-[9px] text-slate-400 font-mono truncate">{p.code}</p>}
+                                </div>
+                              </button>
+                            );
+                          })}
                       </div>
                     </div>
                   )}

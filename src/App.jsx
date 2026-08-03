@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.37.1';
-const BUILD_ID = '20260803-2330';
+const APP_VERSION = 'v1.37.2';
+const BUILD_ID = '20260804-0030';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.37.2',
+    date: '2026-08-04',
+    changes: [
+      '⬇️ 產品卡片的「相關文件」移到最下方（備註之後），不再卡在產品資訊中間',
+      '🔧 修正產品卡片內相關文件的破圖：非圖片檔改顯示檔案類型圖示並可點擊下載，圖片改用 StorageImage',
+    ],
+  },
   {
     version: 'v1.37.1',
     date: '2026-08-03',
@@ -4351,11 +4359,21 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
                 {imgs.length > 0 && (
                   <div className="flex gap-1.5 flex-wrap">
                     {imgs.map((img, i) => {
-                      const src = img.dataUrl || img.url;
-                      return src ? (
-                        <img key={i} src={src} alt="" onClick={() => setViewing(src)}
-                          className="w-16 h-16 object-contain rounded border border-slate-200 bg-white cursor-pointer hover:ring-2 hover:ring-violet-300" />
-                      ) : null;
+                      const src = img.dataUrl || img.url || '';
+                      const isImg = refFileIsImage(img);
+                      return isImg ? (
+                        <div key={i} onClick={() => src && setViewing(src)}
+                          className="w-16 h-16 rounded border border-slate-200 bg-white cursor-pointer hover:ring-2 hover:ring-violet-300 overflow-hidden flex items-center justify-center">
+                          <StorageImage src={src} path={img.path} alt="" className="w-full h-full object-contain" />
+                        </div>
+                      ) : (
+                        // 非圖片（PDF／Excel／STEP…）顯示檔案類型圖示，點擊可開啟下載，不再硬塞給 <img> 變破圖
+                        <a key={i} href={src || undefined} target="_blank" rel="noreferrer" title={img.name}
+                          className="w-16 h-16 rounded border border-slate-200 bg-white hover:ring-2 hover:ring-violet-300 flex flex-col items-center justify-center overflow-hidden p-1">
+                          <span className="text-xl leading-none">{getFileIcon(img.name, img.type)}</span>
+                          <span className="text-[8px] text-slate-500 leading-tight line-clamp-2 text-center mt-0.5">{img.name}</span>
+                        </a>
+                      );
                     })}
                   </div>
                 )}
@@ -4691,13 +4709,6 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             projectName={project.name}
           />
 
-          <LinkedRefFilesSection
-            project={project}
-            refFiles={refFiles}
-            onOpenRefLibrary={onOpenRefLibrary}
-            canEdit={!isViewer}
-          />
-
           <PhaseTimeline
             project={project}
             onOverride={(phase) => onUpdateField('phaseOverride', phase)}
@@ -4912,6 +4923,14 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
               </div>
             )}
           </section>
+
+          {/* 相關文件放最後：文件量可能很多，不要卡在產品資訊中間 */}
+          <LinkedRefFilesSection
+            project={project}
+            refFiles={refFiles}
+            onOpenRefLibrary={onOpenRefLibrary}
+            canEdit={!isViewer}
+          />
         </div>
       </div>
 

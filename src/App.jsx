@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.35.0';
-const BUILD_ID = '20260803-1400';
+const APP_VERSION = 'v1.35.1';
+const BUILD_ID = '20260803-1600';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.35.1',
+    date: '2026-08-03',
+    changes: [
+      '📤 產品圖片區新增「→ 移到文件中心」：勾選卡片上的圖，一鍵建立文件並自動關聯此產品，之後只要補上文件類型／版本等標籤',
+      '♻️ 搬移沿用同一個 Storage 檔案，不重新上傳、不重複佔用空間；可選擇是否同時從卡片移除（不勾則兩邊都看得到）',
+      '⚠️ 勾到封面圖時會提醒卡片列表縮圖將改變',
+    ],
+  },
   {
     version: 'v1.35.0',
     date: '2026-08-03',
@@ -4632,6 +4641,8 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           <ProductImagesSection
             images={project.productImages || []}
             onChange={(imgs) => onUpdateField('productImages', imgs)}
+            projectId={isViewer ? null : project.id}
+            projectName={project.name}
           />
 
           <LinkedRefFilesSection
@@ -5772,7 +5783,7 @@ function StorageImage({ src, path, alt, className, onClick, style }) {
 }
 
 
-function ProductImagesSection({ images, onChange }) {
+function ProductImagesSection({ images, onChange, projectId, projectName }) {
   const [previewIdx, setPreviewIdx] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -5780,6 +5791,12 @@ function ProductImagesSection({ images, onChange }) {
   const [cropQueue, setCropQueue] = useState([]); // 等待裁剪的檔案
   const [cropCurrent, setCropCurrent] = useState(null); // 目前正在裁剪的檔案
   const [pasteHint, setPasteHint] = useState(false); // 滑鼠進入時顯示「可貼上」提示
+  // 一鍵搬到文件中心
+  const [moving, setMoving] = useState(false);
+  const [moveSel, setMoveSel] = useState([]); // 勾選的 index
+  const [moveTitle, setMoveTitle] = useState('');
+  const [moveRemove, setMoveRemove] = useState(true); // 是否同時從卡片移除
+  const [moveBusy, setMoveBusy] = useState(false);
   const dragCounter = useRef(0);
   const sectionRef = useRef(null);
   const fileRef = useRef(null);
@@ -5893,6 +5910,44 @@ function ProductImagesSection({ images, onChange }) {
     setPreviewIdx(null);
   };
 
+  const openMove = () => {
+    setMoveSel(images.map((_, i) => i));
+    setMoveTitle(`${projectName || '產品'} 相關圖檔`);
+    setMoveRemove(true);
+    setMoving(true);
+  };
+
+  // 搬到文件中心：沿用同一個 Storage 檔案（不重新上傳、不重複佔空間）
+  const confirmMove = async () => {
+    if (moveSel.length === 0 || !moveTitle.trim()) return;
+    setMoveBusy(true);
+    try {
+      const picked = moveSel.slice().sort((a, b) => a - b).map(i => images[i]).filter(Boolean);
+      const refId = 'ref_' + Date.now();
+      await setDoc(doc(db, REFERENCE_COL, refId), {
+        id: refId,
+        title: moveTitle.trim(),
+        ...Object.fromEntries(REF_DIMS.map(d => [d.key, []])),
+        note: '',
+        images: picked,
+        relatedProjectIds: projectId ? [projectId] : [],
+        relatedProjectId: '',
+        createdAt: Date.now(),
+        createdBy: '',
+      });
+      if (moveRemove) {
+        // 只從卡片移除參照，不刪 Storage 檔案（文件中心正指向同一個檔案）
+        onChange(images.filter((_, i) => !moveSel.includes(i)));
+      }
+      setMoving(false);
+      alert(`已建立文件「${moveTitle.trim()}」並關聯到此產品 ✅\n可到文件中心補上文件類型／版本等標籤。`);
+    } catch (err) {
+      alert('搬移失敗：' + err.message);
+    } finally {
+      setMoveBusy(false);
+    }
+  };
+
   return (
     <section
       ref={sectionRef}
@@ -5924,14 +5979,25 @@ function ProductImagesSection({ images, onChange }) {
           產品圖片 {dragOver && <span className="text-blue-600 ml-2 text-[11px]">↓ 放開以上傳</span>}
           {pasteHint && !dragOver && <span className="text-slate-400 ml-2 text-[10px] normal-case">· 可拖檔或 Ctrl+V 貼上</span>}
         </h3>
-        <button
-          onClick={() => fileRef.current?.click()}
-          disabled={uploading}
-          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium disabled:opacity-40"
-        >
-          {uploading ? <Loader className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-          {uploading ? `上傳中 ${progress.toFixed(0)}%` : '上傳圖片'}
-        </button>
+        <div className="flex items-center gap-3">
+          {projectId && images.length > 0 && (
+            <button
+              onClick={() => moving ? setMoving(false) : openMove()}
+              className="text-[11px] text-violet-600 hover:underline"
+              title="把圖檔改放到文件中心並自動關聯此產品（沿用同一個檔案，不會重複佔空間）"
+            >
+              {moving ? '取消' : '→ 移到文件中心'}
+            </button>
+          )}
+          <button
+            onClick={() => fileRef.current?.click()}
+            disabled={uploading}
+            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium disabled:opacity-40"
+          >
+            {uploading ? <Loader className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+            {uploading ? `上傳中 ${progress.toFixed(0)}%` : '上傳圖片'}
+          </button>
+        </div>
         <input
           ref={fileRef}
           type="file"
@@ -5941,6 +6007,50 @@ function ProductImagesSection({ images, onChange }) {
           className="hidden"
         />
       </div>
+
+      {/* 一鍵搬到文件中心 */}
+      {moving && (
+        <div className="mb-3 p-3 rounded-lg border border-violet-200 bg-violet-50/40">
+          <p className="text-[11px] text-slate-600 mb-2">
+            勾選要搬到文件中心的圖，會建立一筆文件並自動關聯此產品。
+            <span className="text-slate-400">（沿用同一個檔案，不會重複佔用空間）</span>
+          </p>
+          <div className="flex gap-2 flex-wrap mb-2.5">
+            {images.map((img, i) => {
+              const on = moveSel.includes(i);
+              return (
+                <button key={i}
+                  onClick={() => setMoveSel(s => on ? s.filter(x => x !== i) : [...s, i])}
+                  className="relative w-16 h-16 rounded border-2 overflow-hidden bg-white"
+                  style={{ borderColor: on ? '#7c3aed' : '#e2e8f0' }}>
+                  <img src={getImgUrl(img)} alt="" className="w-full h-full object-contain" />
+                  {on && (
+                    <span className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-violet-600 text-white text-[10px] flex items-center justify-center">✓</span>
+                  )}
+                  {i === 0 && <span className="absolute bottom-0 left-0 right-0 bg-slate-900/60 text-white text-[9px] leading-tight">封面</span>}
+                </button>
+              );
+            })}
+          </div>
+          <label className="block text-[11px] text-slate-600 mb-1">文件標題</label>
+          <input value={moveTitle} onChange={e => setMoveTitle(e.target.value)}
+            className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-violet-400 mb-2" />
+          <label className="flex items-center gap-1.5 text-[11px] text-slate-600 mb-2.5 cursor-pointer">
+            <input type="checkbox" checked={moveRemove} onChange={e => setMoveRemove(e.target.checked)} />
+            同時從產品卡片移除這些圖（不勾則兩邊都看得到）
+          </label>
+          {moveRemove && moveSel.includes(0) && (
+            <p className="text-[11px] text-amber-600 mb-2">⚠ 你選了封面圖，移除後卡片列表的縮圖會換成下一張。</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setMoving(false)} className="text-xs px-3 py-1.5 hover:bg-white rounded">取消</button>
+            <button onClick={confirmMove} disabled={moveBusy || moveSel.length === 0 || !moveTitle.trim()}
+              className="text-xs px-4 py-1.5 text-white rounded disabled:opacity-40" style={{ background: '#7c3aed' }}>
+              {moveBusy ? '搬移中...' : `搬移 ${moveSel.length} 張`}
+            </button>
+          </div>
+        </div>
+      )}
 
       {uploading && (
         <div className="h-1 bg-blue-100 rounded-full overflow-hidden mb-2">

@@ -49,10 +49,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.34.2';
-const BUILD_ID = '20260731-1500';
+const APP_VERSION = 'v1.35.0';
+const BUILD_ID = '20260803-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.35.0',
+    date: '2026-08-03',
+    changes: [
+      '📁 「參考資料」全面升級為「文件中心」：BOM、Test Report、Certification、Datasheet、報價、供應商資料、外購件文件、工程討論、未採用方案…全部檔案的統一入口',
+      '🔗 一份文件可同時關聯多個產品（原本只能關聯一個）；卡片的「相關文件」區與文件中心皆支援多產品關聯，取消單一產品關聯不影響其他產品',
+      '🏷️ 標籤維度重整為：文件類型 / 版本 / 供應商 / 外購件 / 產品類別 / 關鍵字，各維度分行顯示、可分別篩選（皆選填、可自訂文字）',
+      '📇 供應商與外購件名字存入共用清單：填過一次之後下次直接點選，名字打法一致、搜尋不漏',
+      '🔍 全域搜尋再升級：搜產品名稱/編碼也會找到「關聯到該產品的所有文件」',
+    ],
+  },
   {
     version: 'v1.34.2',
     date: '2026-07-31',
@@ -2977,11 +2988,11 @@ export default function ProductRoadmap() {
             </button>
             <button
               onClick={() => setShowRefLibrary(true)}
-              title="參考資料庫（競品、靈感、未立案檔案）"
+              title="文件中心（BOM、報告、報價、供應商、外購件、競品…統一入口）"
               className="p-2 text-slate-500 hover:bg-violet-50 hover:text-violet-700 rounded-lg inline-flex items-center gap-1"
             >
               <span>📁</span>
-              <span className="hidden sm:inline text-xs">參考資料</span>
+              <span className="hidden sm:inline text-xs">文件中心</span>
             </button>
             <div className="relative group">
               <button title="匯出" className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
@@ -4171,27 +4182,31 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
 }
 
 
-// 產品卡片內：顯示連結到此產品的參考資料庫檔案（讓人在卡片上就看到相關圖檔，不用另跑參考資料庫）
-// 編輯模式下永遠顯示：沒有關聯檔案時給提示 + 可直接從卡片挑參考資料建立關聯
+// 產品卡片內：顯示文件中心裡連結到此產品的文件（人在卡片上就看到相關檔案，不用另跑文件中心）
+// 編輯模式下永遠顯示：沒有關聯文件時給提示 + 可直接從卡片挑文件建立關聯
+// 一份文件可同時關聯多個產品；加入/取消只動這個產品的關聯，不影響它與其他產品的連結
 function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEdit = false }) {
   const [viewing, setViewing] = useState(null); // 放大預覽 src
   const [picking, setPicking] = useState(false); // 是否展開「選檔案來關聯」
   const [pickSearch, setPickSearch] = useState('');
+  const isLinked = (r) => refLinkedProjIds(r).some(pid => String(pid) === String(project.id));
   const linked = useMemo(
-    () => (refFiles || []).filter(r => String(r.relatedProjectId) === String(project.id)),
+    () => (refFiles || []).filter(isLinked),
     [refFiles, project.id]
   );
-  // 可供關聯的候選：尚未關聯到此產品的參考資料
+  // 可供關聯的候選：尚未關聯到此產品的文件（可能已關聯其他產品，沒關係，多對多）
   const candidates = useMemo(() => {
     const kw = pickSearch.trim().toLowerCase();
     return (refFiles || [])
-      .filter(r => String(r.relatedProjectId) !== String(project.id))
+      .filter(r => !isLinked(r))
       .filter(r => !kw || [r.title, ...REF_DIMS.flatMap(d => refDimVals(r, d.key))].join(' ').toLowerCase().includes(kw))
       .slice(0, 40);
   }, [refFiles, project.id, pickSearch]);
 
-  const setLink = async (refId, toThisProject) => {
-    await setDoc(doc(db, REFERENCE_COL, refId), { relatedProjectId: toThisProject ? project.id : '' }, { merge: true });
+  const setLink = async (r, toThisProject) => {
+    const others = refLinkedProjIds(r).filter(pid => String(pid) !== String(project.id));
+    const next = toThisProject ? [...others, project.id] : others;
+    await setDoc(doc(db, REFERENCE_COL, r.id), { relatedProjectIds: next, relatedProjectId: '' }, { merge: true });
   };
 
   // 檢視者且無關聯 → 不佔版面
@@ -4202,38 +4217,39 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
     <section id="pd-reffiles">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-medium text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
-          🔗 相關參考檔案
+          🔗 相關文件
           {linked.length > 0 && <span className="text-[10px] text-slate-400 normal-case">（{linked.length} 筆 · {totalImgs} 張圖）</span>}
         </h3>
         <div className="flex items-center gap-2">
           {canEdit && (
             <button onClick={() => { setPicking(v => !v); setPickSearch(''); }}
-              className="text-[11px] text-violet-600 hover:underline">{picking ? '收合' : '＋ 關聯檔案'}</button>
+              className="text-[11px] text-violet-600 hover:underline">{picking ? '收合' : '＋ 關聯文件'}</button>
           )}
           {onOpenRefLibrary && (
             <button onClick={() => onOpenRefLibrary(project)}
-              className="text-[11px] text-slate-400 hover:text-violet-600 hover:underline">參考資料庫 →</button>
+              className="text-[11px] text-slate-400 hover:text-violet-600 hover:underline">文件中心 →</button>
           )}
         </div>
       </div>
 
-      {/* 挑選要關聯的參考資料 */}
+      {/* 挑選要關聯的文件 */}
       {canEdit && picking && (
         <div className="mb-2 p-2 rounded-lg border border-violet-200 bg-violet-50/40">
           <input value={pickSearch} onChange={e => setPickSearch(e.target.value)}
-            placeholder="搜尋參考資料庫的檔案標題 / 標籤..." autoFocus
+            placeholder="搜尋文件中心的檔案標題 / 標籤..." autoFocus
             className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-white focus:outline-none focus:border-violet-400 mb-1.5" />
           <div className="max-h-44 overflow-y-auto space-y-1">
             {candidates.length === 0 ? (
               <p className="text-[11px] text-slate-400 px-1 py-2 text-center">
-                參考資料庫沒有可關聯的檔案。<br />可先到「參考資料庫」新增檔案。
+                文件中心沒有可關聯的檔案。<br />可先到「文件中心」新增檔案。
               </p>
             ) : candidates.map(r => {
               const cover = (r.images || [])[0];
               const csrc = cover ? (cover.dataUrl || cover.url) : null;
-              const already = r.relatedProjectId ? '（原關聯將移到此產品）' : '';
+              const others = refLinkedProjIds(r).length;
+              const already = others > 0 ? `（已另關聯 ${others} 個產品，會一併保留）` : '';
               return (
-                <button key={r.id} onClick={() => setLink(r.id, true)}
+                <button key={r.id} onClick={() => setLink(r, true)}
                   className="w-full flex items-center gap-2 p-1 rounded hover:bg-white text-left">
                   <div className="w-9 h-9 rounded bg-white border border-slate-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
                     {csrc ? <img src={csrc} alt="" className="w-full h-full object-contain" /> : <span className="text-slate-300 text-xs">📄</span>}
@@ -4254,7 +4270,7 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
         canEdit && !picking && (
           <button onClick={() => { setPicking(true); setPickSearch(''); }}
             className="w-full py-3 text-[11px] text-slate-400 border border-dashed border-slate-200 rounded-lg hover:bg-slate-50">
-            尚無關聯此產品的參考檔案 · 點此從參考資料庫挑一筆關聯進來
+            尚無關聯此產品的文件 · 點此從文件中心挑選關聯進來
           </button>
         )
       ) : (
@@ -4272,7 +4288,7 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
                     )))}
                   </div>
                   {canEdit && (
-                    <button onClick={() => setLink(it.id, false)}
+                    <button onClick={() => setLink(it, false)}
                       className="text-[10px] text-slate-300 hover:text-rose-500 flex-shrink-0 whitespace-nowrap">取消關聯</button>
                   )}
                 </div>
@@ -7751,23 +7767,36 @@ async function exportCustomerListXLSX(list, items) {
   a.click();
 }
 
-// ============= 參考資料庫 =============
-// 競品、靈感、客戶提供、外購品、還沒立案的雜檔都放這裡；可選填關聯產品
-// 四個標籤維度：產品類別 / 廠商 / 性質 / 關鍵字，皆可自訂文字、一檔可多標籤
+// ============= 文件中心（原參考資料庫） =============
+// 所有不放在產品卡片封面的檔案都收這裡：BOM、Test Report、Datasheet、報價、
+// 供應商資料、外購件文件、工程討論、未採用方案、競品、靈感…
+// 標籤分維度，皆可自訂文字、一檔可多標籤；一份文件可同時關聯多個產品
 
-// 性質維度的預設選項（沿用老闆資料夾的分類；使用者可自行新增其他文字）
-const REF_NATURE_PRESET = ['外購', '供應商', '專利', '客戶專屬', 'RFP', '迭代版本', '其他'];
+// 各維度的預設選項（只是起頭，使用者可自行新增文字）
+// 注意：natures / vendors 沿用舊欄位 key，只改顯示名稱，既有資料不受影響
+const REF_DIM_PRESETS = {
+  natures: ['BOM', 'Test Report', 'Certification', 'Datasheet', '報價', '圖檔', '工程討論', '未採用方案', '專利', 'RFP', '客戶專屬', '其他'],
+  versions: ['正式版', 'V2', 'Prototype', '未採用'],
+};
 
-// 四個標籤維度定義（key 對應存進 Firestore 的欄位；color 是 chip 顏色）
+// 標籤維度定義（key 對應存進 Firestore 的欄位；registry=true 的維度會把新值記進共用清單）
 const REF_DIMS = [
+  { key: 'natures', label: '文件類型', color: '#7c3aed', bg: '#ede9fe', ph: '例：BOM、Test Report、報價' },
+  { key: 'versions', label: '版本', color: '#10b981', bg: '#d1fae5', ph: '例：正式版、V2、Prototype' },
+  { key: 'vendors', label: '供應商', color: '#f59e0b', bg: '#fef3c7', ph: '例：凱博、Avane、生生', registry: true },
+  { key: 'parts', label: '外購件', color: '#f43f5e', bg: '#ffe4e6', ph: '例：磁鐵、Type-C 線材', registry: true },
   { key: 'cats', label: '產品類別', color: '#0ea5e9', bg: '#e0f2fe', ph: '例：車用支架、Qi無線充電' },
-  { key: 'vendors', label: '廠商', color: '#f59e0b', bg: '#fef3c7', ph: '例：凱博、Avane、生生' },
-  { key: 'natures', label: '性質', color: '#7c3aed', bg: '#ede9fe', ph: '例：外購、專利、迭代版本' },
   { key: 'tags', label: '關鍵字', color: '#64748b', bg: '#f1f5f9', ph: '例：黑色、折疊、供 2025 展會' },
 ];
 
-// 讀取某維度的值（tags 相容舊資料）
+// 讀取某維度的值（相容舊資料）
 function refDimVals(it, key) { return it[key] || []; }
+
+// 讀取文件關聯的產品 id 清單（新欄位 relatedProjectIds 陣列；相容舊的單一 relatedProjectId）
+function refLinkedProjIds(it) {
+  if (Array.isArray(it.relatedProjectIds)) return it.relatedProjectIds;
+  return it.relatedProjectId ? [it.relatedProjectId] : [];
+}
 
 // 可重用的標籤輸入欄：打字 + Enter/逗號 新增，chip 可刪，下方可從既有值快速點選
 function RefTagField({ dim, values, options, onChange }) {
@@ -7817,33 +7846,50 @@ function RefTagField({ dim, values, options, onChange }) {
 
 function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose, onJumpToProject, initialSearch = '' }) {
   const [search, setSearch] = useState(initialSearch);
-  const [filters, setFilters] = useState({ cats: [], vendors: [], natures: [], tags: [] });
-  const [editing, setEditing] = useState(null); // {isNew, id, title, cats, vendors, natures, tags, note, images, relatedProjectId}
+  const blankFilters = () => Object.fromEntries(REF_DIMS.map(d => [d.key, []]));
+  const [filters, setFilters] = useState(blankFilters);
+  const [editing, setEditing] = useState(null); // {isNew, id, title, <各維度>, note, images, relatedProjectIds}
   const [projSearch, setProjSearch] = useState('');
   const [showProjPicker, setShowProjPicker] = useState(false);
   const [viewingImg, setViewingImg] = useState(null); // 放大預覽 src
 
-  // 每個維度出現過的值（做篩選 chips + 編輯時的快速選項）；性質額外帶入預設選項
+  // 供應商 / 外購件的共用清單（存 app_settings，讓名字打法一致；選填、可現場新增）
+  const [registry, setRegistry] = useState({ vendors: [], parts: [] });
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'app_settings', 'document_registry'), (snap) => {
+      if (snap.exists()) setRegistry({ vendors: [], parts: [], ...snap.data() });
+    });
+    return () => unsub();
+  }, []);
+
+  // 編輯表單可選的值 = 預設選項 + 共用清單 + 既有資料出現過的值
   const dimOptions = useMemo(() => {
     const out = {};
     REF_DIMS.forEach(d => {
-      const set = new Set(d.key === 'natures' ? REF_NATURE_PRESET : []);
+      const preset = REF_DIM_PRESETS[d.key] || [];
+      const set = new Set([...preset, ...(d.registry ? (registry[d.key] || []) : [])]);
       items.forEach(it => refDimVals(it, d.key).forEach(v => set.add(v)));
-      // 性質維持預設在前、其餘照字母；其他維度直接排序
-      if (d.key === 'natures') {
-        const extras = [...set].filter(v => !REF_NATURE_PRESET.includes(v)).sort();
-        out[d.key] = [...REF_NATURE_PRESET.filter(v => set.has(v) || true), ...extras];
-      } else {
-        out[d.key] = [...set].sort();
-      }
+      const extras = [...set].filter(v => !preset.includes(v)).sort();
+      out[d.key] = [...preset, ...extras];
     });
     return out;
-  }, [items]);
+  }, [items, registry]);
+
+  // 篩選列只顯示「實際有文件在用」的值，避免一排用不到的預設選項佔版面
+  const dimUsed = useMemo(() => {
+    const out = {};
+    REF_DIMS.forEach(d => {
+      const set = new Set();
+      items.forEach(it => refDimVals(it, d.key).forEach(v => set.add(v)));
+      out[d.key] = dimOptions[d.key].filter(v => set.has(v));
+    });
+    return out;
+  }, [items, dimOptions]);
 
   const toggleFilter = (key, val) => setFilters(f => ({
     ...f, [key]: f[key].includes(val) ? f[key].filter(x => x !== val) : [...f[key], val],
   }));
-  const clearFilters = () => setFilters({ cats: [], vendors: [], natures: [], tags: [] });
+  const clearFilters = () => setFilters(blankFilters());
   const hasFilters = REF_DIMS.some(d => filters[d.key].length > 0);
 
   const filtered = useMemo(() => {
@@ -7855,10 +7901,15 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
         if (filters[d.key].some(sel => !vals.includes(sel))) return false;
       }
       if (!kw) return true;
-      const hay = [it.title, it.note, ...REF_DIMS.flatMap(d => refDimVals(it, d.key))].join(' ').toLowerCase();
+      // 關鍵字比對：標題、備註、所有標籤，以及「關聯產品的名稱/編碼」——搜產品名也找得到它的文件
+      const linkedNames = refLinkedProjIds(it).flatMap(pid => {
+        const p = projects.find(x => String(x.id) === String(pid));
+        return p ? [p.name || '', p.code || ''] : [];
+      });
+      const hay = [it.title, it.note, ...REF_DIMS.flatMap(d => refDimVals(it, d.key)), ...linkedNames].join(' ').toLowerCase();
       return hay.includes(kw);
     });
-  }, [items, search, filters]);
+  }, [items, search, filters, projects]);
 
   // 全域搜尋：有輸入關鍵字時，一併帶出符合的產品卡片，讓老闆不用先判斷東西在哪
   const matchedProjects = useMemo(() => {
@@ -7869,11 +7920,13 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     ).slice(0, 12);
   }, [projects, search]);
 
-  const startAdd = () => setEditing({ isNew: true, id: 'ref_' + Date.now(), title: '', cats: [], vendors: [], natures: [], tags: [], note: '', images: [], relatedProjectId: '' });
+  const blankDims = () => Object.fromEntries(REF_DIMS.map(d => [d.key, []]));
+  const startAdd = () => setEditing({ isNew: true, id: 'ref_' + Date.now(), title: '', ...blankDims(), note: '', images: [], relatedProjectIds: [] });
   const startEdit = (it) => setEditing({
     isNew: false, id: it.id, title: it.title || '',
-    cats: it.cats || [], vendors: it.vendors || [], natures: it.natures || [], tags: it.tags || [],
-    note: it.note || '', images: it.images || [], relatedProjectId: it.relatedProjectId || '',
+    ...Object.fromEntries(REF_DIMS.map(d => [d.key, refDimVals(it, d.key)])),
+    note: it.note || '', images: it.images || [],
+    relatedProjectIds: refLinkedProjIds(it),
   });
 
   const saveEditing = async () => {
@@ -7882,17 +7935,24 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     const docData = {
       id: editing.id,
       title: editing.title.trim(),
-      cats: editing.cats || [],
-      vendors: editing.vendors || [],
-      natures: editing.natures || [],
-      tags: editing.tags || [],
+      ...Object.fromEntries(REF_DIMS.map(d => [d.key, editing[d.key] || []])),
       note: editing.note,
       images: editing.images,
-      relatedProjectId: editing.relatedProjectId || '',
+      relatedProjectIds: editing.relatedProjectIds || [],
+      relatedProjectId: '', // 舊單一欄位清空，之後一律以 relatedProjectIds 為準
       createdAt: orig?.createdAt || Date.now(),
       createdBy: orig?.createdBy || currentUser?.name || '',
     };
     await setDoc(doc(db, REFERENCE_COL, editing.id), docData);
+    // 供應商 / 外購件出現新名字時，記進共用清單（讓下次直接可選、名字一致）
+    const regUpdates = {};
+    REF_DIMS.filter(d => d.registry).forEach(d => {
+      const fresh = (editing[d.key] || []).filter(v => !(registry[d.key] || []).includes(v));
+      if (fresh.length) regUpdates[d.key] = [...(registry[d.key] || []), ...fresh].sort();
+    });
+    if (Object.keys(regUpdates).length) {
+      await setDoc(doc(db, 'app_settings', 'document_registry'), regUpdates, { merge: true });
+    }
     setEditing(null);
   };
 
@@ -7912,10 +7972,10 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
         <div className="flex items-center justify-between mb-3">
           <div>
             <h3 className="text-base font-medium flex items-center gap-2">
-              <span>📁</span>參考資料庫
+              <span>📁</span>文件中心
               <span className="text-xs text-slate-400 font-normal">({filtered.length} 筆)</span>
             </h3>
-            <p className="text-xs text-slate-500 mt-0.5">競品、靈感、客戶提供、未立案檔案 · 不佔產品編碼</p>
+            <p className="text-xs text-slate-500 mt-0.5">BOM、報告、報價、供應商、外購件、競品…全部檔案的統一入口 · 一份文件可關聯多個產品</p>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
             <X className="w-5 h-5 text-slate-500" />
@@ -7927,26 +7987,26 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-300 absolute left-3 top-1/2 -translate-y-1/2" />
             <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="全域搜尋：產品卡片 + 參考資料庫，打關鍵字一次找..."
+              placeholder="全域搜尋：產品卡片 + 文件中心，打關鍵字一次找..."
               className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400" />
           </div>
           {canEdit && (
             <button onClick={startAdd}
               className="px-3 py-2 text-xs text-white rounded-lg whitespace-nowrap" style={{ background: '#1e293b' }}>
-              + 新增資料
+              + 新增文件
             </button>
           )}
         </div>
-        {/* 分維度標籤篩選 */}
-        {REF_DIMS.some(d => dimOptions[d.key].length > 0) && (
+        {/* 分維度標籤篩選（只列實際用過的值） */}
+        {REF_DIMS.some(d => dimUsed[d.key].length > 0) && (
           <div className="space-y-1 mb-2 border border-slate-100 rounded-lg p-2 bg-slate-50/50">
-            {REF_DIMS.filter(d => dimOptions[d.key].length > 0).map(d => (
+            {REF_DIMS.filter(d => dimUsed[d.key].length > 0).map(d => (
               <div key={d.key} className="flex items-start gap-1.5">
                 <span className="text-[11px] text-slate-500 w-14 flex-shrink-0 pt-0.5 flex items-center gap-1">
                   <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: d.color }} />{d.label}
                 </span>
                 <div className="flex gap-1 flex-wrap flex-1">
-                  {dimOptions[d.key].map(v => {
+                  {dimUsed[d.key].map(v => {
                     const on = filters[d.key].includes(v);
                     return (
                       <button key={v} onClick={() => toggleFilter(d.key, v)}
@@ -7989,13 +8049,13 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                 })}
               </div>
               <div className="border-b border-slate-100 mt-3" />
-              <p className="text-[11px] text-slate-400 mt-2">📁 參考資料庫（{filtered.length}）</p>
+              <p className="text-[11px] text-slate-400 mt-2">📁 文件中心（{filtered.length}）</p>
             </div>
           )}
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center text-center py-16 text-slate-400">
               <p className="text-4xl mb-3">📁</p>
-              <p className="text-sm">{items.length === 0 ? '還沒有參考資料' : '找不到符合的資料'}</p>
+              <p className="text-sm">{items.length === 0 ? '還沒有文件' : '找不到符合的文件'}</p>
               {canEdit && items.length === 0 && <button onClick={startAdd} className="mt-3 text-xs text-violet-600 hover:underline">+ 新增第一筆</button>}
             </div>
           ) : (
@@ -8003,7 +8063,9 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               {filtered.map(it => {
                 const cover = (it.images || [])[0];
                 const coverSrc = cover ? (cover.dataUrl || cover.url) : null;
-                const relatedProj = it.relatedProjectId ? projects.find(p => String(p.id) === String(it.relatedProjectId)) : null;
+                const linkedProjs = refLinkedProjIds(it)
+                  .map(pid => projects.find(p => String(p.id) === String(pid)))
+                  .filter(Boolean);
                 return (
                   <div key={it.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden group flex flex-col">
                     {/* 圖片區 */}
@@ -8039,12 +8101,16 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                         </div>
                       )}
                       {it.note && <p className="text-xs text-slate-500 mt-1 line-clamp-2 whitespace-pre-line" title={it.note}>{it.note}</p>}
-                      <div className="mt-auto pt-1.5 flex items-center justify-between">
-                        {relatedProj ? (
-                          <button onClick={() => onJumpToProject(relatedProj.id)}
-                            className="text-[10px] text-blue-500 hover:underline truncate">🔗 {relatedProj.name}</button>
+                      <div className="mt-auto pt-1.5 flex items-end justify-between gap-1">
+                        {linkedProjs.length > 0 ? (
+                          <div className="flex gap-x-1.5 gap-y-0.5 flex-wrap min-w-0">
+                            {linkedProjs.map(p => (
+                              <button key={p.id} onClick={() => onJumpToProject(p.id)}
+                                className="text-[10px] text-blue-500 hover:underline truncate max-w-[110px]">🔗 {p.name}</button>
+                            ))}
+                          </div>
                         ) : <span />}
-                        <span className="text-[10px] text-slate-300">{it.createdAt ? new Date(it.createdAt).toISOString().split('T')[0] : ''}</span>
+                        <span className="text-[10px] text-slate-300 flex-shrink-0">{it.createdAt ? new Date(it.createdAt).toISOString().split('T')[0] : ''}</span>
                       </div>
                     </div>
                   </div>
@@ -8065,7 +8131,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
         {editing && (
           <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-[60] flex items-center justify-center p-4">
             <div className="bg-white rounded-xl max-w-md w-full p-5 max-h-[90vh] overflow-y-auto">
-              <h3 className="text-sm font-medium mb-4">{editing.isNew ? '新增' : '編輯'}參考資料</h3>
+              <h3 className="text-sm font-medium mb-4">{editing.isNew ? '新增' : '編輯'}文件</h3>
               <div className="space-y-3">
                 <div>
                   <label className="block text-xs text-slate-600 mb-1">標題 *</label>
@@ -8123,23 +8189,26 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                     </button>
                   </div>
                 </div>
-                {/* 關聯產品（選填） */}
+                {/* 關聯產品（選填、可多個） */}
                 <div>
-                  <label className="block text-xs text-slate-600 mb-1">關聯產品（選填）</label>
-                  {editing.relatedProjectId ? (
-                    (() => {
-                      const proj = projects.find(p => String(p.id) === String(editing.relatedProjectId));
-                      return (
-                        <div className="flex items-center gap-2 p-1.5 rounded border border-violet-200 bg-violet-50 text-sm">
-                          <span className="flex-1 truncate text-slate-700">{proj ? proj.name : '（產品已刪除）'}</span>
-                          <button onClick={() => setEditing(v => ({ ...v, relatedProjectId: '' }))}
-                            className="text-xs text-slate-400 hover:text-rose-500 underline">清除</button>
-                        </div>
-                      );
-                    })()
-                  ) : !showProjPicker ? (
+                  <label className="block text-xs text-slate-600 mb-1">關聯產品（選填，可多個）</label>
+                  {(editing.relatedProjectIds || []).length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-1">
+                      {editing.relatedProjectIds.map(pid => {
+                        const proj = projects.find(p => String(p.id) === String(pid));
+                        return (
+                          <span key={pid} className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">
+                            🔗 {proj ? proj.name : '（產品已刪除）'}
+                            <button onClick={() => setEditing(v => ({ ...v, relatedProjectIds: v.relatedProjectIds.filter(x => x !== pid) }))}
+                              className="hover:opacity-60 font-bold leading-none">×</button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {!showProjPicker ? (
                     <button onClick={() => { setShowProjPicker(true); setProjSearch(''); }}
-                      className="w-full py-1.5 text-xs text-slate-500 border border-dashed border-slate-300 rounded hover:bg-slate-50">＋ 選擇產品</button>
+                      className="w-full py-1.5 text-xs text-slate-500 border border-dashed border-slate-300 rounded hover:bg-slate-50">＋ 加入產品</button>
                   ) : (
                     <div className="p-2 rounded border border-violet-200 bg-violet-50/50">
                       <div className="flex items-center gap-2 mb-1.5">
@@ -8150,11 +8219,12 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                       </div>
                       <div className="max-h-36 overflow-y-auto space-y-0.5">
                         {projects
+                          .filter(p => !(editing.relatedProjectIds || []).some(x => String(x) === String(p.id)))
                           .filter(p => !projSearch || (p.name || '').toLowerCase().includes(projSearch.toLowerCase()) || (p.code || '').toLowerCase().includes(projSearch.toLowerCase()))
                           .slice(0, 30)
                           .map(p => (
                             <button key={p.id}
-                              onClick={() => { setEditing(v => ({ ...v, relatedProjectId: p.id })); setShowProjPicker(false); }}
+                              onClick={() => setEditing(v => ({ ...v, relatedProjectIds: [...(v.relatedProjectIds || []), p.id] }))}
                               className="w-full text-left px-2 py-1 text-xs text-slate-700 hover:bg-white rounded truncate">
                               {p.name}{p.code ? ` (${p.code})` : ''}
                             </button>

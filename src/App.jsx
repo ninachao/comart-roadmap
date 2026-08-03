@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.37.0';
-const BUILD_ID = '20260803-2230';
+const APP_VERSION = 'v1.37.1';
+const BUILD_ID = '20260803-2330';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.37.1',
+    date: '2026-08-03',
+    changes: [
+      '🤖 上傳檔案時依副檔名自動帶入文件類型：PDF→ID、STP/STEP/IGS→3D、Excel/CSV→BOM（僅在還沒選類型時帶入，可自行更改）',
+      '⚡ 自動命名格式改為「編碼_產品名稱_文件類型」',
+      '🏷 文件類型預設選項新增「ID」「3D」',
+    ],
+  },
   {
     version: 'v1.37.0',
     date: '2026-08-03',
@@ -7922,9 +7931,20 @@ async function exportCustomerListXLSX(list, items) {
 // 各維度的預設選項（只是起頭，使用者可自行新增文字）
 // 注意：natures / vendors 沿用舊欄位 key，只改顯示名稱，既有資料不受影響
 const REF_DIM_PRESETS = {
-  natures: ['BOM', 'Test Report', 'Certification', 'Datasheet', '報價', '圖檔', '工程討論', '未採用方案', '專利', 'RFP', '客戶專屬', '其他'],
+  natures: ['ID', '3D', 'BOM', 'Test Report', 'Certification', 'Datasheet', '報價', '圖檔', '工程討論', '未採用方案', '專利', 'RFP', '客戶專屬', '其他'],
   versions: ['正式版', 'V2', 'Prototype', '未採用'],
 };
+
+// 依副檔名推測文件類型（PDF 通常是 ID 圖、STP 是 3D、Excel 多半是 BOM）；只在使用者還沒選類型時自動帶入
+const EXT_TO_DOCTYPE = {
+  pdf: 'ID',
+  stp: '3D', step: '3D', igs: '3D', iges: '3D', stl: '3D', obj: '3D', sldprt: '3D', sldasm: '3D', x_t: '3D',
+  xlsx: 'BOM', xls: 'BOM', csv: 'BOM',
+};
+function guessDocType(name = '') {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  return EXT_TO_DOCTYPE[ext] || '';
+}
 
 // 標籤維度定義（key 對應存進 Firestore 的欄位；registry=true 的維度會把新值記進共用清單）
 const REF_DIMS = [
@@ -8184,6 +8204,9 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const addEditingFiles = async (fileList) => {
     const files = Array.from(fileList || []);
     if (!files.length) return;
+    // 依副檔名自動帶入文件類型（僅在還沒選任何類型時），使用者仍可自行更改
+    const guessed = files.map(f => guessDocType(f.name)).find(Boolean);
+    if (guessed) setEditing(v => (v && (v.natures || []).length === 0 ? { ...v, natures: [guessed] } : v));
     for (const f of files) {
       try {
         if (f.type.startsWith('image/')) {
@@ -8618,14 +8641,10 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-xs text-slate-600">標題 *</label>
                     {(() => {
-                      // 依「產品編碼 _ 文件類型 _ 日期」組出建議檔名，避免出現只叫「ID」這種沒情境的標題
+                      // 依「編碼 _ 產品名稱 _ 文件類型」組出建議檔名，避免出現只叫「ID」這種沒情境的標題
                       const p = projects.find(x => String(x.id) === String((editing.relatedProjectIds || [])[0]));
                       const typeVal = (editing.natures || [])[0] || (editing.versions || [])[0] || '';
-                      const parts = [
-                        p ? (p.code || p.name) : '',
-                        typeVal,
-                        (editing.docDate || '').replace(/-/g, ''),
-                      ].filter(Boolean);
+                      const parts = [p?.code || '', p?.name || '', typeVal].filter(Boolean);
                       if (parts.length < 2) return null;
                       const suggestion = parts.join('_');
                       if (suggestion === editing.title) return null;
@@ -8637,9 +8656,9 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                     })()}
                   </div>
                   <input value={editing.title} onChange={e => setEditing(v => ({ ...v, title: e.target.value }))}
-                    placeholder="例：HDRH0001_BOM_20260717" autoFocus
+                    placeholder="例：HDRH0001_鎖定式平板支架-拉伸版_ID" autoFocus
                     className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
-                  <p className="text-[10px] text-slate-400 mt-0.5">建議格式：產品編碼_文件類型_日期（先選好下方的關聯產品與文件類型，再按「⚡ 自動命名」）</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">建議格式：編碼_產品名稱_文件類型（選好關聯產品與文件類型後，按「⚡ 自動命名」；上傳 PDF／STP／Excel 會自動帶入 ID／3D／BOM）</p>
                 </div>
                 <div>
                   <label className="block text-xs text-slate-600 mb-1">日期</label>

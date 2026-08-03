@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.36.2';
-const BUILD_ID = '20260803-2100';
+const APP_VERSION = 'v1.37.0';
+const BUILD_ID = '20260803-2230';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.37.0',
+    date: '2026-08-03',
+    changes: [
+      '🏷 「所有文件」列表自動補上產品情境：標題前顯示「產品編碼 產品名 ›」，不會再出現看不懂的「ID」',
+      '⚡ 新增「自動命名」：依「產品編碼_文件類型_日期」一鍵組出標準檔名，並在表單標示建議格式',
+    ],
+  },
   {
     version: 'v1.36.2',
     date: '2026-08-03',
@@ -8212,6 +8220,17 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
         {/* 標題 + 標籤（標題吃滿剩餘空間，不再被硬切） */}
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-1.5 flex-wrap">
+            {/* 在「所有文件」檢視補上產品情境，避免只看到「ID」這種沒頭沒尾的標題 */}
+            {!drillPid && linkedProjs.length > 0 && (
+              <span className="text-[11px] text-slate-400 flex items-baseline gap-1">
+                <button onClick={() => onJumpToProject(linkedProjs[0].id)}
+                  className="hover:text-blue-500 hover:underline">
+                  {linkedProjs[0].code ? `${linkedProjs[0].code} ` : ''}{linkedProjs[0].name}
+                </button>
+                {linkedProjs.length > 1 && <span className="text-slate-300">+{linkedProjs.length - 1}</span>}
+                <span className="text-slate-300">›</span>
+              </span>
+            )}
             <button onClick={() => setPreviewDoc(it)}
               className="text-xs font-medium text-slate-800 text-left hover:text-violet-600 hover:underline break-all"
               title={it.title}>{it.title}</button>
@@ -8224,16 +8243,6 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
           </div>
           {it.note && <p className="text-[11px] text-slate-400 line-clamp-1" title={it.note}>{it.note}</p>}
         </div>
-        {/* 關聯產品（在「依產品」檢視內就不重複顯示） */}
-        {!drillPid && linkedProjs.length > 0 && (
-          <div className="hidden sm:flex gap-1.5 flex-shrink-0 max-w-[180px] overflow-hidden">
-            {linkedProjs.slice(0, 2).map(p => (
-              <button key={p.id} onClick={() => onJumpToProject(p.id)}
-                className="text-[10px] text-blue-500 hover:underline truncate max-w-[85px]">🔗 {p.name}</button>
-            ))}
-            {linkedProjs.length > 2 && <span className="text-[10px] text-slate-300">+{linkedProjs.length - 2}</span>}
-          </div>
-        )}
         <span className="text-[10px] text-slate-300 flex-shrink-0 hidden sm:inline">
           {it.createdAt ? tsToDateInput(it.createdAt) : ''}
         </span>
@@ -8606,10 +8615,31 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               <h3 className="text-sm font-medium mb-4">{editing.isNew ? '新增' : '編輯'}文件</h3>
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs text-slate-600 mb-1">標題 *</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs text-slate-600">標題 *</label>
+                    {(() => {
+                      // 依「產品編碼 _ 文件類型 _ 日期」組出建議檔名，避免出現只叫「ID」這種沒情境的標題
+                      const p = projects.find(x => String(x.id) === String((editing.relatedProjectIds || [])[0]));
+                      const typeVal = (editing.natures || [])[0] || (editing.versions || [])[0] || '';
+                      const parts = [
+                        p ? (p.code || p.name) : '',
+                        typeVal,
+                        (editing.docDate || '').replace(/-/g, ''),
+                      ].filter(Boolean);
+                      if (parts.length < 2) return null;
+                      const suggestion = parts.join('_');
+                      if (suggestion === editing.title) return null;
+                      return (
+                        <button onClick={() => setEditing(v => ({ ...v, title: suggestion }))}
+                          title={`套用：${suggestion}`}
+                          className="text-[11px] text-violet-600 hover:underline">⚡ 自動命名</button>
+                      );
+                    })()}
+                  </div>
                   <input value={editing.title} onChange={e => setEditing(v => ({ ...v, title: e.target.value }))}
-                    placeholder="例：競品 XX 牌磁吸支架" autoFocus
+                    placeholder="例：HDRH0001_BOM_20260717" autoFocus
                     className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
+                  <p className="text-[10px] text-slate-400 mt-0.5">建議格式：產品編碼_文件類型_日期（先選好下方的關聯產品與文件類型，再按「⚡ 自動命名」）</p>
                 </div>
                 <div>
                   <label className="block text-xs text-slate-600 mb-1">日期</label>

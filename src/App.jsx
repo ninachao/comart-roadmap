@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.39.0';
-const BUILD_ID = '20260804-0230';
+const APP_VERSION = 'v1.40.0';
+const BUILD_ID = '20260804-0400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.40.0',
+    date: '2026-08-04',
+    changes: [
+      '📁 文件中心新增「批次匯入」：可一次選整個資料夾（含子資料夾），依結構自動分組、以路徑比對自動配對產品、依副檔名自動判斷文件類型',
+      '👀 匯入前提供確認清單：可逐組修改標題／關聯產品／文件類型，或勾掉不要匯入的，並顯示檔案數與總容量',
+      '🏷 路徑上的每層資料夾自動變成關鍵字標籤，保留原本的分類資訊',
+      '⏳ 上傳有進度條、可中途停止（已上傳的保留）；檔案存 Storage、Firestore 只存索引，避免撐爆額度',
+    ],
+  },
   {
     version: 'v1.39.0',
     date: '2026-08-04',
@@ -8142,6 +8152,255 @@ function RefTagField({ dim, values, options, onChange }) {
   );
 }
 
+// 批次匯入整個資料夾 → 文件中心
+// 設計重點：檔案一律上傳到 Storage（Blaze 專案），Firestore 只存 metadata，
+// 避免大量 base64 撐爆 Firestore 文件上限與免費額度
+function BatchImportModal({ projects, currentUser, existingItems, onClose }) {
+  const [phase, setPhase] = useState('pick'); // pick | review | uploading | done
+  const [groupMode, setGroupMode] = useState('folder'); // folder：每個資料夾一份文件 | file：每個檔案一份
+  const [rawFiles, setRawFiles] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [progress, setProgress] = useState({ done: 0, total: 0, name: '' });
+  const [result, setResult] = useState(null);
+  const cancelRef = useRef(false);
+
+  const fmtSize = (b) => b > 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${(b / 1024).toFixed(0)} KB`;
+
+  // 從路徑猜產品：比對產品編碼或名稱是否出現在路徑中（編碼優先，較精準）
+  const matchProject = (path) => {
+    const low = path.toLowerCase();
+    const byCode = projects.find(p => p.code && low.includes(p.code.toLowerCase()));
+    if (byCode) return byCode.id;
+    const byName = projects.find(p => p.name && p.name.length >= 3 && low.includes(p.name.toLowerCase()));
+    return byName ? byName.id : '';
+  };
+
+  const buildGroups = (files, mode) => {
+    const map = new Map();
+    files.forEach(f => {
+      const rel = f.webkitRelativePath || f.name;
+      const parts = rel.split('/');
+      const folder = parts.length > 1 ? parts.slice(0, -1).join('/') : '(根目錄)';
+      const key = mode === 'file' ? rel : folder;
+      if (!map.has(key)) {
+        const pid = matchProject(rel);
+        const proj = projects.find(p => String(p.id) === String(pid));
+        const leaf = mode === 'file' ? parts[parts.length - 1] : parts[parts.length - 2] || folder;
+        map.set(key, {
+          key, folder, files: [],
+          projectId: pid,
+          docType: guessDocType(f.name) || '',
+          // 有配對到產品就用命名規則，沒有就用資料夾／檔名
+          title: proj ? [proj.code, proj.name].filter(Boolean).join('_') : leaf,
+          // 路徑上的每一層資料夾都變成關鍵字標籤，保留老闆原本的分類資訊
+          tags: parts.slice(0, -1).filter(Boolean),
+          skip: false,
+        });
+      }
+      const g = map.get(key);
+      g.files.push(f);
+      if (!g.docType) g.docType = guessDocType(f.name) || '';
+    });
+    // 標題補上文件類型
+    return [...map.values()].map(g => ({
+      ...g,
+      title: g.docType && !g.title.endsWith(g.docType) ? `${g.title}_${g.docType}` : g.title,
+    }));
+  };
+
+  const onPick = (fileList) => {
+    const files = Array.from(fileList || []).filter(f => f.size > 0);
+    if (!files.length) return;
+    setRawFiles(files);
+    setGroups(buildGroups(files, groupMode));
+    setPhase('review');
+  };
+
+  const changeMode = (mode) => {
+    setGroupMode(mode);
+    if (rawFiles.length) setGroups(buildGroups(rawFiles, mode));
+  };
+
+  const updateGroup = (key, patch) => setGroups(gs => gs.map(g => g.key === key ? { ...g, ...patch } : g));
+
+  const active = groups.filter(g => !g.skip);
+  const totalFiles = active.reduce((n, g) => n + g.files.length, 0);
+  const totalBytes = active.reduce((n, g) => n + g.files.reduce((s, f) => s + f.size, 0), 0);
+
+  const runImport = async () => {
+    cancelRef.current = false;
+    setPhase('uploading');
+    setProgress({ done: 0, total: totalFiles, name: '' });
+    let created = 0, uploaded = 0, failed = [];
+    for (let gi = 0; gi < active.length; gi++) {
+      if (cancelRef.current) break;
+      const g = active[gi];
+      const attachments = [];
+      for (const f of g.files) {
+        if (cancelRef.current) break;
+        setProgress(p => ({ ...p, name: f.name }));
+        try {
+          const r = await uploadFileToStorage(f, () => {});
+          attachments.push({ name: r.name, url: r.url, path: r.path, size: r.size, type: r.type, kind: 'upload' });
+          uploaded++;
+        } catch (err) {
+          failed.push(`${f.name}：${err.message}`);
+        }
+        setProgress(p => ({ ...p, done: p.done + 1 }));
+      }
+      if (!attachments.length) continue;
+      const id = `ref_imp_${Date.now()}_${gi}`;
+      try {
+        await setDoc(doc(db, REFERENCE_COL, id), {
+          id,
+          title: g.title || g.folder,
+          natures: g.docType ? [g.docType] : [],
+          versions: [], vendors: [], parts: [], cats: [],
+          tags: g.tags || [],
+          note: `批次匯入自資料夾：${g.folder}`,
+          images: attachments,
+          relatedProjectIds: g.projectId ? [g.projectId] : [],
+          relatedProjectId: '',
+          createdAt: Date.now(),
+          createdBy: currentUser?.name || '',
+        });
+        created++;
+      } catch (err) {
+        failed.push(`建立文件「${g.title}」失敗：${err.message}`);
+      }
+    }
+    setResult({ created, uploaded, failed, cancelled: cancelRef.current });
+    setPhase('done');
+  };
+
+  return (
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-[62] flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between p-4 pb-2 border-b border-slate-100">
+          <div>
+            <h3 className="text-sm font-medium flex items-center gap-2">📁 批次匯入資料夾</h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">選一個資料夾，系統會依結構自動分組、配對產品、判斷文件類型</p>
+          </div>
+          {phase !== 'uploading' && (
+            <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded"><X className="w-4 h-4 text-slate-500" /></button>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {phase === 'pick' && (
+            <div className="text-center py-10">
+              <p className="text-4xl mb-3">📂</p>
+              <label className="inline-block px-4 py-2 text-sm text-white rounded-lg cursor-pointer" style={{ background: '#1e293b' }}>
+                選擇資料夾
+                <input type="file" webkitdirectory="" directory="" multiple className="hidden"
+                  onChange={e => onPick(e.target.files)} />
+              </label>
+              <p className="text-[11px] text-slate-400 mt-3">會連同子資料夾一起讀取；此時還不會上傳，可以先確認</p>
+            </div>
+          )}
+
+          {phase === 'review' && (
+            <>
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
+                <span className="text-[11px] text-slate-500">分組方式</span>
+                {[['folder', '每個資料夾一份文件'], ['file', '每個檔案一份文件']].map(([m, label]) => (
+                  <button key={m} onClick={() => changeMode(m)}
+                    className="px-2 py-0.5 text-[11px] rounded-full border"
+                    style={groupMode === m
+                      ? { background: '#1e293b', color: '#fff', borderColor: '#1e293b' }
+                      : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+                    {label}
+                  </button>
+                ))}
+                <span className="ml-auto text-[11px] text-slate-500">
+                  將建立 <b className="text-slate-700">{active.length}</b> 份文件 ·
+                  <b className="text-slate-700"> {totalFiles}</b> 個檔案 ·
+                  <b className="text-slate-700"> {fmtSize(totalBytes)}</b>
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {groups.map(g => {
+                  const proj = projects.find(p => String(p.id) === String(g.projectId));
+                  return (
+                    <div key={g.key} className={`border rounded-lg p-2 ${g.skip ? 'opacity-40 border-slate-100' : 'border-slate-200'}`}>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <input type="checkbox" checked={!g.skip} onChange={e => updateGroup(g.key, { skip: !e.target.checked })} />
+                        <input value={g.title} onChange={e => updateGroup(g.key, { title: e.target.value })}
+                          className="flex-1 px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
+                        <span className="text-[10px] text-slate-400 flex-shrink-0">{g.files.length} 檔</span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap pl-6">
+                        <select value={g.projectId} onChange={e => updateGroup(g.key, { projectId: e.target.value })}
+                          className="text-[11px] border border-slate-200 rounded px-1 py-0.5 max-w-[220px]">
+                          <option value="">（不關聯產品）</option>
+                          {projects.map(p => (
+                            <option key={p.id} value={p.id}>{p.code ? `${p.code} ` : ''}{p.name}</option>
+                          ))}
+                        </select>
+                        <select value={g.docType} onChange={e => updateGroup(g.key, { docType: e.target.value })}
+                          className="text-[11px] border border-slate-200 rounded px-1 py-0.5">
+                          <option value="">（無類型）</option>
+                          {REF_DIM_PRESETS.natures.map(n => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                        {proj && <span className="text-[10px] text-emerald-600">✓ 自動配對</span>}
+                        <span className="text-[10px] text-slate-400 truncate">{g.folder}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {phase === 'uploading' && (
+            <div className="py-10 text-center">
+              <Loader className="w-6 h-6 animate-spin mx-auto text-violet-500 mb-3" />
+              <p className="text-sm text-slate-700">上傳中 {progress.done} / {progress.total}</p>
+              <p className="text-[11px] text-slate-400 mt-1 truncate px-6">{progress.name}</p>
+              <div className="h-1.5 bg-slate-100 rounded-full mt-3 mx-10 overflow-hidden">
+                <div className="h-full bg-violet-500 transition-all"
+                  style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }} />
+              </div>
+              <button onClick={() => { cancelRef.current = true; }}
+                className="mt-4 text-[11px] text-slate-400 hover:text-rose-500 underline">停止（已上傳的會保留）</button>
+            </div>
+          )}
+
+          {phase === 'done' && result && (
+            <div className="py-8 text-center">
+              <p className="text-4xl mb-3">{result.failed.length ? '⚠️' : '✅'}</p>
+              <p className="text-sm text-slate-700">
+                已建立 {result.created} 份文件、上傳 {result.uploaded} 個檔案
+                {result.cancelled ? '（已手動停止）' : ''}
+              </p>
+              {result.failed.length > 0 && (
+                <div className="mt-3 text-left max-h-40 overflow-y-auto bg-rose-50 rounded-lg p-2">
+                  <p className="text-[11px] text-rose-700 mb-1">{result.failed.length} 個失敗：</p>
+                  {result.failed.map((m, i) => <p key={i} className="text-[10px] text-rose-600">{m}</p>)}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {phase !== 'uploading' && (
+          <div className="flex justify-end gap-2 p-4 pt-2 border-t border-slate-100">
+            <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">
+              {phase === 'done' ? '關閉' : '取消'}
+            </button>
+            {phase === 'review' && (
+              <button onClick={runImport} disabled={!active.length}
+                className="text-sm px-4 py-1.5 text-white rounded disabled:opacity-40" style={{ background: '#1e293b' }}>
+                開始匯入（{totalFiles} 檔）
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose, onJumpToProject, initialSearch = '' }) {
   const [search, setSearch] = useState(initialSearch);
   const blankFilters = () => Object.fromEntries(REF_DIMS.map(d => [d.key, []]));
@@ -8151,6 +8410,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const [showProjPicker, setShowProjPicker] = useState(false);
   const [viewingImg, setViewingImg] = useState(null); // 放大預覽 src
   const [previewDoc, setPreviewDoc] = useState(null); // 點文件開啟預覽（看該文件所有附件）
+  const [showBatchImport, setShowBatchImport] = useState(false);
   const [viewMode, setViewMode] = useState('products'); // 'products' 以產品為卡片 | 'docs' 所有文件
   const [docLayout, setDocLayout] = useState('list'); // 文件呈現：'list' 檔案列表 | 'grid' 大圖
   const [drillPid, setDrillPid] = useState(null); // 點進某個產品後，看它集結的所有檔案
@@ -8483,6 +8743,13 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400" />
           </div>
           {canEdit && (
+            <button onClick={() => setShowBatchImport(true)}
+              title="選整個資料夾批次匯入"
+              className="px-3 py-2 text-xs rounded-lg whitespace-nowrap border border-slate-200 text-slate-600 hover:bg-slate-50">
+              📁 批次匯入
+            </button>
+          )}
+          {canEdit && (
             <button onClick={() => startAdd(drillPid)}
               className="px-3 py-2 text-xs text-white rounded-lg whitespace-nowrap" style={{ background: '#1e293b' }}>
               + 新增文件
@@ -8646,6 +8913,15 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
             )
           )}
         </div>
+
+        {showBatchImport && (
+          <BatchImportModal
+            projects={projects}
+            currentUser={currentUser}
+            existingItems={items}
+            onClose={() => setShowBatchImport(false)}
+          />
+        )}
 
         {/* 文件預覽：看這份文件的所有附件 */}
         {previewDoc && (() => {

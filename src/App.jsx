@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.40.0';
-const BUILD_ID = '20260804-0400';
+const APP_VERSION = 'v1.41.0';
+const BUILD_ID = '20260804-0530';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.41.0',
+    date: '2026-08-04',
+    changes: [
+      '🗂 文件中心瀏覽方式擴充為「依產品／依類型／依供應商／依外購件／全部」：供應商、外購件、專利、合約等本來就不屬於產品的文件，有了自己的歸屬,不再全部擠進「未關聯產品」',
+      '🎨 未分類的項目移出主清單、獨立成一區並加註說明，不再混在產品清單裡看起來突兀',
+      '🏷 在依供應商／依類型檢視中，文件仍會顯示所屬產品，方便回溯',
+    ],
+  },
   {
     version: 'v1.40.0',
     date: '2026-08-04',
@@ -8088,6 +8097,10 @@ function dateInputToTs(s, fallback) {
   return new Date(y, m - 1, d, 12, 0, 0).getTime();
 }
 
+// 分組瀏覽軸的圖示與「未分類」標題
+const GROUP_AXIS_ICON = { project: '📦', natures: '🏷', vendors: '🏭', parts: '🔩' };
+const GROUP_AXIS_ORPHAN = { project: '未指定產品', natures: '未指定類型', vendors: '未指定供應商', parts: '未指定外購件' };
+
 // 判斷附件是不是「可以用 <img> 顯示的圖片」——非圖片（Excel／PDF／STEP…）硬塞給 <img> 就會變破圖
 function refFileIsImage(f) {
   if (!f) return false;
@@ -8411,7 +8424,9 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const [viewingImg, setViewingImg] = useState(null); // 放大預覽 src
   const [previewDoc, setPreviewDoc] = useState(null); // 點文件開啟預覽（看該文件所有附件）
   const [showBatchImport, setShowBatchImport] = useState(false);
-  const [viewMode, setViewMode] = useState('products'); // 'products' 以產品為卡片 | 'docs' 所有文件
+  // 瀏覽軸：很多文件天生就不屬於任何產品（供應商、外購件、專利、合約…），
+  // 所以不能只有「依產品」一種分組，否則它們全部被擠進「未關聯產品」
+  const [viewMode, setViewMode] = useState('project'); // 'project'|'natures'|'vendors'|'parts' 分組 | 'docs' 所有文件
   const [docLayout, setDocLayout] = useState('list'); // 文件呈現：'list' 檔案列表 | 'grid' 大圖
   const [drillPid, setDrillPid] = useState(null); // 點進某個產品後，看它集結的所有檔案
   const [formDragOver, setFormDragOver] = useState(false); // 編輯表單拖曳上傳
@@ -8483,29 +8498,34 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     ).slice(0, 12);
   }, [projects, search]);
 
-  // 以產品為主的分組：一份文件關聯 N 個產品就會出現在 N 個產品底下（不重複存檔，只是同時被列出）
+  // 依目前的瀏覽軸分組：一份文件若屬於 N 個值，就會同時出現在 N 個分組底下（不重複存檔，只是同時被列出）
   const grouped = useMemo(() => {
     const map = new Map();
     const orphans = [];
     filtered.forEach(it => {
-      const pids = refLinkedProjIds(it).filter(pid => projects.some(p => String(p.id) === String(pid)));
-      if (pids.length === 0) { orphans.push(it); return; }
-      pids.forEach(pid => {
-        const key = String(pid);
-        if (!map.has(key)) map.set(key, { project: projects.find(p => String(p.id) === key), docs: [] });
+      const keys = viewMode === 'project'
+        ? refLinkedProjIds(it).filter(pid => projects.some(p => String(p.id) === String(pid))).map(String)
+        : refDimVals(it, viewMode);
+      if (keys.length === 0) { orphans.push(it); return; }
+      keys.forEach(k => {
+        const key = String(k);
+        if (!map.has(key)) {
+          const proj = viewMode === 'project' ? projects.find(p => String(p.id) === key) : null;
+          map.set(key, { key, project: proj, label: proj ? proj.name : key, sub: proj?.code || '', docs: [] });
+        }
         map.get(key).docs.push(it);
       });
     });
     const groups = [...map.values()].sort((a, b) =>
-      b.docs.length - a.docs.length || (a.project.name || '').localeCompare(b.project.name || '')
+      b.docs.length - a.docs.length || (a.label || '').localeCompare(b.label || '')
     );
     return { groups, orphans };
-  }, [filtered, projects]);
+  }, [filtered, projects, viewMode]);
 
   const drillGroup = useMemo(() => {
     if (!drillPid) return null;
-    if (drillPid === '__none__') return { project: null, docs: grouped.orphans };
-    return grouped.groups.find(g => String(g.project.id) === String(drillPid)) || null;
+    if (drillPid === '__none__') return { project: null, label: '', docs: grouped.orphans };
+    return grouped.groups.find(g => g.key === String(drillPid)) || null;
   }, [drillPid, grouped]);
 
   const blankDims = () => Object.fromEntries(REF_DIMS.map(d => [d.key, []]));
@@ -8603,7 +8623,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-1.5 flex-wrap">
             {/* 在「所有文件」檢視補上產品情境，避免只看到「ID」這種沒頭沒尾的標題 */}
-            {!drillPid && linkedProjs.length > 0 && (
+            {!(viewMode === 'project' && drillPid) && linkedProjs.length > 0 && (
               <span className="text-[11px] text-slate-400 flex items-baseline gap-1">
                 <button onClick={() => onJumpToProject(linkedProjs[0].id)}
                   className="hover:text-blue-500 hover:underline">
@@ -8712,7 +8732,13 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
 
         {/* 檢視切換：以產品為卡片 / 所有文件；右側切換文件呈現樣式 */}
         <div className="flex items-center gap-1 mb-2">
-          {[['products', '📦 依產品'], ['docs', '📄 所有文件']].map(([m, label]) => (
+          {[
+            ['project', '📦 依產品'],
+            ['natures', '🏷 依類型'],
+            ['vendors', '🏭 依供應商'],
+            ['parts', '🔩 依外購件'],
+            ['docs', '📄 全部'],
+          ].map(([m, label]) => (
             <button key={m} onClick={() => { setViewMode(m); setDrillPid(null); }}
               className="px-2.5 py-1 text-[11px] rounded-full border transition"
               style={viewMode === m
@@ -8811,8 +8837,8 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               <p className="text-[11px] text-slate-400 mt-2">📁 文件中心（{filtered.length}）</p>
             </div>
           )}
-          {/* ── 檢視 1：以產品為主的卡片牆 ── */}
-          {viewMode === 'products' && !drillPid && (
+          {/* ── 檢視 1：依目前瀏覽軸的分組清單 ── */}
+          {viewMode !== 'docs' && !drillPid && (
             grouped.groups.length === 0 && grouped.orphans.length === 0 ? (
               <div className="flex flex-col items-center justify-center text-center py-16 text-slate-400">
                 <p className="text-4xl mb-3">📁</p>
@@ -8820,64 +8846,75 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                 {canEdit && items.length === 0 && <button onClick={() => startAdd()} className="mt-3 text-xs text-violet-600 hover:underline">+ 新增第一筆</button>}
               </div>
             ) : (
-              <div className="border border-slate-100 rounded-lg divide-y divide-slate-50 pb-1">
-                {grouped.groups.map(g => {
-                  const pimg = (g.project.productImages || [])[0];
-                  const imgCount = g.docs.reduce((n, d) => n + ((d.images || []).length), 0);
-                  return (
-                    <button key={g.project.id} onClick={() => setDrillPid(String(g.project.id))}
-                      className="w-full flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-50 text-left">
-                      <div className="w-10 h-10 rounded bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0">
-                        {pimg ? <StorageImage src={pimg.dataUrl || pimg.url || ''} path={pimg.path} alt="" className="w-full h-full object-contain" />
-                          : <span className="text-slate-300 text-sm">📦</span>}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-medium text-slate-800 break-all">{g.project.name}</p>
-                        {g.project.code && <p className="text-[10px] text-slate-400 font-mono">{g.project.code}</p>}
-                      </div>
-                      <span className="text-[10px] text-violet-600 flex-shrink-0">{g.docs.length} 份 · {imgCount} 檔</span>
-                      <span className="text-slate-300 text-xs flex-shrink-0">›</span>
-                    </button>
-                  );
-                })}
+              <>
+                <div className="border border-slate-100 rounded-lg divide-y divide-slate-50 pb-1">
+                  {grouped.groups.map(g => {
+                    const pimg = g.project ? (g.project.productImages || [])[0] : null;
+                    const imgCount = g.docs.reduce((n, d) => n + ((d.images || []).length), 0);
+                    return (
+                      <button key={g.key} onClick={() => setDrillPid(g.key)}
+                        className="w-full flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-50 text-left">
+                        <div className="w-10 h-10 rounded bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+                          {pimg ? <StorageImage src={pimg.dataUrl || pimg.url || ''} path={pimg.path} alt="" className="w-full h-full object-contain" />
+                            : <span className="text-slate-300 text-sm">{GROUP_AXIS_ICON[viewMode] || '📦'}</span>}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium text-slate-800 break-all">{g.label}</p>
+                          {g.sub && <p className="text-[10px] text-slate-400 font-mono">{g.sub}</p>}
+                        </div>
+                        <span className="text-[10px] text-violet-600 flex-shrink-0">{g.docs.length} 份 · {imgCount} 檔</span>
+                        <span className="text-slate-300 text-xs flex-shrink-0">›</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* 未分類的另外擺一區，不跟正式分組混在同一張清單裡 */}
                 {grouped.orphans.length > 0 && (
                   <button onClick={() => setDrillPid('__none__')}
-                    className="w-full flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-50 text-left">
-                    <div className="w-10 h-10 rounded bg-slate-50 border border-dashed border-slate-200 flex items-center justify-center flex-shrink-0">
+                    className="mt-2 w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg border border-dashed border-slate-200 bg-slate-50/40 hover:bg-slate-50 text-left">
+                    <div className="w-10 h-10 rounded bg-white border border-dashed border-slate-200 flex items-center justify-center flex-shrink-0">
                       <span className="text-slate-300 text-sm">🗂</span>
                     </div>
-                    <p className="min-w-0 flex-1 text-xs font-medium text-slate-600">未關聯產品</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-slate-500">{GROUP_AXIS_ORPHAN[viewMode] || '未分類'}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {viewMode === 'project' ? '供應商、外購件、專利、合約等本來就不屬於某個產品的文件' : '可換上方其他分類方式瀏覽'}
+                      </p>
+                    </div>
                     <span className="text-[10px] text-slate-400 flex-shrink-0">{grouped.orphans.length} 份</span>
                     <span className="text-slate-300 text-xs flex-shrink-0">›</span>
                   </button>
                 )}
-              </div>
+              </>
             )
           )}
 
-          {/* ── 檢視 2：點進某產品，看它集結的所有檔案 ── */}
-          {viewMode === 'products' && drillPid && (
+          {/* ── 檢視 2：點進某分組，看它集結的所有檔案 ── */}
+          {viewMode !== 'docs' && drillPid && (
             <div className="pb-2">
               <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-100">
                 <button onClick={() => setDrillPid(null)} className="text-xs text-slate-500 hover:text-slate-800">← 返回</button>
-                {drillGroup?.project ? (
+                {drillPid === '__none__' ? (
+                  <p className="text-sm font-medium text-slate-700">{GROUP_AXIS_ORPHAN[viewMode] || '未分類'}的文件</p>
+                ) : (
                   <>
                     <div className="w-9 h-9 rounded bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0">
                       {(() => {
-                        const pi = (drillGroup.project.productImages || [])[0];
-                        const s = pi ? (pi.dataUrl || pi.url) : null;
-                        return s ? <img src={s} alt="" className="w-full h-full object-contain" /> : <span className="text-slate-300 text-xs">📦</span>;
+                        const pi = drillGroup?.project ? (drillGroup.project.productImages || [])[0] : null;
+                        return pi
+                          ? <StorageImage src={pi.dataUrl || pi.url || ''} path={pi.path} alt="" className="w-full h-full object-contain" />
+                          : <span className="text-slate-300 text-xs">{GROUP_AXIS_ICON[viewMode] || '📦'}</span>;
                       })()}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-slate-800 truncate">{drillGroup.project.name}</p>
-                      <p className="text-[10px] text-slate-400">{(drillGroup.docs || []).length} 份文件</p>
+                      <p className="text-sm font-medium text-slate-800 truncate">{drillGroup?.label || ''}</p>
+                      <p className="text-[10px] text-slate-400">{(drillGroup?.docs || []).length} 份文件</p>
                     </div>
-                    <button onClick={() => onJumpToProject(drillGroup.project.id)}
-                      className="text-[11px] text-blue-500 hover:underline flex-shrink-0">開啟產品卡片 →</button>
+                    {drillGroup?.project && (
+                      <button onClick={() => onJumpToProject(drillGroup.project.id)}
+                        className="text-[11px] text-blue-500 hover:underline flex-shrink-0">開啟產品卡片 →</button>
+                    )}
                   </>
-                ) : (
-                  <p className="text-sm font-medium text-slate-700">未關聯產品的文件</p>
                 )}
               </div>
               {docLayout === 'list' ? (

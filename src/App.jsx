@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.38.0';
-const BUILD_ID = '20260804-0130';
+const APP_VERSION = 'v1.39.0';
+const BUILD_ID = '20260804-0230';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.39.0',
+    date: '2026-08-04',
+    changes: [
+      '🗂 產品卡片移除「設計圖紙版本」區：全部 350 個檔案、版本標籤與變更說明都已轉入文件中心，改由卡片最下方「相關文件」統一呈現',
+      '🛟 移除前已完整備份 designs 資料，且底層資料保留未刪（手板試作區仍會參照版本資訊），可隨時還原',
+    ],
+  },
   {
     version: 'v1.38.0',
     date: '2026-08-04',
@@ -4908,10 +4916,8 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
               </div>
             )}
           </section>
-          <div id="pd-design"><DesignSection
-            designs={project.designs || { ID: [], '3D': [], BOM: [] }}
-            onChange={(d) => onUpdateField('designs', d)}
-          /></div>
+          {/* 「設計圖紙版本」區已移除：檔案與版本說明都已轉入文件中心（見卡片最下方「相關文件」）。
+              designs 資料本身保留不刪，因為手板試作區仍會參照版本資訊。 */}
 
           <div id="pd-dfm"><DFMSection
             hasDFM={project.hasDFM || false}

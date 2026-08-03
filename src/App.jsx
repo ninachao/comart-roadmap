@@ -49,10 +49,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.36.1';
-const BUILD_ID = '20260803-1930';
+const APP_VERSION = 'v1.36.2';
+const BUILD_ID = '20260803-2100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.36.2',
+    date: '2026-08-03',
+    changes: [
+      '🔧 修正破圖：非圖片檔（Excel／PDF／STEP…）不再硬塞給 <img>，改顯示對應的檔案類型圖示',
+      '👁 新增文件預覽：點縮圖或標題即可開啟，圖片直接看大圖，其他檔案可「開啟／下載」',
+      '📏 產品分組改為精簡列表，不再是佔空間的大卡片',
+      '✍️ 文件標題不再被硬切，會用滿整列寬度顯示',
+      '📅 新增／編輯文件時可自行指定日期',
+    ],
+  },
   {
     version: 'v1.36.1',
     date: '2026-08-03',
@@ -7927,6 +7938,38 @@ function refLinkedProjIds(it) {
 }
 
 // 可重用的標籤輸入欄：打字 + Enter/逗號 新增，chip 可刪，下方可從既有值快速點選
+// 時間戳 <-> <input type="date"> 的字串（用本地時間，中午 12 點避免時區位移跨日）
+function tsToDateInput(ts) {
+  const d = ts ? new Date(ts) : new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function dateInputToTs(s, fallback) {
+  if (!s) return fallback ?? Date.now();
+  const [y, m, d] = s.split('-').map(Number);
+  if (!y || !m || !d) return fallback ?? Date.now();
+  return new Date(y, m - 1, d, 12, 0, 0).getTime();
+}
+
+// 判斷附件是不是「可以用 <img> 顯示的圖片」——非圖片（Excel／PDF／STEP…）硬塞給 <img> 就會變破圖
+function refFileIsImage(f) {
+  if (!f) return false;
+  if (f.dataUrl) return true;
+  if ((f.type || '').startsWith('image/')) return true;
+  const ext = ((f.name || '').split('.').pop() || '').toLowerCase();
+  return ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext);
+}
+
+// 附件縮圖：圖片走 StorageImage（可解析 Storage 路徑並重試），非圖片顯示檔案類型圖示
+function DocThumb({ file, className = '', iconClass = 'text-base' }) {
+  if (!file) return <span className={`text-slate-300 ${iconClass}`}>📄</span>;
+  if (refFileIsImage(file)) {
+    return <StorageImage src={file.dataUrl || file.url || ''} path={file.path} alt=""
+      className={className || 'w-full h-full object-contain'} />;
+  }
+  return <span className={`${iconClass} leading-none`}>{getFileIcon(file.name, file.type)}</span>;
+}
+
 function RefTagField({ dim, values, options, onChange }) {
   const [draft, setDraft] = useState('');
   const addRaw = (raw) => {
@@ -7980,6 +8023,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const [projSearch, setProjSearch] = useState('');
   const [showProjPicker, setShowProjPicker] = useState(false);
   const [viewingImg, setViewingImg] = useState(null); // 放大預覽 src
+  const [previewDoc, setPreviewDoc] = useState(null); // 點文件開啟預覽（看該文件所有附件）
   const [viewMode, setViewMode] = useState('products'); // 'products' 以產品為卡片 | 'docs' 所有文件
   const [docLayout, setDocLayout] = useState('list'); // 文件呈現：'list' 檔案列表 | 'grid' 大圖
   const [drillPid, setDrillPid] = useState(null); // 點進某個產品後，看它集結的所有檔案
@@ -8081,12 +8125,14 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const startAdd = (presetPid) => setEditing({
     isNew: true, id: 'ref_' + Date.now(), title: '', ...blankDims(), note: '', images: [],
     relatedProjectIds: presetPid && presetPid !== '__none__' ? [presetPid] : [],
+    docDate: tsToDateInput(Date.now()),
   });
   const startEdit = (it) => setEditing({
     isNew: false, id: it.id, title: it.title || '',
     ...Object.fromEntries(REF_DIMS.map(d => [d.key, refDimVals(it, d.key)])),
     note: it.note || '', images: it.images || [],
     relatedProjectIds: refLinkedProjIds(it),
+    docDate: tsToDateInput(it.createdAt),
   });
 
   const saveEditing = async () => {
@@ -8100,7 +8146,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
       images: editing.images,
       relatedProjectIds: editing.relatedProjectIds || [],
       relatedProjectId: '', // 舊單一欄位清空，之後一律以 relatedProjectIds 為準
-      createdAt: orig?.createdAt || Date.now(),
+      createdAt: dateInputToTs(editing.docDate, orig?.createdAt || Date.now()),
       createdBy: orig?.createdBy || currentUser?.name || '',
     };
     await setDoc(doc(db, REFERENCE_COL, editing.id), docData);
@@ -8158,26 +8204,25 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     return (
       <div key={it.id}
         className="group flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-slate-50 border-b border-slate-50 last:border-b-0">
-        {/* 縮圖 */}
-        <div className="w-10 h-10 rounded bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0 cursor-pointer"
-          onClick={() => cover && setViewingImg(cover.dataUrl || cover.url || '')}>
-          {cover ? (
-            <StorageImage src={cover.dataUrl || cover.url || ''} path={cover.path} alt=""
-              className="w-full h-full object-contain" />
-          ) : <span className="text-slate-300 text-sm">📄</span>}
+        {/* 縮圖：點擊開啟預覽 */}
+        <div className="w-10 h-10 rounded bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0 cursor-pointer hover:border-violet-300"
+          onClick={() => setPreviewDoc(it)} title="預覽">
+          <DocThumb file={cover} iconClass="text-lg" />
         </div>
-        {/* 標題 + 標籤 */}
+        {/* 標題 + 標籤（標題吃滿剩餘空間，不再被硬切） */}
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs font-medium text-slate-800 truncate max-w-[220px]">{it.title}</span>
-            {imgs.length > 1 && <span className="text-[10px] text-slate-400">({imgs.length} 個檔案)</span>}
+          <div className="flex items-baseline gap-1.5 flex-wrap">
+            <button onClick={() => setPreviewDoc(it)}
+              className="text-xs font-medium text-slate-800 text-left hover:text-violet-600 hover:underline break-all"
+              title={it.title}>{it.title}</button>
+            {imgs.length > 1 && <span className="text-[10px] text-slate-400 flex-shrink-0">({imgs.length} 個檔案)</span>}
             {REF_DIMS.flatMap(d => refDimVals(it, d.key).map(v => (
               <button key={d.key + ':' + v} onClick={() => toggleFilter(d.key, v)}
-                className="text-[10px] px-1.5 py-0.5 rounded hover:opacity-80"
+                className="text-[10px] px-1.5 py-0.5 rounded hover:opacity-80 flex-shrink-0"
                 style={{ background: d.bg, color: d.color }}>{v}</button>
             )))}
           </div>
-          {it.note && <p className="text-[11px] text-slate-400 truncate" title={it.note}>{it.note}</p>}
+          {it.note && <p className="text-[11px] text-slate-400 line-clamp-1" title={it.note}>{it.note}</p>}
         </div>
         {/* 關聯產品（在「依產品」檢視內就不重複顯示） */}
         {!drillPid && linkedProjs.length > 0 && (
@@ -8190,7 +8235,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
           </div>
         )}
         <span className="text-[10px] text-slate-300 flex-shrink-0 hidden sm:inline">
-          {it.createdAt ? new Date(it.createdAt).toISOString().split('T')[0] : ''}
+          {it.createdAt ? tsToDateInput(it.createdAt) : ''}
         </span>
         {canEdit && (
           <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition">
@@ -8212,9 +8257,9 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     return (
       <div key={it.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden group flex flex-col">
         <div className="h-32 bg-slate-50 flex items-center justify-center cursor-pointer relative"
-          onClick={() => coverSrc && setViewingImg(coverSrc)}>
+          onClick={() => setPreviewDoc(it)}>
           {cover ? (
-            <StorageImage src={coverSrc} path={cover.path} alt="" className="w-full h-full object-contain" />
+            <DocThumb file={cover} iconClass="text-4xl" />
           ) : (
             <span className="text-3xl text-slate-200">📄</span>
           )}
@@ -8251,7 +8296,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                 ))}
               </div>
             ) : <span />}
-            <span className="text-[10px] text-slate-300 flex-shrink-0">{it.createdAt ? new Date(it.createdAt).toISOString().split('T')[0] : ''}</span>
+            <span className="text-[10px] text-slate-300 flex-shrink-0">{it.createdAt ? tsToDateInput(it.createdAt) : ''}</span>
           </div>
         </div>
       </div>
@@ -8377,33 +8422,35 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                 {canEdit && items.length === 0 && <button onClick={() => startAdd()} className="mt-3 text-xs text-violet-600 hover:underline">+ 新增第一筆</button>}
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pb-2">
+              <div className="border border-slate-100 rounded-lg divide-y divide-slate-50 pb-1">
                 {grouped.groups.map(g => {
                   const pimg = (g.project.productImages || [])[0];
-                  const psrc = pimg ? (pimg.dataUrl || pimg.url) : null;
                   const imgCount = g.docs.reduce((n, d) => n + ((d.images || []).length), 0);
                   return (
                     <button key={g.project.id} onClick={() => setDrillPid(String(g.project.id))}
-                      className="border border-slate-200 rounded-xl bg-white overflow-hidden hover:border-violet-300 hover:shadow-sm transition text-left flex flex-col">
-                      <div className="h-28 bg-slate-50 flex items-center justify-center">
-                        {psrc ? <img src={psrc} alt="" className="w-full h-full object-contain" /> : <span className="text-3xl text-slate-200">📦</span>}
+                      className="w-full flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-50 text-left">
+                      <div className="w-10 h-10 rounded bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+                        {pimg ? <StorageImage src={pimg.dataUrl || pimg.url || ''} path={pimg.path} alt="" className="w-full h-full object-contain" />
+                          : <span className="text-slate-300 text-sm">📦</span>}
                       </div>
-                      <div className="p-2">
-                        <p className="text-xs font-medium text-slate-800 leading-tight line-clamp-2">{g.project.name}</p>
-                        {g.project.code && <p className="text-[10px] text-slate-400 font-mono truncate">{g.project.code}</p>}
-                        <p className="text-[10px] text-violet-600 mt-1">{g.docs.length} 份文件 · {imgCount} 張圖</p>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-slate-800 break-all">{g.project.name}</p>
+                        {g.project.code && <p className="text-[10px] text-slate-400 font-mono">{g.project.code}</p>}
                       </div>
+                      <span className="text-[10px] text-violet-600 flex-shrink-0">{g.docs.length} 份 · {imgCount} 檔</span>
+                      <span className="text-slate-300 text-xs flex-shrink-0">›</span>
                     </button>
                   );
                 })}
                 {grouped.orphans.length > 0 && (
                   <button onClick={() => setDrillPid('__none__')}
-                    className="border border-dashed border-slate-300 rounded-xl bg-white overflow-hidden hover:border-violet-300 transition text-left flex flex-col">
-                    <div className="h-28 bg-slate-50 flex items-center justify-center"><span className="text-3xl text-slate-200">🗂</span></div>
-                    <div className="p-2">
-                      <p className="text-xs font-medium text-slate-600 leading-tight">未關聯產品</p>
-                      <p className="text-[10px] text-slate-400 mt-1">{grouped.orphans.length} 份文件</p>
+                    className="w-full flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-50 text-left">
+                    <div className="w-10 h-10 rounded bg-slate-50 border border-dashed border-slate-200 flex items-center justify-center flex-shrink-0">
+                      <span className="text-slate-300 text-sm">🗂</span>
                     </div>
+                    <p className="min-w-0 flex-1 text-xs font-medium text-slate-600">未關聯產品</p>
+                    <span className="text-[10px] text-slate-400 flex-shrink-0">{grouped.orphans.length} 份</span>
+                    <span className="text-slate-300 text-xs flex-shrink-0">›</span>
                   </button>
                 )}
               </div>
@@ -8469,6 +8516,82 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
           )}
         </div>
 
+        {/* 文件預覽：看這份文件的所有附件 */}
+        {previewDoc && (() => {
+          const cur = items.find(x => x.id === previewDoc.id) || previewDoc;
+          const files = cur.images || [];
+          const linkedProjs = refLinkedProjIds(cur)
+            .map(pid => projects.find(p => String(p.id) === String(pid))).filter(Boolean);
+          return (
+            <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/60 z-[65] flex items-center justify-center p-4"
+              onClick={() => setPreviewDoc(null)}>
+              <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                <div className="flex items-start justify-between gap-2 p-4 pb-2 border-b border-slate-100">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-slate-800 break-all">{cur.title}</p>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                      {REF_DIMS.flatMap(d => refDimVals(cur, d.key).map(v => (
+                        <span key={d.key + ':' + v} className="text-[10px] px-1.5 py-0.5 rounded"
+                          style={{ background: d.bg, color: d.color }}>{v}</span>
+                      )))}
+                      <span className="text-[10px] text-slate-400">{cur.createdAt ? tsToDateInput(cur.createdAt) : ''}</span>
+                    </div>
+                    {linkedProjs.length > 0 && (
+                      <div className="flex gap-2 flex-wrap mt-1">
+                        {linkedProjs.map(p => (
+                          <button key={p.id} onClick={() => { setPreviewDoc(null); onJumpToProject(p.id); }}
+                            className="text-[10px] text-blue-500 hover:underline">🔗 {p.name}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {canEdit && (
+                      <button onClick={() => { setPreviewDoc(null); startEdit(cur); }}
+                        className="text-[11px] text-slate-500 hover:text-violet-600 px-2 py-1">編輯</button>
+                    )}
+                    <button onClick={() => setPreviewDoc(null)} className="p-1 hover:bg-slate-100 rounded">
+                      <X className="w-4 h-4 text-slate-500" />
+                    </button>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  {cur.note && <p className="text-xs text-slate-600 whitespace-pre-line bg-slate-50 rounded-lg p-2">{cur.note}</p>}
+                  {files.length === 0 ? (
+                    <p className="text-xs text-slate-400 text-center py-10">這份文件還沒有附件</p>
+                  ) : files.map((f, i) => (
+                    <div key={i} className="border border-slate-100 rounded-lg overflow-hidden">
+                      {refFileIsImage(f) ? (
+                        <div className="bg-slate-50 flex items-center justify-center p-2">
+                          <StorageImage src={f.dataUrl || f.url || ''} path={f.path} alt=""
+                            className="max-w-full max-h-[55vh] object-contain rounded" />
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-3 p-3 bg-slate-50">
+                          <span className="text-3xl">{getFileIcon(f.name, f.type)}</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs text-slate-700 break-all">{f.name || '附件'}</p>
+                            {f.size ? <p className="text-[10px] text-slate-400">{(f.size / 1024).toFixed(0)} KB</p> : null}
+                            <p className="text-[10px] text-slate-400">此檔案類型無法直接預覽，請開啟或下載</p>
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between px-2 py-1.5 bg-white">
+                        <span className="text-[10px] text-slate-400 truncate">{f.name || ''}</span>
+                        {(f.url || f.dataUrl) && (
+                          <a href={f.url || f.dataUrl} target="_blank" rel="noreferrer"
+                            download={f.name || undefined}
+                            className="text-[11px] text-blue-500 hover:underline flex-shrink-0">開啟 / 下載 ↗</a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* 圖片放大預覽 */}
         {viewingImg && (
           <div className="fixed inset-0 bg-slate-900/80 z-[70] flex items-center justify-center p-6" onClick={() => setViewingImg(null)}>
@@ -8486,6 +8609,12 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                   <label className="block text-xs text-slate-600 mb-1">標題 *</label>
                   <input value={editing.title} onChange={e => setEditing(v => ({ ...v, title: e.target.value }))}
                     placeholder="例：競品 XX 牌磁吸支架" autoFocus
+                    className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-600 mb-1">日期</label>
+                  <input type="date" value={editing.docDate || ''}
+                    onChange={e => setEditing(v => ({ ...v, docDate: e.target.value }))}
                     className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
                 </div>
                 {REF_DIMS.map(d => (
@@ -8520,11 +8649,13 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                   <div className="flex gap-1.5 flex-wrap items-center">
                     {(editing.images || []).map((img, i) => {
                       const src = img.dataUrl || img.url;
-                      const isImg = !!img.dataUrl || (img.type || '').startsWith('image/');
+                      const isImg = refFileIsImage(img);
                       return (
                         <div key={i} className="relative group/img">
                           {isImg ? (
-                            <img src={src} alt="" className="w-14 h-14 object-contain rounded border border-slate-200 bg-slate-50" />
+                            <div className="w-14 h-14 rounded border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center">
+                              <StorageImage src={src || ''} path={img.path} alt="" className="w-full h-full object-contain" />
+                            </div>
                           ) : (
                             <a href={src} target="_blank" rel="noreferrer"
                               title={img.name}

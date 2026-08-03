@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.36.0';
-const BUILD_ID = '20260803-1800';
+const APP_VERSION = 'v1.36.1';
+const BUILD_ID = '20260803-1930';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.36.1',
+    date: '2026-08-03',
+    changes: [
+      '☰ 文件改以「檔案列表」呈現為預設（一列一份、省空間），右上角可切換「大圖」模式',
+      '🔧 文件縮圖改用 StorageImage：只有 Storage 路徑的圖也能正確顯示，載入失敗不再出現破圖',
+    ],
+  },
   {
     version: 'v1.36.0',
     date: '2026-08-03',
@@ -7973,6 +7981,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const [showProjPicker, setShowProjPicker] = useState(false);
   const [viewingImg, setViewingImg] = useState(null); // 放大預覽 src
   const [viewMode, setViewMode] = useState('products'); // 'products' 以產品為卡片 | 'docs' 所有文件
+  const [docLayout, setDocLayout] = useState('list'); // 文件呈現：'list' 檔案列表 | 'grid' 大圖
   const [drillPid, setDrillPid] = useState(null); // 點進某個產品後，看它集結的所有檔案
   const [formDragOver, setFormDragOver] = useState(false); // 編輯表單拖曳上傳
 
@@ -8139,10 +8148,64 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     }
   };
 
-  // 單張文件卡（「所有文件」與「點進產品」兩種檢視共用）
+  // ── 檔案列表樣式的一列（預設；比大卡片省空間，接近檔案總管的感覺）──
+  const renderDocRow = (it) => {
+    const imgs = it.images || [];
+    const cover = imgs[0];
+    const linkedProjs = refLinkedProjIds(it)
+      .map(pid => projects.find(p => String(p.id) === String(pid)))
+      .filter(Boolean);
+    return (
+      <div key={it.id}
+        className="group flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-slate-50 border-b border-slate-50 last:border-b-0">
+        {/* 縮圖 */}
+        <div className="w-10 h-10 rounded bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0 cursor-pointer"
+          onClick={() => cover && setViewingImg(cover.dataUrl || cover.url || '')}>
+          {cover ? (
+            <StorageImage src={cover.dataUrl || cover.url || ''} path={cover.path} alt=""
+              className="w-full h-full object-contain" />
+          ) : <span className="text-slate-300 text-sm">📄</span>}
+        </div>
+        {/* 標題 + 標籤 */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-medium text-slate-800 truncate max-w-[220px]">{it.title}</span>
+            {imgs.length > 1 && <span className="text-[10px] text-slate-400">({imgs.length} 個檔案)</span>}
+            {REF_DIMS.flatMap(d => refDimVals(it, d.key).map(v => (
+              <button key={d.key + ':' + v} onClick={() => toggleFilter(d.key, v)}
+                className="text-[10px] px-1.5 py-0.5 rounded hover:opacity-80"
+                style={{ background: d.bg, color: d.color }}>{v}</button>
+            )))}
+          </div>
+          {it.note && <p className="text-[11px] text-slate-400 truncate" title={it.note}>{it.note}</p>}
+        </div>
+        {/* 關聯產品（在「依產品」檢視內就不重複顯示） */}
+        {!drillPid && linkedProjs.length > 0 && (
+          <div className="hidden sm:flex gap-1.5 flex-shrink-0 max-w-[180px] overflow-hidden">
+            {linkedProjs.slice(0, 2).map(p => (
+              <button key={p.id} onClick={() => onJumpToProject(p.id)}
+                className="text-[10px] text-blue-500 hover:underline truncate max-w-[85px]">🔗 {p.name}</button>
+            ))}
+            {linkedProjs.length > 2 && <span className="text-[10px] text-slate-300">+{linkedProjs.length - 2}</span>}
+          </div>
+        )}
+        <span className="text-[10px] text-slate-300 flex-shrink-0 hidden sm:inline">
+          {it.createdAt ? new Date(it.createdAt).toISOString().split('T')[0] : ''}
+        </span>
+        {canEdit && (
+          <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition">
+            <button onClick={() => startEdit(it)} className="p-1 text-slate-400 hover:text-slate-700"><Edit2 className="w-3 h-3" /></button>
+            <button onClick={() => deleteItem(it)} className="p-1 text-slate-400 hover:text-rose-600"><Trash2 className="w-3 h-3" /></button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // 單張文件卡（大圖檢視）
   const renderDocCard = (it) => {
     const cover = (it.images || [])[0];
-    const coverSrc = cover ? (cover.dataUrl || cover.url) : null;
+    const coverSrc = cover ? (cover.dataUrl || cover.url || '') : null;
     const linkedProjs = refLinkedProjIds(it)
       .map(pid => projects.find(p => String(p.id) === String(pid)))
       .filter(Boolean);
@@ -8150,8 +8213,8 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
       <div key={it.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden group flex flex-col">
         <div className="h-32 bg-slate-50 flex items-center justify-center cursor-pointer relative"
           onClick={() => coverSrc && setViewingImg(coverSrc)}>
-          {coverSrc ? (
-            <img src={coverSrc} alt="" className="w-full h-full object-contain" />
+          {cover ? (
+            <StorageImage src={coverSrc} path={cover.path} alt="" className="w-full h-full object-contain" />
           ) : (
             <span className="text-3xl text-slate-200">📄</span>
           )}
@@ -8211,7 +8274,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
           </button>
         </div>
 
-        {/* 檢視切換：以產品為卡片 / 所有文件 */}
+        {/* 檢視切換：以產品為卡片 / 所有文件；右側切換文件呈現樣式 */}
         <div className="flex items-center gap-1 mb-2">
           {[['products', '📦 依產品'], ['docs', '📄 所有文件']].map(([m, label]) => (
             <button key={m} onClick={() => { setViewMode(m); setDrillPid(null); }}
@@ -8222,6 +8285,17 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               {label}
             </button>
           ))}
+          <div className="ml-auto flex items-center gap-1">
+            {[['list', '☰', '列表'], ['grid', '▦', '大圖']].map(([m, icon, title]) => (
+              <button key={m} onClick={() => setDocLayout(m)} title={title}
+                className="w-7 h-7 flex items-center justify-center text-xs rounded border transition"
+                style={docLayout === m
+                  ? { background: '#f1f5f9', color: '#334155', borderColor: '#cbd5e1' }
+                  : { background: '#fff', color: '#94a3b8', borderColor: '#e2e8f0' }}>
+                {icon}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* 搜尋 + 標籤篩選 + 新增 */}
@@ -8361,9 +8435,15 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                   <p className="text-sm font-medium text-slate-700">未關聯產品的文件</p>
                 )}
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                {(drillGroup?.docs || []).map(renderDocCard)}
-              </div>
+              {docLayout === 'list' ? (
+                <div className="border border-slate-100 rounded-lg divide-y divide-slate-50">
+                  {(drillGroup?.docs || []).map(renderDocRow)}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {(drillGroup?.docs || []).map(renderDocCard)}
+                </div>
+              )}
             </div>
           )}
 
@@ -8376,9 +8456,15 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                 {canEdit && items.length === 0 && <button onClick={() => startAdd()} className="mt-3 text-xs text-violet-600 hover:underline">+ 新增第一筆</button>}
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pb-2">
-                {filtered.map(renderDocCard)}
-              </div>
+              docLayout === 'list' ? (
+                <div className="border border-slate-100 rounded-lg divide-y divide-slate-50 pb-1">
+                  {filtered.map(renderDocRow)}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pb-2">
+                  {filtered.map(renderDocCard)}
+                </div>
+              )
             )
           )}
         </div>

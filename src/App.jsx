@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.41.1';
-const BUILD_ID = '20260804-0630';
+const APP_VERSION = 'v1.42.0';
+const BUILD_ID = '20260804-0800';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.42.0',
+    date: '2026-08-04',
+    changes: [
+      '⬆ 產品卡片可直接上傳文件：「相關文件」區新增「上傳文件」按鈕與拖曳區，檔案丟上去就自動建成這個產品的文件（自動關聯產品、依副檔名判類型、依命名規則取標題），不必再開文件中心重選產品',
+      '📊 上傳有進度顯示',
+      '🔧 修正「全部」清單看起來重複：標題現在會帶版本（例：..._3D_V2 / ..._3D_V1），並已把既有 142 筆文件標題補上版本',
+      '🎨 文件列表的產品前綴不再折成兩行，過長時以 … 收尾',
+    ],
+  },
   {
     version: 'v1.41.1',
     date: '2026-08-04',
@@ -4292,10 +4302,12 @@ ${allImgHtml ? `<div class="imgs">${allImgHtml}</div>` : ''}
 // 產品卡片內：顯示文件中心裡連結到此產品的文件（人在卡片上就看到相關檔案，不用另跑文件中心）
 // 編輯模式下永遠顯示：沒有關聯文件時給提示 + 可直接從卡片挑文件建立關聯
 // 一份文件可同時關聯多個產品；加入/取消只動這個產品的關聯，不影響它與其他產品的連結
-function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEdit = false }) {
+function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEdit = false, currentUser }) {
   const [viewing, setViewing] = useState(null); // 放大預覽 src
   const [picking, setPicking] = useState(false); // 是否展開「選檔案來關聯」
   const [pickSearch, setPickSearch] = useState('');
+  const [uploading, setUploading] = useState(null); // {done,total,name} 直接在產品頁上傳
+  const [dragOver, setDragOver] = useState(false);
   const isLinked = (r) => refLinkedProjIds(r).some(pid => String(pid) === String(project.id));
   const linked = useMemo(
     () => (refFiles || []).filter(isLinked),
@@ -4314,6 +4326,49 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
     const others = refLinkedProjIds(r).filter(pid => String(pid) !== String(project.id));
     const next = toThisProject ? [...others, project.id] : others;
     await setDoc(doc(db, REFERENCE_COL, r.id), { relatedProjectIds: next, relatedProjectId: '' }, { merge: true });
+  };
+
+  // 直接在產品頁上傳：省掉「開文件中心 → 新增文件 → 再選一次產品」
+  // 一次選的檔案會建成一份文件，自動關聯本產品、依副檔名判類型、依命名規則取標題
+  const uploadHere = async (fileList) => {
+    const files = Array.from(fileList || []).filter(f => f.size > 0);
+    if (!files.length) return;
+    setUploading({ done: 0, total: files.length, name: '' });
+    const attachments = [];
+    const failed = [];
+    for (const f of files) {
+      setUploading(u => ({ ...u, name: f.name }));
+      try {
+        const r = await uploadFileToStorage(f, () => {});
+        attachments.push({ name: r.name, url: r.url, path: r.path, size: r.size, type: r.type, kind: 'upload' });
+      } catch (err) {
+        failed.push(`${f.name}：${err.message}`);
+      }
+      setUploading(u => ({ ...u, done: u.done + 1 }));
+    }
+    if (attachments.length) {
+      const docType = files.map(f => guessDocType(f.name)).find(Boolean) || '';
+      const title = [project.code, project.name, docType].filter(Boolean).join('_')
+        || files[0].name.replace(/\.[^.]+$/, '');
+      const id = `ref_${Date.now()}`;
+      try {
+        await setDoc(doc(db, REFERENCE_COL, id), {
+          id, title,
+          natures: docType ? [docType] : [],
+          versions: [], vendors: [], parts: [], cats: [], tags: [],
+          note: '',
+          images: attachments,
+          relatedProjectIds: [project.id],
+          relatedProjectId: '',
+          createdAt: Date.now(),
+          createdBy: currentUser?.name || '',
+        });
+      } catch (err) {
+        failed.push(`建立文件失敗：${err.message}`);
+      }
+    }
+    setUploading(null);
+    if (failed.length) alert(`部分失敗：\n${failed.join('\n')}`);
   };
 
   // 把「進度紀錄」各設計版本底下的附件，整批建立成文件中心的文件
@@ -4386,6 +4441,13 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
           {linked.length > 0 && <span className="text-[10px] text-slate-400 normal-case">（{linked.length} 筆 · {totalImgs} 張圖）</span>}
         </h3>
         <div className="flex items-center gap-2">
+          {canEdit && (
+            <label className="text-[11px] px-2 py-0.5 rounded bg-slate-900 text-white hover:bg-slate-700 cursor-pointer">
+              ⬆ 上傳文件
+              <input type="file" multiple className="hidden"
+                onChange={async e => { const fs = e.target.files; e.target.value = ''; await uploadHere(fs); }} />
+            </label>
+          )}
           {canEdit && migrationJobs.length > 0 && (
             <button onClick={runMigration}
               title="把進度紀錄各版本底下的附件建立成文件（沿用同一份檔案，不重複佔空間）"
@@ -4403,6 +4465,34 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
           )}
         </div>
       </div>
+
+      {/* 上傳進度 */}
+      {uploading && (
+        <div className="mb-2 p-2 rounded-lg border border-violet-200 bg-violet-50/50">
+          <div className="flex items-center gap-2">
+            <Loader className="w-3.5 h-3.5 animate-spin text-violet-500 flex-shrink-0" />
+            <span className="text-[11px] text-slate-600">上傳中 {uploading.done} / {uploading.total}</span>
+            <span className="text-[10px] text-slate-400 truncate flex-1">{uploading.name}</span>
+          </div>
+          <div className="h-1 bg-white rounded-full mt-1.5 overflow-hidden">
+            <div className="h-full bg-violet-500 transition-all"
+              style={{ width: `${uploading.total ? (uploading.done / uploading.total) * 100 : 0}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* 拖曳上傳區：直接把檔案丟到產品頁上 */}
+      {canEdit && !uploading && (
+        <div
+          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={e => { e.preventDefault(); setDragOver(false); }}
+          onDrop={async e => { e.preventDefault(); setDragOver(false); await uploadHere(e.dataTransfer.files); }}
+          className={`mb-2 py-2 text-center text-[11px] rounded-lg border border-dashed transition ${
+            dragOver ? 'border-violet-400 bg-violet-50 text-violet-600' : 'border-slate-200 text-slate-400'
+          }`}>
+          {dragOver ? '↓ 放開即上傳到這個產品' : '把檔案拖到這裡，直接上傳成這個產品的文件'}
+        </div>
+      )}
 
       {/* 挑選要關聯的文件 */}
       {canEdit && picking && (
@@ -5037,6 +5127,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             refFiles={refFiles}
             onOpenRefLibrary={onOpenRefLibrary}
             canEdit={!isViewer}
+            currentUser={currentUser}
           />
         </div>
       </div>
@@ -8632,9 +8723,10 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
           <div className="flex items-baseline gap-1.5 flex-wrap">
             {/* 在「所有文件」檢視補上產品情境，避免只看到「ID」這種沒頭沒尾的標題 */}
             {!(viewMode === 'project' && drillPid) && linkedProjs.length > 0 && (
-              <span className="text-[11px] text-slate-400 flex items-baseline gap-1">
+              <span className="text-[11px] text-slate-400 flex items-baseline gap-1 flex-shrink-0">
                 <button onClick={() => onJumpToProject(linkedProjs[0].id)}
-                  className="hover:text-blue-500 hover:underline">
+                  title={`${linkedProjs[0].code || ''} ${linkedProjs[0].name}`}
+                  className="hover:text-blue-500 hover:underline truncate max-w-[170px] whitespace-nowrap">
                   {linkedProjs[0].code ? `${linkedProjs[0].code} ` : ''}{linkedProjs[0].name}
                 </button>
                 {linkedProjs.length > 1 && <span className="text-slate-300">+{linkedProjs.length - 1}</span>}
@@ -9064,12 +9156,14 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                       // 建議命名：單一產品用「編碼_產品名稱_類型」；跨多個產品時改用編碼並列，避免只掛第一個產品造成誤解
                       const ps = (editing.relatedProjectIds || [])
                         .map(id => projects.find(x => String(x.id) === String(id))).filter(Boolean);
-                      const typeVal = (editing.natures || [])[0] || (editing.versions || [])[0] || '';
+                      const typeVal = (editing.natures || [])[0] || '';
+                      const verVal = (editing.versions || [])[0] || '';
                       let base = '';
                       if (ps.length === 1) base = [ps[0].code, ps[0].name].filter(Boolean).join('_');
                       else if (ps.length === 2) base = ps.map(p => p.code || p.name).join('+');
                       else if (ps.length > 2) base = `${ps[0].code || ps[0].name}+其他${ps.length - 1}個`;
-                      const suggestion = [base, typeVal].filter(Boolean).join('_');
+                      // 版本也要進標題，否則同一產品的 V1／V2 同類型文件會長得一模一樣，看起來像重複
+                      const suggestion = [base, typeVal, verVal].filter(Boolean).join('_');
                       // 檔名本身常常已經講得很清楚（例：球窩+QI风扇电性规格.xls），提供一鍵沿用
                       const f0 = (editing.images || [])[0];
                       const fileBase = f0?.name ? String(f0.name).replace(/\.[^.]+$/, '') : '';

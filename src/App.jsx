@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.42.0';
-const BUILD_ID = '20260804-0800';
+const APP_VERSION = 'v1.42.1';
+const BUILD_ID = '20260804-0930';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.42.1',
+    date: '2026-08-04',
+    changes: [
+      '⬆ 文件中心「依產品 → 某產品」分頁內可直接上傳：標題列新增「上傳到此產品」，下方也可拖曳檔案，不用離開分頁再重選產品',
+      '🧹 文件列表不再重複顯示產品名：標題本身已含產品編碼或名稱時，就不再另外加前綴',
+      '🖼 列表縮圖改顯示對應的產品圖片（有綁定產品時），比檔案圖示更好辨認；產品分頁內仍顯示檔案本身',
+      '🔧 修正在「依類型／依供應商」分頁按「新增文件」時，會把標籤誤當成產品帶入的問題',
+    ],
+  },
   {
     version: 'v1.42.0',
     date: '2026-08-04',
@@ -8523,6 +8533,8 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const [viewingImg, setViewingImg] = useState(null); // 放大預覽 src
   const [previewDoc, setPreviewDoc] = useState(null); // 點文件開啟預覽（看該文件所有附件）
   const [showBatchImport, setShowBatchImport] = useState(false);
+  const [drillUploading, setDrillUploading] = useState(null); // 產品分頁內直接上傳的進度
+  const [drillDragOver, setDrillDragOver] = useState(false);
   // 瀏覽軸：很多文件天生就不屬於任何產品（供應商、外購件、專利、合約…），
   // 所以不能只有「依產品」一種分組，否則它們全部被擠進「未關聯產品」
   const [viewMode, setViewMode] = useState('project'); // 'project'|'natures'|'vendors'|'parts' 分組 | 'docs' 所有文件
@@ -8678,6 +8690,47 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     setEditing(v => ({ ...v, images: [...(v.images || []), { dataUrl, name: file.name }] }));
   };
 
+  // 在「依產品 → 某產品」分頁裡直接上傳：不用離開這一頁、也不用再選一次產品
+  const uploadToDrilledProject = async (fileList) => {
+    const proj = drillGroup?.project;
+    if (!proj) return;
+    const files = Array.from(fileList || []).filter(f => f.size > 0);
+    if (!files.length) return;
+    setDrillUploading({ done: 0, total: files.length, name: '' });
+    const attachments = [];
+    const failed = [];
+    for (const f of files) {
+      setDrillUploading(u => ({ ...u, name: f.name }));
+      try {
+        const r = await uploadFileToStorage(f, () => {});
+        attachments.push({ name: r.name, url: r.url, path: r.path, size: r.size, type: r.type, kind: 'upload' });
+      } catch (err) {
+        failed.push(`${f.name}：${err.message}`);
+      }
+      setDrillUploading(u => ({ ...u, done: u.done + 1 }));
+    }
+    if (attachments.length) {
+      const docType = files.map(f => guessDocType(f.name)).find(Boolean) || '';
+      const title = [proj.code, proj.name, docType].filter(Boolean).join('_')
+        || files[0].name.replace(/\.[^.]+$/, '');
+      const id = `ref_${Date.now()}`;
+      try {
+        await setDoc(doc(db, REFERENCE_COL, id), {
+          id, title,
+          natures: docType ? [docType] : [],
+          versions: [], vendors: [], parts: [], cats: [], tags: [],
+          note: '', images: attachments,
+          relatedProjectIds: [proj.id], relatedProjectId: '',
+          createdAt: Date.now(), createdBy: currentUser?.name || '',
+        });
+      } catch (err) {
+        failed.push(`建立文件失敗：${err.message}`);
+      }
+    }
+    setDrillUploading(null);
+    if (failed.length) alert(`部分失敗：\n${failed.join('\n')}`);
+  };
+
   // 拖曳進表單：圖片直接壓縮存入；非圖片檔上傳到 Storage（沿用產品圖片的上傳機制）
   const addEditingFiles = async (fileList) => {
     const files = Array.from(fileList || []);
@@ -8710,19 +8763,30 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     const linkedProjs = refLinkedProjIds(it)
       .map(pid => projects.find(p => String(p.id) === String(pid)))
       .filter(Boolean);
+    // 已經在某產品分頁裡就不用再標產品；標題本身已含編碼或產品名時也不重複顯示
+    const showProductCtx = !(viewMode === 'project' && drillPid);
+    const titleHasProduct = linkedProjs.some(p =>
+      (p.code && (it.title || '').includes(p.code)) || (p.name && (it.title || '').includes(p.name))
+    );
     return (
       <div key={it.id}
         className="group flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-slate-50 border-b border-slate-50 last:border-b-0">
-        {/* 縮圖：點擊開啟預覽 */}
+        {/* 縮圖：在產品分頁外，有綁定產品就顯示產品圖（比檔案圖示更好辨認）；點擊開啟預覽 */}
         <div className="w-10 h-10 rounded bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0 cursor-pointer hover:border-violet-300"
           onClick={() => setPreviewDoc(it)} title="預覽">
-          <DocThumb file={cover} iconClass="text-lg" />
+          {(() => {
+            const p0 = linkedProjs[0];
+            const pimg = showProductCtx && p0 ? (p0.productImages || [])[0] : null;
+            return pimg
+              ? <StorageImage src={pimg.dataUrl || pimg.url || ''} path={pimg.path} alt="" className="w-full h-full object-contain" />
+              : <DocThumb file={cover} iconClass="text-lg" />;
+          })()}
         </div>
         {/* 標題 + 標籤（標題吃滿剩餘空間，不再被硬切） */}
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-1.5 flex-wrap">
-            {/* 在「所有文件」檢視補上產品情境，避免只看到「ID」這種沒頭沒尾的標題 */}
-            {!(viewMode === 'project' && drillPid) && linkedProjs.length > 0 && (
+            {/* 補上產品情境；但標題本身已含產品編碼／名稱時就不重複顯示 */}
+            {showProductCtx && linkedProjs.length > 0 && !titleHasProduct && (
               <span className="text-[11px] text-slate-400 flex items-baseline gap-1 flex-shrink-0">
                 <button onClick={() => onJumpToProject(linkedProjs[0].id)}
                   title={`${linkedProjs[0].code || ''} ${linkedProjs[0].name}`}
@@ -8876,7 +8940,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
             </button>
           )}
           {canEdit && (
-            <button onClick={() => startAdd(drillPid)}
+            <button onClick={() => startAdd(viewMode === 'project' ? drillPid : null)}
               className="px-3 py-2 text-xs text-white rounded-lg whitespace-nowrap" style={{ background: '#1e293b' }}>
               + 新增文件
             </button>
@@ -9010,6 +9074,13 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                       <p className="text-sm font-medium text-slate-800 truncate">{drillGroup?.label || ''}</p>
                       <p className="text-[10px] text-slate-400">{(drillGroup?.docs || []).length} 份文件</p>
                     </div>
+                    {canEdit && drillGroup?.project && (
+                      <label className="text-[11px] px-2 py-1 rounded bg-slate-900 text-white hover:bg-slate-700 cursor-pointer flex-shrink-0">
+                        ⬆ 上傳到此產品
+                        <input type="file" multiple className="hidden"
+                          onChange={async e => { const fs = e.target.files; e.target.value = ''; await uploadToDrilledProject(fs); }} />
+                      </label>
+                    )}
                     {drillGroup?.project && (
                       <button onClick={() => onJumpToProject(drillGroup.project.id)}
                         className="text-[11px] text-blue-500 hover:underline flex-shrink-0">開啟產品卡片 →</button>
@@ -9017,6 +9088,33 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                   </>
                 )}
               </div>
+
+              {/* 上傳進度 / 拖曳區：直接在這個分頁新增文件，不用跳出去重選產品 */}
+              {canEdit && drillGroup?.project && (
+                drillUploading ? (
+                  <div className="mb-2 p-2 rounded-lg border border-violet-200 bg-violet-50/50">
+                    <div className="flex items-center gap-2">
+                      <Loader className="w-3.5 h-3.5 animate-spin text-violet-500 flex-shrink-0" />
+                      <span className="text-[11px] text-slate-600">上傳中 {drillUploading.done} / {drillUploading.total}</span>
+                      <span className="text-[10px] text-slate-400 truncate flex-1">{drillUploading.name}</span>
+                    </div>
+                    <div className="h-1 bg-white rounded-full mt-1.5 overflow-hidden">
+                      <div className="h-full bg-violet-500 transition-all"
+                        style={{ width: `${drillUploading.total ? (drillUploading.done / drillUploading.total) * 100 : 0}%` }} />
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    onDragOver={e => { e.preventDefault(); setDrillDragOver(true); }}
+                    onDragLeave={e => { e.preventDefault(); setDrillDragOver(false); }}
+                    onDrop={async e => { e.preventDefault(); setDrillDragOver(false); await uploadToDrilledProject(e.dataTransfer.files); }}
+                    className={`mb-2 py-2 text-center text-[11px] rounded-lg border border-dashed transition ${
+                      drillDragOver ? 'border-violet-400 bg-violet-50 text-violet-600' : 'border-slate-200 text-slate-400'
+                    }`}>
+                    {drillDragOver ? '↓ 放開即上傳到此產品' : `把檔案拖到這裡，直接新增為「${drillGroup.project.name}」的文件`}
+                  </div>
+                )
+              )}
               {docLayout === 'list' ? (
                 <div className="border border-slate-100 rounded-lg divide-y divide-slate-50">
                   {(drillGroup?.docs || []).map(renderDocRow)}

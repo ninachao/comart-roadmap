@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.42.1';
-const BUILD_ID = '20260804-0930';
+const APP_VERSION = 'v1.43.0';
+const BUILD_ID = '20260804-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.43.0',
+    date: '2026-08-04',
+    changes: [
+      '⚡ 版本號自動判斷：新增文件時系統會看「同一產品已用過的版本」，算出下一版並顯示「⚡ 下一版 V7」一鍵帶入，不用自己數',
+      '📌 版本欄位會標示此產品目前最新版本，並把同產品用過的版本排在建議清單最前面',
+    ],
+  },
   {
     version: 'v1.42.1',
     date: '2026-08-04',
@@ -8229,7 +8237,7 @@ function DocThumb({ file, className = '', iconClass = 'text-base' }) {
   return <span className={`${iconClass} leading-none`}>{getFileIcon(file.name, file.type)}</span>;
 }
 
-function RefTagField({ dim, values, options, onChange }) {
+function RefTagField({ dim, values, options, onChange, action = null, priorityOptions = [], hint = '' }) {
   const [draft, setDraft] = useState('');
   const addRaw = (raw) => {
     const parts = (raw || '').split(/[,，、\n]/).map(s => s.trim()).filter(Boolean);
@@ -8240,13 +8248,19 @@ function RefTagField({ dim, values, options, onChange }) {
     setDraft('');
   };
   const remove = (v) => onChange(values.filter(x => x !== v));
-  const suggestions = options.filter(o => !values.includes(o));
+  // 同產品用過的值排前面，其餘接在後面（版本清單很長時特別有感）
+  const prio = priorityOptions.filter(o => !values.includes(o));
+  const suggestions = [...prio, ...options.filter(o => !values.includes(o) && !prio.includes(o))];
   return (
     <div>
-      <label className="block text-xs text-slate-600 mb-1">
-        <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: dim.color }} />
-        {dim.label}
-      </label>
+      <div className="flex items-center justify-between mb-1">
+        <label className="block text-xs text-slate-600">
+          <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: dim.color }} />
+          {dim.label}
+          {hint && <span className="text-[10px] text-slate-400 ml-1">{hint}</span>}
+        </label>
+        {action}
+      </div>
       <div className="flex flex-wrap gap-1 mb-1">
         {values.map(v => (
           <span key={v} className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded"
@@ -9295,12 +9309,53 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                     onChange={e => setEditing(v => ({ ...v, docDate: e.target.value }))}
                     className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
                 </div>
-                {REF_DIMS.map(d => (
-                  <RefTagField key={d.key} dim={d}
-                    values={editing[d.key] || []}
-                    options={dimOptions[d.key]}
-                    onChange={vals => setEditing(v => ({ ...v, [d.key]: vals }))} />
-                ))}
+                {REF_DIMS.map(d => {
+                  // 版本：依「同一產品已用過的版本」自動算出下一版，不用自己數
+                  let action = null, priorityOptions = [], hint = '';
+                  if (d.key === 'versions') {
+                    const relIds = (editing.relatedProjectIds || []).map(String);
+                    if (relIds.length) {
+                      const used = items
+                        .filter(it => it.id !== editing.id && refLinkedProjIds(it).some(pid => relIds.includes(String(pid))))
+                        .flatMap(it => refDimVals(it, 'versions'));
+                      priorityOptions = [...new Set(used)];
+                      const nums = used
+                        .map(v => { const m = String(v).match(/^\s*V\s*(\d+)/i); return m ? Number(m[1]) : null; })
+                        .filter(n => n != null);
+                      if (nums.length) {
+                        const max = Math.max(...nums);
+                        const next = `V${max + 1}`;
+                        hint = `（此產品目前最新 V${max}）`;
+                        if (!(editing.versions || []).includes(next)) {
+                          action = (
+                            <button onClick={() => setEditing(v => ({ ...v, versions: [...(v.versions || []), next] }))}
+                              title={`加入 ${next}`}
+                              className="text-[11px] text-emerald-600 hover:underline">⚡ 下一版 {next}</button>
+                          );
+                        }
+                      } else {
+                        hint = '（此產品尚無版本）';
+                        if (!(editing.versions || []).includes('V1')) {
+                          action = (
+                            <button onClick={() => setEditing(v => ({ ...v, versions: [...(v.versions || []), 'V1'] }))}
+                              className="text-[11px] text-emerald-600 hover:underline">⚡ 下一版 V1</button>
+                          );
+                        }
+                      }
+                    } else {
+                      hint = '（選好關聯產品後可自動算下一版）';
+                    }
+                  }
+                  return (
+                    <RefTagField key={d.key} dim={d}
+                      values={editing[d.key] || []}
+                      options={dimOptions[d.key]}
+                      priorityOptions={priorityOptions}
+                      action={action}
+                      hint={hint}
+                      onChange={vals => setEditing(v => ({ ...v, [d.key]: vals }))} />
+                  );
+                })}
                 <div>
                   <label className="block text-xs text-slate-600 mb-1">備註</label>
                   <textarea value={editing.note} onChange={e => setEditing(v => ({ ...v, note: e.target.value }))}

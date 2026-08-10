@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.45.0';
-const BUILD_ID = '20260810-1800';
+const APP_VERSION = 'v1.45.1';
+const BUILD_ID = '20260810-1900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.45.1',
+    date: '2026-08-10',
+    changes: [
+      '🔴 「最新版」徽章改為紅色圓角標籤＋閃爍指示燈，與綠色的版本標籤明確區分（系統設定為減少動態時自動停止閃爍）',
+      '📌 標錯可直接在列表上修正：滑到該列出現 📌 按鈕，點一下即指定／取消「最新版」，不用先開預覽',
+    ],
+  },
   {
     version: 'v1.45.0',
     date: '2026-08-10',
@@ -3071,6 +3079,14 @@ export default function ProductRoadmap() {
         .modal-anim { animation: modalFade 0.15s ease-out; }
         .modal-anim > div { animation: modalIn 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
         @keyframes toastIn { from { opacity: 0; transform: translateY(12px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        /* 最新版徽章：閃爍指示燈，讓不熟狀況的人一眼看到該用哪一份 */
+        @keyframes blinkDot { 0%, 45% { opacity: 1; transform: scale(1); } 55%, 100% { opacity: 0.25; transform: scale(0.75); } }
+        .blink-dot { animation: blinkDot 1s ease-in-out infinite; }
+        @keyframes latestGlow { 0%, 100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.45); } 50% { box-shadow: 0 0 0 3px rgba(244, 63, 94, 0); } }
+        .latest-badge { animation: latestGlow 1.6s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .blink-dot, .latest-badge { animation: none; }
+        }
       `}</style>
       {toast && (
         <div key={toast.key}
@@ -8911,9 +8927,11 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               title={it.title}>{it.title}</button>
             {/* 讓不熟狀況的人一眼知道該用哪一份 */}
             {vs?.isCurrent && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium flex-shrink-0"
-                title={vs.pinned ? '已手動標記為最新版' : '此類型中日期最新的一份'}>
-                ✓ 最新版{vs.pinned ? '（已指定）' : ''}
+              <span className="latest-badge text-[10px] px-1.5 py-0.5 rounded-full font-bold flex-shrink-0 inline-flex items-center gap-1 text-white"
+                style={{ background: '#f43f5e' }}
+                title={vs.pinned ? '已手動指定為最新版' : '此類型中日期最新的一份（可手動改）'}>
+                <span className="blink-dot inline-block w-1.5 h-1.5 rounded-full bg-white" />
+                最新版{vs.pinned ? '·已指定' : ''}
               </span>
             )}
             {vs && !vs.isCurrent && (
@@ -8933,6 +8951,14 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
         </span>
         {canEdit && (
           <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition">
+            {/* 標錯時直接在這一列改，不用開預覽 */}
+            {vs && (
+              <button onClick={() => setAsCurrent(it)}
+                title={it.isCurrent ? '取消指定為最新版' : '把這一份指定為最新版'}
+                className={`p-1 ${it.isCurrent ? 'text-rose-500' : 'text-slate-400 hover:text-rose-500'}`}>
+                📌
+              </button>
+            )}
             <button onClick={() => startEdit(it)} className="p-1 text-slate-400 hover:text-slate-700"><Edit2 className="w-3 h-3" /></button>
             <button onClick={() => deleteItem(it)} className="p-1 text-slate-400 hover:text-rose-600"><Trash2 className="w-3 h-3" /></button>
           </div>

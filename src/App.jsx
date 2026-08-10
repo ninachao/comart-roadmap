@@ -49,10 +49,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.44.1';
-const BUILD_ID = '20260810-1530';
+const APP_VERSION = 'v1.44.2';
+const BUILD_ID = '20260810-1630';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.44.2',
+    date: '2026-08-10',
+    changes: [
+      '🏷 文件類型預設選項新增「進度表」，供應商週報這類文件可直接點選',
+    ],
+  },
   {
     version: 'v1.44.1',
     date: '2026-08-10',
@@ -8185,7 +8192,7 @@ async function exportCustomerListXLSX(list, items) {
 // 各維度的預設選項（只是起頭，使用者可自行新增文字）
 // 注意：natures / vendors 沿用舊欄位 key，只改顯示名稱，既有資料不受影響
 const REF_DIM_PRESETS = {
-  natures: ['ID', '3D', 'BOM', 'Test Report', 'Certification', 'Datasheet', '報價', '圖檔', '工程討論', '未採用方案', '專利', 'RFP', '客戶專屬', '其他'],
+  natures: ['ID', '3D', 'BOM', '進度表', 'Test Report', 'Certification', 'Datasheet', '報價', '圖檔', '工程討論', '未採用方案', '專利', 'RFP', '客戶專屬', '其他'],
   versions: ['正式版', 'V2', 'Prototype', '未採用'],
 };
 

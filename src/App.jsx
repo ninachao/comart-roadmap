@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.46.0';
-const BUILD_ID = '20260810-2030';
+const APP_VERSION = 'v1.46.1';
+const BUILD_ID = '20260810-2130';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.46.1',
+    date: '2026-08-10',
+    changes: [
+      '🎨 版本徽章改為淡底描邊（原本實心飽和色＋白字太搶畫面）：最新版用淡紅、待更新用淡橘、舊版用淡灰，注意力交給閃爍的小圓點',
+      '🔤 「待更新」標籤精簡為「待更新 V6→V7」，不再佔掉整行寬度',
+      '📅 日期改為固定寬度右對齊，整欄對齊不再參差',
+    ],
+  },
   {
     version: 'v1.46.0',
     date: '2026-08-10',
@@ -3089,13 +3098,11 @@ export default function ProductRoadmap() {
         .modal-anim { animation: modalFade 0.15s ease-out; }
         .modal-anim > div { animation: modalIn 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
         @keyframes toastIn { from { opacity: 0; transform: translateY(12px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
-        /* 最新版徽章：閃爍指示燈，讓不熟狀況的人一眼看到該用哪一份 */
-        @keyframes blinkDot { 0%, 45% { opacity: 1; transform: scale(1); } 55%, 100% { opacity: 0.25; transform: scale(0.75); } }
-        .blink-dot { animation: blinkDot 1s ease-in-out infinite; }
-        @keyframes latestGlow { 0%, 100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.45); } 50% { box-shadow: 0 0 0 3px rgba(244, 63, 94, 0); } }
-        .latest-badge { animation: latestGlow 1.6s ease-in-out infinite; }
+        /* 最新版徽章：用小圓點呼吸閃爍當指示燈，徽章本身保持淡色不搶畫面 */
+        @keyframes blinkDot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.8); } }
+        .blink-dot { animation: blinkDot 1.4s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
-          .blink-dot, .latest-badge { animation: none; }
+          .blink-dot { animation: none; }
         }
       `}</style>
       {toast && (
@@ -8957,22 +8964,26 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               title={it.title}>{it.title}</button>
             {/* 讓不熟狀況的人一眼知道該用哪一份 */}
             {vs?.state === 'current' && (
-              <span className="latest-badge text-[10px] px-1.5 py-0.5 rounded-full font-bold flex-shrink-0 inline-flex items-center gap-1 text-white"
-                style={{ background: '#f43f5e' }}
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 inline-flex items-center gap-1"
+                style={{ background: '#fff1f2', color: '#e11d48', border: '1px solid #fecdd3' }}
                 title={vs.pinned ? '已手動指定為最新版' : '目前最新、且已跟上產品版本'}>
-                <span className="blink-dot inline-block w-1.5 h-1.5 rounded-full bg-white" />
+                <span className="blink-dot inline-block w-1.5 h-1.5 rounded-full" style={{ background: '#f43f5e' }} />
                 最新版{vs.pinned ? '·已指定' : ''}
               </span>
             )}
             {vs?.state === 'stale' && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold flex-shrink-0 inline-flex items-center gap-1 text-white"
-                style={{ background: '#f59e0b' }}
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 inline-flex items-center gap-1"
+                style={{ background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' }}
                 title={`這是此類型最新的一份，但產品已進到 V${vs.productMax}，這份還在 V${vs.myNum}，尚未跟上`}>
-                ⏳ 待更新{vs.productMax != null ? `·產品已到 V${vs.productMax}` : ''}
+                待更新
+                {vs.productMax != null && vs.myNum != null && (
+                  <span className="opacity-55 tabular-nums">V{vs.myNum}→V{vs.productMax}</span>
+                )}
               </span>
             )}
             {vs?.state === 'old' && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 flex-shrink-0">舊版</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0"
+                style={{ background: '#f8fafc', color: '#94a3b8', border: '1px solid #f1f5f9' }}>舊版</span>
             )}
             {imgs.length > 1 && <span className="text-[10px] text-slate-400 flex-shrink-0">({imgs.length} 個檔案)</span>}
             {REF_DIMS.flatMap(d => refDimVals(it, d.key).map(v => (
@@ -8983,7 +8994,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
           </div>
           {it.note && <p className="text-[11px] text-slate-400 line-clamp-1" title={it.note}>{it.note}</p>}
         </div>
-        <span className="text-[10px] text-slate-300 flex-shrink-0 hidden sm:inline">
+        <span className="text-[10px] text-slate-400 flex-shrink-0 hidden sm:inline w-[72px] text-right tabular-nums">
           {it.createdAt ? tsToDateInput(it.createdAt) : ''}
         </span>
         {canEdit && (

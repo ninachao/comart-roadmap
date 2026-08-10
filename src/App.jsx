@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.44.0';
-const BUILD_ID = '20260810-1400';
+const APP_VERSION = 'v1.44.1';
+const BUILD_ID = '20260810-1530';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.44.1',
+    date: '2026-08-10',
+    changes: [
+      '📦 模具訂單同一個訂單號合併成一張卡片：表頭顯示單號、狀態、供應商、日期與訂單合計，底下才列各品項',
+      '🐞 修正幣別錯誤：原本把不同幣別的金額直接相加還一律標成 TWD，現在各幣別分開加總顯示（例：165,240,000 VND）',
+      '🐞 手板訂單的標題合計也有同樣問題，一併修正',
+    ],
+  },
   {
     version: 'v1.44.0',
     date: '2026-08-10',
@@ -13819,7 +13828,14 @@ function PrototypeOverviewModal({ projects, onClose, onJumpToProject }) {
 function PrototypeSection({ orders, onChange, defaultSupplier, readOnly, designs }) {
   const [editing, setEditing] = useState(null);
 
-  const totalCost = orders.reduce((sum, o) => sum + (Number(o.quantity || 0) * Number(o.unitPrice || 0)), 0);
+  // 各幣別分開加總，不同幣別直接相加會得到錯誤金額
+  const totalsByCurrency = orders.reduce((m, o) => {
+    const c = o.currency || 'TWD';
+    m[c] = (m[c] || 0) + (Number(o.quantity || 0) * Number(o.unitPrice || 0));
+    return m;
+  }, {});
+  const totalCostLabel = Object.entries(totalsByCurrency).filter(([, v]) => v)
+    .map(([c, v]) => `${formatMoney(v)} ${c}`).join('　+　') || '0';
 
   const handleAdd = () => setEditing({
     idx: -1,
@@ -13848,7 +13864,7 @@ function PrototypeSection({ orders, onChange, defaultSupplier, readOnly, designs
   return (
     <CollapsibleSection
       title="📦 手板訂單（舊資料）"
-      badge={`${orders.length} 筆 · ${formatMoney(totalCost)} TWD`}
+      badge={`${orders.length} 筆 · ${totalCostLabel}`}
       defaultOpen={false}
       accent="amber"
     >
@@ -14134,7 +14150,31 @@ function MouldSection({ orders, onChange, defaultSupplier, readOnly }) {
   const [editing, setEditing] = useState(null);
   const [pasting, setPasting] = useState(false);
 
-  const totalCost = orders.reduce((sum, o) => sum + (Number(o.quantity || 0) * Number(o.unitPrice || 0)), 0);
+  // 幣別不同不能直接相加：各幣別分開加總（原本全部相加還標成 TWD 是錯的）
+  const sumByCurrency = (list) => {
+    const m = {};
+    list.forEach(o => {
+      const c = o.currency || 'TWD';
+      m[c] = (m[c] || 0) + (Number(o.quantity || 0) * Number(o.unitPrice || 0));
+    });
+    return m;
+  };
+  const fmtTotals = (m) => {
+    const es = Object.entries(m).filter(([, v]) => v);
+    if (!es.length) return '0';
+    return es.map(([c, v]) => `${formatMoney(v)} ${c}`).join('　+　');
+  };
+
+  // 同一個訂單號的品項收在同一張卡片裡
+  const orderGroups = useMemo(() => {
+    const map = new Map();
+    orders.forEach((o, i) => {
+      const key = (o.orderNo || '').trim() || `__none_${i}`;
+      if (!map.has(key)) map.set(key, { key, items: [] });
+      map.get(key).items.push({ o, i });
+    });
+    return [...map.values()];
+  }, [orders]);
 
   const handleAdd = () => setEditing({
     idx: -1,
@@ -14159,7 +14199,7 @@ function MouldSection({ orders, onChange, defaultSupplier, readOnly }) {
   return (
     <CollapsibleSection
       title="模具訂單"
-      badge={orders.length > 0 ? `${orders.length} 筆 · ${formatMoney(totalCost)} TWD` : '無'}
+      badge={orders.length > 0 ? `${orders.length} 筆 · ${fmtTotals(sumByCurrency(orders))}` : '無'}
       defaultOpen={false}
       accent="violet"
     >
@@ -14167,40 +14207,64 @@ function MouldSection({ orders, onChange, defaultSupplier, readOnly }) {
         {orders.length === 0 ? (
           <p className="text-xs text-slate-400 py-2">尚未下模具訂單</p>
         ) : (
-          orders.map((o, i) => (
-            <div key={o.id || i} className="bg-violet-50/50 border border-violet-200 rounded-lg p-3 group">
-              <div className="flex items-start justify-between gap-2 mb-1">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
-                    <span className="text-sm font-medium text-slate-900">{o.orderNo || '(無單號)'}</span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded border ${ORDER_STATUS_COLORS[o.status] || ORDER_STATUS_COLORS['已下單']}`}>{o.status}</span>
+          orderGroups.map(g => {
+            const first = g.items[0].o;
+            const statuses = [...new Set(g.items.map(x => x.o.status))];
+            const suppliers = [...new Set(g.items.map(x => x.o.supplier).filter(Boolean))];
+            const dates = [...new Set(g.items.map(x => x.o.orderDate).filter(Boolean))];
+            return (
+              <div key={g.key} className="bg-violet-50/50 border border-violet-200 rounded-lg p-3">
+                {/* 訂單表頭：同一張單只出現一次 */}
+                <div className="flex items-start justify-between gap-2 pb-2 mb-2 border-b border-violet-100">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
+                      <span className="text-sm font-medium text-slate-900">{first.orderNo || '(無單號)'}</span>
+                      {statuses.map(s => (
+                        <span key={s} className={`text-xs px-1.5 py-0.5 rounded border ${ORDER_STATUS_COLORS[s] || ORDER_STATUS_COLORS['已下單']}`}>{s}</span>
+                      ))}
+                      {g.items.length > 1 && <span className="text-[10px] text-slate-400">{g.items.length} 個品項</span>}
+                    </div>
+                    <div className="text-xs text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
+                      {suppliers.length > 0 && <span>{suppliers.join('、')}</span>}
+                      {dates.length > 0 && <span className="tabular-nums">{dates.join('、')}</span>}
+                    </div>
                   </div>
-                  <div className="text-xs text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
-                    {o.partNo && <span>料號: {o.partNo}</span>}
-                    {o.supplier && <span>{o.supplier}</span>}
-                    <span className="tabular-nums">{o.orderDate}</span>
+                  <div className="flex-shrink-0 text-right">
+                    <div className="text-base font-bold text-slate-800 tabular-nums">
+                      {fmtTotals(sumByCurrency(g.items.map(x => x.o)))}
+                    </div>
+                    {g.items.length > 1 && <div className="text-[10px] text-slate-400">訂單合計</div>}
                   </div>
                 </div>
-                {/* 總價顯眼顯示 */}
-                <div className="flex-shrink-0 text-right">
-                  <div className="text-base font-bold text-slate-800 tabular-nums">
-                    {formatMoney(Number(o.quantity || 0) * Number(o.unitPrice || 0))}
-                    <span className="text-xs font-normal text-slate-400 ml-1">{o.currency}</span>
-                  </div>
-                  <div className="text-[10px] text-slate-400 tabular-nums">
-                    {o.quantity} 套 × {formatMoney(o.unitPrice)}
-                  </div>
-                </div>
-                <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
-                  <button onClick={() => handleEdit(i)} className="p-1 text-slate-400 hover:text-slate-700"><Edit2 className="w-3 h-3" /></button>
-                  <button onClick={() => handleDelete(i)} className="p-1 text-slate-400 hover:text-rose-600"><Trash2 className="w-3 h-3" /></button>
+                {/* 品項明細 */}
+                <div className="space-y-1.5">
+                  {g.items.map(({ o, i }) => (
+                    <div key={o.id || i} className="group flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                          {o.partNo && <span className="text-xs font-mono text-slate-700">{o.partNo}</span>}
+                          {o.notes && <span className="text-xs text-slate-600">{o.notes}</span>}
+                        </div>
+                      </div>
+                      <div className="flex-shrink-0 text-right">
+                        <div className="text-xs font-medium text-slate-800 tabular-nums">
+                          {formatMoney(Number(o.quantity || 0) * Number(o.unitPrice || 0))}
+                          <span className="text-[10px] font-normal text-slate-400 ml-1">{o.currency}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 tabular-nums">
+                          {o.quantity} 套 × {formatMoney(o.unitPrice)}
+                        </div>
+                      </div>
+                      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+                        <button onClick={() => handleEdit(i)} className="p-1 text-slate-400 hover:text-slate-700"><Edit2 className="w-3 h-3" /></button>
+                        <button onClick={() => handleDelete(i)} className="p-1 text-slate-400 hover:text-rose-600"><Trash2 className="w-3 h-3" /></button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-              {o.notes && (
-                <p className="text-xs text-slate-700 leading-relaxed mt-1 whitespace-pre-wrap">{o.notes}</p>
-              )}
-            </div>
-          ))
+            );
+          })
         )}
         {!readOnly && (
           <div className="flex gap-2">

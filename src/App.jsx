@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.45.1';
-const BUILD_ID = '20260810-1900';
+const APP_VERSION = 'v1.46.0';
+const BUILD_ID = '20260810-2030';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.46.0',
+    date: '2026-08-10',
+    changes: [
+      '⏳ 新增「待更新」狀態：某類型雖然是自己類別中最新的，但版本落後產品目前版本時（例：ID 已到 V7，3D／BOM 還在 V6），會顯示橘色「待更新·產品已到 V7」，不再誤標成最新版',
+      '🔴 「最新版」只留給真正跟上產品版本的文件（紅色閃爍）；同類型較舊的仍標灰色「舊版」',
+      '📌 手動指定仍優先於自動判斷：若 V6 的 BOM 確認可沿用，按 📌 指定即可顯示為最新版',
+      '🔢 領頭版本改為先比版號、再比日期，日期填錯不會再造成誤判',
+    ],
+  },
   {
     version: 'v1.45.1',
     date: '2026-08-10',
@@ -8680,35 +8690,55 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     ).slice(0, 12);
   }, [projects, search]);
 
-  // 判斷「同一個產品的同一種文件類型」裡，哪一份才是最新版
-  // 預設用日期最新者；若有人手動標記 isCurrent，則以手動標記為準（人的判斷優先於日期）
-  const currentByGroup = useMemo(() => {
-    const groups = new Map();
+  // 版本狀態判斷
+  // 「這個類型裡最新的一份」不等於「跟上產品進度的一份」：
+  // 例如 ID 已改到 V7，但 3D／BOM 還停在 V6，那 V6 是該類型最新、但相對產品是「待更新」。
+  // 所以先取每個產品的最高版號，再跟各類型的領頭版本比較。
+  const versionInfo = useMemo(() => {
+    const verNum = (it) => {
+      const nums = refDimVals(it, 'versions')
+        .map(v => { const m = String(v).match(/^\s*V\s*(\d+)/i); return m ? Number(m[1]) : null; })
+        .filter(n => n != null);
+      return nums.length ? Math.max(...nums) : null;
+    };
+    const prodMax = {};   // 產品 → 目前最高版號
+    const byGroup = {};   // 產品|類型 → 該類型的所有文件
     items.forEach(it => {
       const pid = refLinkedProjIds(it)[0];
       const nat = refDimVals(it, 'natures')[0];
       if (!pid || !nat) return;
+      const n = verNum(it);
+      if (n != null) prodMax[pid] = Math.max(prodMax[pid] ?? -Infinity, n);
       const k = `${pid}|${nat}`;
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k).push(it);
+      (byGroup[k] = byGroup[k] || []).push({ it, n });
     });
     const out = {};
-    groups.forEach((list, k) => {
-      if (list.length < 2) return; // 只有一份就不用標，避免到處都是徽章
-      const pinned = list.find(x => x.isCurrent);
-      const pick = pinned || [...list].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
-      out[k] = { id: pick.id, pinned: !!pinned, count: list.length };
+    Object.entries(byGroup).forEach(([k, list]) => {
+      const pid = k.split('|')[0];
+      const pinned = list.find(x => x.it.isCurrent);
+      // 領頭者：先比版號，版號相同或缺漏再比日期
+      const head = pinned || [...list].sort((a, b) =>
+        (b.n ?? -1) - (a.n ?? -1) || (b.it.createdAt || 0) - (a.it.createdAt || 0)
+      )[0];
+      const pmax = prodMax[pid];
+      list.forEach(({ it, n }) => {
+        let state;
+        if (it.id !== head.it.id) state = 'old';
+        else if (pinned) state = 'current';                                  // 人工指定優先
+        else if (pmax != null && n != null && n < pmax) state = 'stale';      // 該類型最新，但落後產品版本
+        else state = 'current';
+        out[it.id] = { state, productMax: pmax, myNum: n, count: list.length, pinned: !!pinned };
+      });
     });
     return out;
   }, [items]);
 
   const versionState = (it) => {
-    const pid = refLinkedProjIds(it)[0];
-    const nat = refDimVals(it, 'natures')[0];
-    if (!pid || !nat) return null;
-    const g = currentByGroup[`${pid}|${nat}`];
-    if (!g) return null;
-    return { isCurrent: g.id === it.id, pinned: g.pinned, count: g.count };
+    const info = versionInfo[it.id];
+    if (!info) return null;
+    // 只有一份、且沒落後產品版本 → 不用掛徽章，避免到處都是標籤
+    if (info.count < 2 && info.state !== 'stale') return null;
+    return info;
   };
 
   // 手動指定／取消「最新版」
@@ -8922,19 +8952,26 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
             )}
             <button onClick={() => setPreviewDoc(it)}
               className={`text-xs text-left hover:text-violet-600 hover:underline break-all ${
-                vs && !vs.isCurrent ? 'text-slate-500' : 'font-medium text-slate-800'
+                vs?.state === 'old' ? 'text-slate-500' : 'font-medium text-slate-800'
               }`}
               title={it.title}>{it.title}</button>
             {/* 讓不熟狀況的人一眼知道該用哪一份 */}
-            {vs?.isCurrent && (
+            {vs?.state === 'current' && (
               <span className="latest-badge text-[10px] px-1.5 py-0.5 rounded-full font-bold flex-shrink-0 inline-flex items-center gap-1 text-white"
                 style={{ background: '#f43f5e' }}
-                title={vs.pinned ? '已手動指定為最新版' : '此類型中日期最新的一份（可手動改）'}>
+                title={vs.pinned ? '已手動指定為最新版' : '目前最新、且已跟上產品版本'}>
                 <span className="blink-dot inline-block w-1.5 h-1.5 rounded-full bg-white" />
                 最新版{vs.pinned ? '·已指定' : ''}
               </span>
             )}
-            {vs && !vs.isCurrent && (
+            {vs?.state === 'stale' && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold flex-shrink-0 inline-flex items-center gap-1 text-white"
+                style={{ background: '#f59e0b' }}
+                title={`這是此類型最新的一份，但產品已進到 V${vs.productMax}，這份還在 V${vs.myNum}，尚未跟上`}>
+                ⏳ 待更新{vs.productMax != null ? `·產品已到 V${vs.productMax}` : ''}
+              </span>
+            )}
+            {vs?.state === 'old' && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 flex-shrink-0">舊版</span>
             )}
             {imgs.length > 1 && <span className="text-[10px] text-slate-400 flex-shrink-0">({imgs.length} 個檔案)</span>}

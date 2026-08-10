@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.43.0';
-const BUILD_ID = '20260804-1100';
+const APP_VERSION = 'v1.44.0';
+const BUILD_ID = '20260810-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.44.0',
+    date: '2026-08-10',
+    changes: [
+      '📋 模具訂單新增「貼上請購單」：把請購單整段貼進來，自動拆成多筆訂單並填好料號、品名、數量、單價、幣別',
+      '🧮 價格支援換算式，會取等號後的最終金額（例：RMB 31500*1.2*1800=VND 143640000 → 抓 VND 143640000，不會誤抓係數 1.2）',
+      '👀 建立前提供預覽清單，可逐筆修改或取消勾選',
+      '💱 幣別新增 VND',
+    ],
+  },
   {
     version: 'v1.43.0',
     date: '2026-08-04',
@@ -12733,6 +12743,7 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                     <option value="USD">USD</option>
                     <option value="CNY">CNY</option>
                     <option value="VND">VND</option>
+                    <option value="VND">VND</option>
                   </select>
                 </div>
                 <div>
@@ -13916,8 +13927,212 @@ function PrototypeSection({ orders, onChange, defaultSupplier, readOnly, designs
   );
 }
 
+// 解析貼上的請購單文字，一次帶出多筆模具訂單
+// 支援格式範例：
+//   請購單號：CP018-2608050001
+//   品項數量:
+//   BC03260200*1pc/ 双排磁吸底座+底座盖片【模具费: RMB 31500*1.2*1800=VND 143640000未税】
+//   WM26080001*1pc/ 双排磁吸底座铁片-五金大货模【模具费: VND 21600000未税】
+function parseMouldPaste(text) {
+  const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const head = { orderNo: '', supplier: '', orderDate: '' };
+  const items = [];
+  const normCur = (c) => {
+    const u = (c || '').toUpperCase();
+    if (u === 'RMB' || u === 'CNY' || u === '人民幣') return 'CNY';
+    if (u === 'NTD' || u === 'NT' || u === 'TWD') return 'TWD';
+    return u;
+  };
+  for (const line of lines) {
+    let m;
+    if ((m = line.match(/(?:請購單號|請購單|訂單號|單號|採購單號)\s*[:：]\s*(\S+)/))) { head.orderNo = m[1]; continue; }
+    if ((m = line.match(/(?:供應商|廠商|供货商)\s*[:：]\s*(\S+)/))) { head.supplier = m[1]; continue; }
+    if ((m = line.match(/(?:下單日|下单日|日期|訂購日)\s*[:：]\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})/))) {
+      const [y, mo, d] = m[1].split(/[-/.]/);
+      head.orderDate = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      continue;
+    }
+    if (/^(品項數量|品项数量|項目|明細|明细|品項)\s*[:：]?$/.test(line)) continue;
+
+    // 明細列：料號 *數量 單位 / 品名【價格資訊】
+    m = line.match(/^([A-Za-z][A-Za-z0-9\-_]{3,})\s*[*xX×]\s*(\d+)\s*(?:pcs?|支|套|個|件|组|組)?\s*[\/、,，]?\s*(.*)$/);
+    if (!m) continue;
+    const partNo = m[1];
+    const qty = Number(m[2]) || 1;
+    let rest = m[3] || '';
+    let currency = '', amount = 0;
+
+    const br = rest.match(/[【\[（(]([^】\]）)]*)[】\]）)]\s*$/);
+    let name = rest;
+    if (br) {
+      name = rest.slice(0, br.index).trim();
+      let expr = br[1];
+      // 有等號時取「=」後面的最終金額（例：RMB 31500*1.2*1800=VND 143640000未税）
+      if (expr.includes('=')) expr = expr.split('=').pop();
+      const cm = expr.match(/(RMB|CNY|VND|USD|TWD|NTD|JPY|EUR|人民幣)/i);
+      if (cm) currency = normCur(cm[1]);
+      // 取最大的數字當金額，避免抓到 1.2 這類換算係數
+      const nums = (expr.match(/[\d][\d,.]*/g) || [])
+        .map(s => Number(s.replace(/,/g, '')))
+        .filter(n => !isNaN(n) && n >= 100);
+      if (nums.length) amount = Math.max(...nums);
+    }
+    items.push({
+      partNo, qty,
+      name: name.replace(/^[\/、,，\s]+/, '').trim(),
+      currency: currency || 'TWD',
+      amount,
+      unitPrice: qty ? Math.round((amount / qty) * 100) / 100 : amount,
+    });
+  }
+  return { ...head, items };
+}
+
+// 貼上請購單 → 預覽 → 一次建立多筆模具訂單
+function MouldPasteModal({ defaultSupplier, onCreate, onClose }) {
+  const [text, setText] = useState('');
+  const [parsed, setParsed] = useState(null);
+  const [head, setHead] = useState({ orderNo: '', supplier: defaultSupplier || '', orderDate: new Date().toISOString().split('T')[0], status: '已下單' });
+  const [rows, setRows] = useState([]);
+
+  const doParse = (t) => {
+    const r = parseMouldPaste(t);
+    setParsed(r);
+    setHead(h => ({
+      ...h,
+      orderNo: r.orderNo || h.orderNo,
+      supplier: r.supplier || h.supplier,
+      orderDate: r.orderDate || h.orderDate,
+    }));
+    setRows(r.items.map((it, i) => ({ ...it, _i: i, skip: false })));
+  };
+
+  const upd = (i, patch) => setRows(rs => rs.map(r => r._i === i ? { ...r, ...patch } : r));
+  const active = rows.filter(r => !r.skip);
+
+  const create = () => {
+    const list = active.map((r, i) => ({
+      id: `m${Date.now()}_${i}`,
+      orderNo: head.orderNo,
+      partNo: r.partNo,
+      supplier: head.supplier,
+      quantity: Number(r.qty) || 1,
+      unitPrice: Number(r.unitPrice) || 0,
+      currency: r.currency || 'TWD',
+      orderDate: head.orderDate,
+      status: head.status,
+      notes: r.name || '',
+    }));
+    onCreate(list);
+  };
+
+  return (
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-[55] flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between p-4 pb-2 border-b border-slate-100">
+          <div>
+            <h3 className="text-sm font-medium">📋 貼上請購單，批次建立模具訂單</h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">把請購單內容整段貼進來，系統自動拆成多筆</p>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded"><X className="w-4 h-4 text-slate-500" /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">貼上內容</label>
+            <textarea value={text} autoFocus rows={6}
+              onChange={e => { setText(e.target.value); doParse(e.target.value); }}
+              onPaste={e => { const t = e.clipboardData.getData('text'); setTimeout(() => doParse(text + t), 0); }}
+              placeholder={'請購單號：CP018-2608050001\n品項數量:\nBC03260200*1pc/ 双排磁吸底座+底座盖片【模具费: RMB 31500*1.2*1800=VND 143640000未税】\nWM26080001*1pc/ 双排磁吸底座铁片-五金大货模【模具费: VND 21600000未税】'}
+              className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded font-mono focus:outline-none focus:border-violet-400" />
+          </div>
+
+          {parsed && (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">訂單號</label>
+                  <input value={head.orderNo} onChange={e => setHead(h => ({ ...h, orderNo: e.target.value }))}
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded" />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">供應商</label>
+                  <input value={head.supplier} onChange={e => setHead(h => ({ ...h, supplier: e.target.value }))}
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded" />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">下單日</label>
+                  <input type="date" value={head.orderDate} onChange={e => setHead(h => ({ ...h, orderDate: e.target.value }))}
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded" />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">狀態</label>
+                  <select value={head.status} onChange={e => setHead(h => ({ ...h, status: e.target.value }))}
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-white">
+                    {['已下單', '進行中', '已完成', '已取消'].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {rows.length === 0 ? (
+                <p className="text-xs text-amber-600 bg-amber-50 rounded-lg p-2">
+                  沒有解析到品項。明細每行請用「料號*數量/品名【金額】」的格式，例如：<br />
+                  <span className="font-mono">BC03260200*1pc/ 双排磁吸底座【模具费: VND 143640000未税】</span>
+                </p>
+              ) : (
+                <div>
+                  <p className="text-[11px] text-slate-500 mb-1">解析到 {rows.length} 筆品項（可修改，取消勾選則不建立）</p>
+                  <div className="border border-slate-100 rounded-lg divide-y divide-slate-50">
+                    {rows.map(r => (
+                      <div key={r._i} className={`p-2 ${r.skip ? 'opacity-40' : ''}`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <input type="checkbox" checked={!r.skip} onChange={e => upd(r._i, { skip: !e.target.checked })} />
+                          <input value={r.partNo} onChange={e => upd(r._i, { partNo: e.target.value })}
+                            placeholder="料號"
+                            className="w-36 px-1.5 py-0.5 text-xs border border-slate-200 rounded font-mono" />
+                          <input value={r.name} onChange={e => upd(r._i, { name: e.target.value })}
+                            placeholder="品名 / 備註"
+                            className="flex-1 px-1.5 py-0.5 text-xs border border-slate-200 rounded" />
+                        </div>
+                        <div className="flex items-center gap-2 pl-6 flex-wrap">
+                          <span className="text-[10px] text-slate-400">數量</span>
+                          <input type="number" value={r.qty} onChange={e => upd(r._i, { qty: e.target.value })}
+                            className="w-14 px-1.5 py-0.5 text-xs border border-slate-200 rounded tabular-nums" />
+                          <span className="text-[10px] text-slate-400">單價</span>
+                          <input type="number" value={r.unitPrice} onChange={e => upd(r._i, { unitPrice: e.target.value })}
+                            className="w-32 px-1.5 py-0.5 text-xs border border-slate-200 rounded tabular-nums" />
+                          <select value={r.currency} onChange={e => upd(r._i, { currency: e.target.value })}
+                            className="text-xs border border-slate-200 rounded px-1 py-0.5 bg-white">
+                            {['TWD', 'USD', 'CNY', 'VND'].map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                          <span className="text-[10px] text-slate-500 tabular-nums">
+                            = {formatMoney((Number(r.qty) || 0) * (Number(r.unitPrice) || 0))} {r.currency}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 p-4 pt-2 border-t border-slate-100">
+          <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
+          <button onClick={create} disabled={!active.length}
+            className="text-sm px-4 py-1.5 text-white rounded disabled:opacity-40" style={{ background: '#1e293b' }}>
+            建立 {active.length} 筆訂單
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MouldSection({ orders, onChange, defaultSupplier, readOnly }) {
   const [editing, setEditing] = useState(null);
+  const [pasting, setPasting] = useState(false);
 
   const totalCost = orders.reduce((sum, o) => sum + (Number(o.quantity || 0) * Number(o.unitPrice || 0)), 0);
 
@@ -13988,14 +14203,31 @@ function MouldSection({ orders, onChange, defaultSupplier, readOnly }) {
           ))
         )}
         {!readOnly && (
-          <button
-            onClick={handleAdd}
-            className="w-full py-2 text-xs text-blue-600 hover:bg-blue-50 border border-dashed border-blue-200 rounded-lg flex items-center justify-center gap-1"
-          >
-            <Plus className="w-3 h-3" />新增模具訂單
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={handleAdd}
+              className="flex-1 py-2 text-xs text-blue-600 hover:bg-blue-50 border border-dashed border-blue-200 rounded-lg flex items-center justify-center gap-1"
+            >
+              <Plus className="w-3 h-3" />新增模具訂單
+            </button>
+            <button
+              onClick={() => setPasting(true)}
+              title="把請購單整段貼上，自動拆成多筆"
+              className="px-3 py-2 text-xs text-violet-600 hover:bg-violet-50 border border-dashed border-violet-200 rounded-lg whitespace-nowrap"
+            >
+              📋 貼上請購單
+            </button>
+          </div>
         )}
       </div>
+
+      {pasting && (
+        <MouldPasteModal
+          defaultSupplier={defaultSupplier}
+          onClose={() => setPasting(false)}
+          onCreate={(list) => { onChange([...orders, ...list]); setPasting(false); }}
+        />
+      )}
 
       {editing && (
         <OrderForm
@@ -14091,6 +14323,7 @@ function OrderForm({ kind, data, onChange, onCancel, onSave, showStorage, showRe
                 <option value="TWD">TWD</option>
                 <option value="USD">USD</option>
                 <option value="CNY">CNY</option>
+                <option value="VND">VND</option>
               </select>
             </div>
           </div>

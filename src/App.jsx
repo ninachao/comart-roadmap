@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.44.2';
-const BUILD_ID = '20260810-1630';
+const APP_VERSION = 'v1.45.0';
+const BUILD_ID = '20260810-1800';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.45.0',
+    date: '2026-08-10',
+    changes: [
+      '✓ 文件標示「最新版／舊版」：同一產品同一文件類型有多份時，日期最新的一份會顯示綠色「✓ 最新版」，其餘標為灰色「舊版」，不熟狀況的人也知道該用哪一份',
+      '📌 可手動指定最新版：在文件預覽按「設為最新版」，人的判斷會優先於日期（同一組只會有一份被指定）',
+      '🐞 修正下載檔名亂碼：上傳時中文檔名被換成底線，且未設定 Content-Disposition。現已保留原始檔名，並回頭修好既有 444 個附件的下載檔名',
+    ],
+  },
   {
     version: 'v1.44.2',
     date: '2026-08-10',
@@ -6709,10 +6718,16 @@ async function compressImageFile(file) {
 }
 
 async function uploadFileToStorage(file, onProgress) {
-  const safeName = file.name.replace(/[^\w.-]/g, '_');
+  // 保留中日文等字元（只去掉會影響路徑的符號），避免檔名被換成一串底線
+  const safeName = file.name.replace(/[\/\\?%*:|"<>#\s]+/g, '_');
   const path = `${STORAGE_FOLDER}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeName}`;
   const fileRef = storageRef(storage, path);
-  const uploadTask = uploadBytesResumable(fileRef, file);
+  // 設定 Content-Disposition：下載時才會用原始檔名（跨網域時 <a download> 會被瀏覽器忽略）
+  const isImg = (file.type || '').startsWith('image/');
+  const uploadTask = uploadBytesResumable(fileRef, file, {
+    contentType: file.type || 'application/octet-stream',
+    contentDisposition: `${isImg ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+  });
   return new Promise((resolve, reject) => {
     uploadTask.on('state_changed',
       (snap) => {
@@ -8649,6 +8664,57 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     ).slice(0, 12);
   }, [projects, search]);
 
+  // 判斷「同一個產品的同一種文件類型」裡，哪一份才是最新版
+  // 預設用日期最新者；若有人手動標記 isCurrent，則以手動標記為準（人的判斷優先於日期）
+  const currentByGroup = useMemo(() => {
+    const groups = new Map();
+    items.forEach(it => {
+      const pid = refLinkedProjIds(it)[0];
+      const nat = refDimVals(it, 'natures')[0];
+      if (!pid || !nat) return;
+      const k = `${pid}|${nat}`;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(it);
+    });
+    const out = {};
+    groups.forEach((list, k) => {
+      if (list.length < 2) return; // 只有一份就不用標，避免到處都是徽章
+      const pinned = list.find(x => x.isCurrent);
+      const pick = pinned || [...list].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+      out[k] = { id: pick.id, pinned: !!pinned, count: list.length };
+    });
+    return out;
+  }, [items]);
+
+  const versionState = (it) => {
+    const pid = refLinkedProjIds(it)[0];
+    const nat = refDimVals(it, 'natures')[0];
+    if (!pid || !nat) return null;
+    const g = currentByGroup[`${pid}|${nat}`];
+    if (!g) return null;
+    return { isCurrent: g.id === it.id, pinned: g.pinned, count: g.count };
+  };
+
+  // 手動指定／取消「最新版」
+  const setAsCurrent = async (it) => {
+    const pid = refLinkedProjIds(it)[0];
+    const nat = refDimVals(it, 'natures')[0];
+    if (!pid || !nat) {
+      alert('要先設定「關聯產品」與「文件類型」，系統才知道要跟哪些文件比較版本');
+      return;
+    }
+    const siblings = items.filter(x => {
+      const p = refLinkedProjIds(x)[0], n = refDimVals(x, 'natures')[0];
+      return String(p) === String(pid) && n === nat;
+    });
+    // 同組只留一份標記
+    for (const s of siblings) {
+      if (s.id === it.id) continue;
+      if (s.isCurrent) await setDoc(doc(db, REFERENCE_COL, s.id), { isCurrent: false }, { merge: true });
+    }
+    await setDoc(doc(db, REFERENCE_COL, it.id), { isCurrent: !it.isCurrent }, { merge: true });
+  };
+
   // 依目前的瀏覽軸分組：一份文件若屬於 N 個值，就會同時出現在 N 個分組底下（不重複存檔，只是同時被列出）
   const grouped = useMemo(() => {
     const map = new Map();
@@ -8804,6 +8870,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
       .map(pid => projects.find(p => String(p.id) === String(pid)))
       .filter(Boolean);
     // 已經在某產品分頁裡就不用再標產品；標題本身已含編碼或產品名時也不重複顯示
+    const vs = versionState(it);
     const showProductCtx = !(viewMode === 'project' && drillPid);
     const titleHasProduct = linkedProjs.some(p =>
       (p.code && (it.title || '').includes(p.code)) || (p.name && (it.title || '').includes(p.name))
@@ -8838,8 +8905,20 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               </span>
             )}
             <button onClick={() => setPreviewDoc(it)}
-              className="text-xs font-medium text-slate-800 text-left hover:text-violet-600 hover:underline break-all"
+              className={`text-xs text-left hover:text-violet-600 hover:underline break-all ${
+                vs && !vs.isCurrent ? 'text-slate-500' : 'font-medium text-slate-800'
+              }`}
               title={it.title}>{it.title}</button>
+            {/* 讓不熟狀況的人一眼知道該用哪一份 */}
+            {vs?.isCurrent && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium flex-shrink-0"
+                title={vs.pinned ? '已手動標記為最新版' : '此類型中日期最新的一份'}>
+                ✓ 最新版{vs.pinned ? '（已指定）' : ''}
+              </span>
+            )}
+            {vs && !vs.isCurrent && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 flex-shrink-0">舊版</span>
+            )}
             {imgs.length > 1 && <span className="text-[10px] text-slate-400 flex-shrink-0">({imgs.length} 個檔案)</span>}
             {REF_DIMS.flatMap(d => refDimVals(it, d.key).map(v => (
               <button key={d.key + ':' + v} onClick={() => toggleFilter(d.key, v)}
@@ -9228,6 +9307,15 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                     )}
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
+                    {canEdit && (
+                      <button onClick={() => setAsCurrent(cur)}
+                        title="讓其他人知道這份才是要依循的版本"
+                        className={`text-[11px] px-2 py-1 rounded ${cur.isCurrent
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'text-slate-500 hover:text-emerald-600'}`}>
+                        {cur.isCurrent ? '✓ 已指定為最新版' : '📌 設為最新版'}
+                      </button>
+                    )}
                     {canEdit && (
                       <button onClick={() => { setPreviewDoc(null); startEdit(cur); }}
                         className="text-[11px] text-slate-500 hover:text-violet-600 px-2 py-1">編輯</button>

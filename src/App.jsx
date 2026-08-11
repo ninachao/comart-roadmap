@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.46.1';
-const BUILD_ID = '20260810-2130';
+const APP_VERSION = 'v1.47.0';
+const BUILD_ID = '20260810-2300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.47.0',
+    date: '2026-08-10',
+    changes: [
+      '🗜 篩選區改為預設收合：只顯示「篩選」與目前套用的條件，展開才列出所有值；每個維度最多先顯示 10 個，其餘用「+N 更多」展開，版本值再多也不會佔掉整個畫面',
+      '📐 文件列表改為兩行式：第一行是標題與版本狀態（字級加大、對比提高），第二行才是淡色的產品、標籤、檔案數與備註，層次更清楚',
+      '🖱 已套用的篩選條件在收合狀態下仍看得到，點一下即可移除',
+    ],
+  },
   {
     version: 'v1.46.1',
     date: '2026-08-10',
@@ -8621,6 +8630,8 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const [viewingImg, setViewingImg] = useState(null); // 放大預覽 src
   const [previewDoc, setPreviewDoc] = useState(null); // 點文件開啟預覽（看該文件所有附件）
   const [showBatchImport, setShowBatchImport] = useState(false);
+  const [showFilters, setShowFilters] = useState(false); // 篩選區預設收合（版本值可能有數十個，會把列表擠掉）
+  const [expandedDims, setExpandedDims] = useState({});  // 各維度是否展開完整值
   const [drillUploading, setDrillUploading] = useState(null); // 產品分頁內直接上傳的進度
   const [drillDragOver, setDrillDragOver] = useState(false);
   // 瀏覽軸：很多文件天生就不屬於任何產品（供應商、外購件、專利、合約…），
@@ -8930,9 +8941,9 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     );
     return (
       <div key={it.id}
-        className="group flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-slate-50 border-b border-slate-50 last:border-b-0">
+        className="group flex items-start gap-2.5 px-2 py-2 rounded-lg hover:bg-slate-50 border-b border-slate-50 last:border-b-0">
         {/* 縮圖：在產品分頁外，有綁定產品就顯示產品圖（比檔案圖示更好辨認）；點擊開啟預覽 */}
-        <div className="w-10 h-10 rounded bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0 cursor-pointer hover:border-violet-300"
+        <div className="w-10 h-10 mt-0.5 rounded bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0 cursor-pointer hover:border-violet-300"
           onClick={() => setPreviewDoc(it)} title="預覽">
           {(() => {
             const p0 = linkedProjs[0];
@@ -8942,23 +8953,12 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               : <DocThumb file={cover} iconClass="text-lg" />;
           })()}
         </div>
-        {/* 標題 + 標籤（標題吃滿剩餘空間，不再被硬切） */}
+        {/* 兩行式：第一行是標題與版本狀態，第二行是淡色的產品／標籤／備註，層次分明 */}
         <div className="min-w-0 flex-1">
+          {/* 第 1 行：標題 + 版本狀態 */}
           <div className="flex items-baseline gap-1.5 flex-wrap">
-            {/* 補上產品情境；但標題本身已含產品編碼／名稱時就不重複顯示 */}
-            {showProductCtx && linkedProjs.length > 0 && !titleHasProduct && (
-              <span className="text-[11px] text-slate-400 flex items-baseline gap-1 flex-shrink-0">
-                <button onClick={() => onJumpToProject(linkedProjs[0].id)}
-                  title={`${linkedProjs[0].code || ''} ${linkedProjs[0].name}`}
-                  className="hover:text-blue-500 hover:underline truncate max-w-[170px] whitespace-nowrap">
-                  {linkedProjs[0].code ? `${linkedProjs[0].code} ` : ''}{linkedProjs[0].name}
-                </button>
-                {linkedProjs.length > 1 && <span className="text-slate-300">+{linkedProjs.length - 1}</span>}
-                <span className="text-slate-300">›</span>
-              </span>
-            )}
             <button onClick={() => setPreviewDoc(it)}
-              className={`text-xs text-left hover:text-violet-600 hover:underline break-all ${
+              className={`text-[13px] text-left hover:text-violet-600 hover:underline break-all leading-snug ${
                 vs?.state === 'old' ? 'text-slate-500' : 'font-medium text-slate-800'
               }`}
               title={it.title}>{it.title}</button>
@@ -8985,20 +8985,33 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               <span className="text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0"
                 style={{ background: '#f8fafc', color: '#94a3b8', border: '1px solid #f1f5f9' }}>舊版</span>
             )}
-            {imgs.length > 1 && <span className="text-[10px] text-slate-400 flex-shrink-0">({imgs.length} 個檔案)</span>}
+          </div>
+          {/* 第 2 行：產品、標籤、檔案數、備註（全部淡色，不跟標題搶） */}
+          <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+            {showProductCtx && linkedProjs.length > 0 && !titleHasProduct && (
+              <button onClick={() => onJumpToProject(linkedProjs[0].id)}
+                title={`${linkedProjs[0].code || ''} ${linkedProjs[0].name}`}
+                className="text-[10px] text-slate-400 hover:text-blue-500 hover:underline truncate max-w-[170px] whitespace-nowrap flex-shrink-0">
+                {linkedProjs[0].code ? `${linkedProjs[0].code} ` : ''}{linkedProjs[0].name}
+                {linkedProjs.length > 1 ? ` +${linkedProjs.length - 1}` : ''}
+              </button>
+            )}
             {REF_DIMS.flatMap(d => refDimVals(it, d.key).map(v => (
               <button key={d.key + ':' + v} onClick={() => toggleFilter(d.key, v)}
                 className="text-[10px] px-1.5 py-0.5 rounded hover:opacity-80 flex-shrink-0"
                 style={{ background: d.bg, color: d.color }}>{v}</button>
             )))}
+            {imgs.length > 1 && <span className="text-[10px] text-slate-400 flex-shrink-0">{imgs.length} 個檔案</span>}
+            {it.note && (
+              <span className="text-[10px] text-slate-400 truncate min-w-0" title={it.note}>· {it.note}</span>
+            )}
           </div>
-          {it.note && <p className="text-[11px] text-slate-400 line-clamp-1" title={it.note}>{it.note}</p>}
         </div>
-        <span className="text-[10px] text-slate-400 flex-shrink-0 hidden sm:inline w-[72px] text-right tabular-nums">
+        <span className="text-[10px] text-slate-400 flex-shrink-0 hidden sm:inline w-[72px] text-right tabular-nums mt-1">
           {it.createdAt ? tsToDateInput(it.createdAt) : ''}
         </span>
         {canEdit && (
-          <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition">
+          <div className="flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition mt-0.5">
             {/* 標錯時直接在這一列改，不用開預覽 */}
             {vs && (
               <button onClick={() => setAsCurrent(it)}
@@ -9139,30 +9152,79 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
             </button>
           )}
         </div>
-        {/* 分維度標籤篩選（只列實際用過的值） */}
+        {/* 分維度標籤篩選：預設收合，只顯示已選條件，避免數十個版本值佔掉整個畫面 */}
         {REF_DIMS.some(d => dimUsed[d.key].length > 0) && (
-          <div className="space-y-1 mb-2 border border-slate-100 rounded-lg p-2 bg-slate-50/50">
-            {REF_DIMS.filter(d => dimUsed[d.key].length > 0).map(d => (
-              <div key={d.key} className="flex items-start gap-1.5">
-                <span className="text-[11px] text-slate-500 w-14 flex-shrink-0 pt-0.5 flex items-center gap-1">
-                  <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: d.color }} />{d.label}
-                </span>
-                <div className="flex gap-1 flex-wrap flex-1">
-                  {dimUsed[d.key].map(v => {
-                    const on = filters[d.key].includes(v);
-                    return (
-                      <button key={v} onClick={() => toggleFilter(d.key, v)}
-                        className="px-2 py-0.5 text-[11px] rounded-full border transition"
-                        style={on ? { background: d.color, color: '#fff', borderColor: d.color } : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
-                        {v}
-                      </button>
-                    );
-                  })}
-                </div>
+          <div className="mb-2 border border-slate-100 rounded-lg bg-slate-50/50">
+            <div className="flex items-center gap-2 px-2 py-1.5 flex-wrap">
+              <button onClick={() => setShowFilters(v => !v)}
+                className="text-[11px] text-slate-500 hover:text-slate-800 flex items-center gap-1 flex-shrink-0">
+                <span className="text-[9px]">{showFilters ? '▼' : '▶'}</span>
+                篩選
+                {hasFilters && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-slate-800 text-white text-[10px]">
+                    {REF_DIMS.reduce((n, d) => n + filters[d.key].length, 0)}
+                  </span>
+                )}
+              </button>
+              {/* 收合時仍看得到目前套用了哪些條件 */}
+              {!showFilters && hasFilters && REF_DIMS.flatMap(d => filters[d.key].map(v => (
+                <button key={d.key + v} onClick={() => toggleFilter(d.key, v)}
+                  className="px-2 py-0.5 text-[11px] rounded-full inline-flex items-center gap-1"
+                  style={{ background: d.bg, color: d.color }}>
+                  {v}<span className="font-bold">×</span>
+                </button>
+              )))}
+              {!showFilters && !hasFilters && (
+                <span className="text-[11px] text-slate-400">未套用條件 · 點「篩選」展開</span>
+              )}
+              {hasFilters && (
+                <button onClick={clearFilters} className="ml-auto text-[11px] text-slate-400 hover:text-rose-500 underline flex-shrink-0">清除</button>
+              )}
+            </div>
+
+            {showFilters && (
+              <div className="space-y-1 px-2 pb-2 border-t border-slate-100 pt-1.5">
+                {REF_DIMS.filter(d => dimUsed[d.key].length > 0).map(d => {
+                  const all = dimUsed[d.key];
+                  const CAP = 10;
+                  const expanded = expandedDims[d.key];
+                  // 已選中的一定要看得到，其餘依上限截斷
+                  const shown = expanded ? all : [
+                    ...all.filter(v => filters[d.key].includes(v)),
+                    ...all.filter(v => !filters[d.key].includes(v)),
+                  ].slice(0, CAP);
+                  const hidden = all.length - shown.length;
+                  return (
+                    <div key={d.key} className="flex items-start gap-1.5">
+                      <span className="text-[11px] text-slate-500 w-14 flex-shrink-0 pt-0.5 flex items-center gap-1">
+                        <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: d.color }} />{d.label}
+                      </span>
+                      <div className="flex gap-1 flex-wrap flex-1">
+                        {shown.map(v => {
+                          const on = filters[d.key].includes(v);
+                          return (
+                            <button key={v} onClick={() => toggleFilter(d.key, v)}
+                              className="px-2 py-0.5 text-[11px] rounded-full border transition"
+                              style={on ? { background: d.color, color: '#fff', borderColor: d.color } : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+                              {v}
+                            </button>
+                          );
+                        })}
+                        {hidden > 0 && (
+                          <button onClick={() => setExpandedDims(m => ({ ...m, [d.key]: true }))}
+                            className="px-2 py-0.5 text-[11px] rounded-full border border-dashed border-slate-300 text-slate-400 hover:bg-white">
+                            +{hidden} 更多
+                          </button>
+                        )}
+                        {expanded && all.length > CAP && (
+                          <button onClick={() => setExpandedDims(m => ({ ...m, [d.key]: false }))}
+                            className="px-2 py-0.5 text-[11px] text-slate-400 hover:text-slate-600 underline">收合</button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-            {hasFilters && (
-              <button onClick={clearFilters} className="text-[11px] text-slate-400 hover:text-rose-500 underline mt-0.5">清除篩選</button>
             )}
           </div>
         )}

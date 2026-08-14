@@ -49,10 +49,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.49.0';
-const BUILD_ID = '20260811-1330';
+const APP_VERSION = 'v1.49.1';
+const BUILD_ID = '20260811-1430';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.49.1',
+    date: '2026-08-11',
+    changes: [
+      '📐 修正歸還登記欄位左右跳動：數量為 1 的項目沒有中間輸入格，導致 ✓／✗ 位置跟數量大於 1 的項目對不齊。改為固定欄寬並保留空位，整欄現在切齊成一直線',
+    ],
+  },
   {
     version: 'v1.49.0',
     date: '2026-08-11',
@@ -7897,39 +7904,42 @@ function returnStateOf(returned, total) {
 // 歸還登記控制項：✓ 全還 / ✗ 全沒還，數量大於 1 時中間可填「實際還了幾個」
 function ReturnControl({ total, value, onSet, size = 'md' }) {
   const state = returnStateOf(value, total);
+  // 固定總寬與中間欄位寬度：數量=1 沒有輸入格時也留白，讓整欄的 ✓／✗ 對齊不跳動
   const s = size === 'sm'
-    ? { box: 'w-4 h-4 text-[9px]', gap: 'gap-0.5', inp: 'w-6 text-[9px]' }
-    : { box: 'w-5 h-5 text-[11px]', gap: 'gap-1', inp: 'w-7 text-[10px]' };
-  const base = `${s.box} flex items-center justify-center rounded border transition leading-none`;
+    ? { box: 'w-4 h-4 text-[9px]', wrap: 'w-[64px] gap-0.5', slot: 'w-[26px]', inp: 'w-5 text-[9px]' }
+    : { box: 'w-5 h-5 text-[11px]', wrap: 'w-[80px] gap-1', slot: 'w-[32px]', inp: 'w-6 text-[10px]' };
+  const base = `${s.box} flex items-center justify-center rounded border transition leading-none flex-shrink-0`;
   const COLOR = { returned: '#059669', kept: '#e11d48', partial: '#d97706' };
   return (
-    <span className={`inline-flex items-center ${s.gap} flex-shrink-0`}>
+    <span className={`inline-flex items-center justify-center ${s.wrap} flex-shrink-0`}>
       <button onClick={(e) => { e.stopPropagation(); onSet(state === 'returned' ? null : total); }}
         title={`全部歸還（${total} 個都回來了）`}
         className={base}
         style={state === 'returned'
           ? { background: COLOR.returned, color: '#fff', borderColor: COLOR.returned }
           : { background: '#fff', color: '#cbd5e1', borderColor: '#e2e8f0' }}>✓</button>
-      {total > 1 && (
-        <span className="inline-flex items-baseline">
-          <input
-            type="number" min="0" max={total}
-            value={value == null ? '' : value}
-            placeholder="—"
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => {
-              const raw = e.target.value;
-              if (raw === '') { onSet(null); return; }
-              onSet(Math.max(0, Math.min(total, Number(raw) || 0)));
-            }}
-            title="實際歸還幾個（可填部分）"
-            className={`${s.inp} text-center border rounded px-0.5 py-0 tabular-nums focus:outline-none`}
-            style={state === 'none'
-              ? { borderColor: '#e2e8f0', color: '#94a3b8' }
-              : { borderColor: COLOR[state], color: COLOR[state] }} />
-          <span className="text-[9px] text-slate-300">/{total}</span>
-        </span>
-      )}
+      <span className={`${s.slot} flex items-baseline justify-center flex-shrink-0`}>
+        {total > 1 && (
+          <>
+            <input
+              type="number" min="0" max={total}
+              value={value == null ? '' : value}
+              placeholder="—"
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                const raw = e.target.value;
+                if (raw === '') { onSet(null); return; }
+                onSet(Math.max(0, Math.min(total, Number(raw) || 0)));
+              }}
+              title="實際歸還幾個（可填部分）"
+              className={`${s.inp} text-center border rounded px-0 py-0 tabular-nums focus:outline-none`}
+              style={state === 'none'
+                ? { borderColor: '#e2e8f0', color: '#94a3b8' }
+                : { borderColor: COLOR[state], color: COLOR[state] }} />
+            <span className="text-[8px] text-slate-300">/{total}</span>
+          </>
+        )}
+      </span>
       <button onClick={(e) => { e.stopPropagation(); onSet(state === 'kept' ? null : 0); }}
         title={`都沒還（${total} 個全部從總數扣除）`}
         className={base}

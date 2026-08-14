@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.48.0';
-const BUILD_ID = '20260811-1000';
+const APP_VERSION = 'v1.48.1';
+const BUILD_ID = '20260811-1130';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.48.1',
+    date: '2026-08-11',
+    changes: [
+      '🧩 組合品可逐成員登記歸還：一組裡有的成員回來、有的沒回來都能分別記錄，未歸還的成員依「成員量×套數」單獨扣庫存',
+      '🎨 歸還按鈕改為精簡的 ✓／✗ 圖示鈕，移到數量欄旁邊對齊成一欄，不再卡在文字中間',
+      '📊 清單歸還進度改以「成員」為單位計算，組合品不會只算一項',
+    ],
+  },
   {
     version: 'v1.48.0',
     date: '2026-08-11',
@@ -7858,6 +7867,30 @@ const SAMPLE_TYPE_COLORS = {
 //   已歸還的領用 → 不影響剩餘（已回來了）
 //   在外未歸還的領用 → 影響剩餘（但總數不變）
 // 客戶清單預留量：sampleId → 已被所有清單排走的數量
+// 歸還登記的小控制項：兩顆圖示鈕（✓ 已歸還 / ✗ 未歸還），未設定時保持低調不搶版面
+function ReturnToggle({ value, onSet, size = 'md' }) {
+  const s = size === 'sm'
+    ? { box: 'w-4 h-4 text-[9px]', gap: 'gap-0.5' }
+    : { box: 'w-5 h-5 text-[11px]', gap: 'gap-1' };
+  const base = `${s.box} flex items-center justify-center rounded border transition leading-none`;
+  return (
+    <span className={`inline-flex ${s.gap} flex-shrink-0`}>
+      <button onClick={(e) => { e.stopPropagation(); onSet('returned'); }}
+        title="已歸還（庫存回來）"
+        className={base}
+        style={value === 'returned'
+          ? { background: '#059669', color: '#fff', borderColor: '#059669' }
+          : { background: '#fff', color: '#cbd5e1', borderColor: '#e2e8f0' }}>✓</button>
+      <button onClick={(e) => { e.stopPropagation(); onSet('kept'); }}
+        title="未歸還（從總數永久扣除）"
+        className={base}
+        style={value === 'kept'
+          ? { background: '#e11d48', color: '#fff', borderColor: '#e11d48' }
+          : { background: '#fff', color: '#cbd5e1', borderColor: '#e2e8f0' }}>✗</button>
+    </span>
+  );
+}
+
 // 客戶清單的一個項目實際會用到哪些樣品、各用幾個
 // （用於「未歸還」時建立領用紀錄，跟 computeReservedMap 的預留邏輯對應）
 function listItemSampleUsage(it, samples = []) {
@@ -7891,9 +7924,11 @@ function computeReservedMap(customerLists, samples = []) {
       byRequestId.set(it.refId, (byRequestId.get(it.refId) || 0) + q);
       if (it.name) byRequestName.set(it.name, (byRequestName.get(it.name) || 0) + q);
     } else if (it.sourceType === 'bundle') {
-      // 組合品：每個成員（樣品）依 成員量 × 組合品份數 預留
+      // 組合品：每個成員（樣品）依 成員量 × 組合品份數 預留；已結案的成員不再佔預留
       (it.members || []).forEach(m => {
-        if (m.refId) bySample.set(m.refId, (bySample.get(m.refId) || 0) + (Number(m.qty) || 1) * q);
+        if (!m.refId) return;
+        if (m.settle === 'returned' || m.settle === 'kept') return;
+        bySample.set(m.refId, (bySample.get(m.refId) || 0) + (Number(m.qty) || 1) * q);
       });
     }
   }));
@@ -10134,6 +10169,37 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     }
     updateListItem(list, it.id, { settle: next, settledAt: next ? Date.now() : null });
   };
+
+  // 組合品：各成員分別登記歸還（可能一半回來、一半沒回來）
+  const settleBundleMember = async (list, it, memberIdx, mode) => {
+    const m = (it.members || [])[memberIdx];
+    if (!m) return;
+    const next = m.settle === mode ? null : mode;
+    const key = `${it.id}:${memberIdx}`;
+    const prev = (withdrawals || []).filter(w => w.fromListItemId === key);
+    for (const w of prev) {
+      await deleteDoc(doc(db, WITHDRAWALS_COL, w.id));
+    }
+    if (next === 'kept' && m.refId) {
+      const sets = Math.max(1, Number(it.qty) || 1);
+      const id = `w${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      await setDoc(doc(db, WITHDRAWALS_COL, id), {
+        id,
+        sampleId: m.refId,
+        sampleName: m.name || '',
+        personName: list.customer || list.name || '客戶',
+        quantity: (Number(m.qty) || 1) * sets,
+        purpose: `客戶清單「${list.name}」組合品「${it.name}」未歸還`,
+        timestamp: Date.now(),
+        date: new Date().toISOString().split('T')[0],
+        returned: false,
+        noReturn: true,
+        fromListItemId: key,
+        operator: currentUser?.name || '',
+      });
+    }
+    updateBundleMember(list, it.id, memberIdx, { settle: next, settledAt: next ? Date.now() : null });
+  };
   // 更新組合品裡某個成員的欄位（例如各自的數量）
   const updateBundleMember = (list, itemId, memberIdx, patch) => {
     saveCustomerList({
@@ -11487,9 +11553,13 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                           </p>
                           {/* 歸還登記進度：老闆回來後一眼看出還有幾項沒結案 */}
                           {(() => {
-                            const ret = items.filter(x => x.settle === 'returned').length;
-                            const kept = items.filter(x => x.settle === 'kept').length;
-                            const todo = items.length - ret - kept;
+                            // 組合品以「成員」為單位計算，因為歸還是逐個成員登記的
+                            const units = items.flatMap(x =>
+                              x.sourceType === 'bundle' ? (x.members || []) : [x]
+                            );
+                            const ret = units.filter(u => u.settle === 'returned').length;
+                            const kept = units.filter(u => u.settle === 'kept').length;
+                            const todo = units.length - ret - kept;
                             if (ret + kept === 0) return null;
                             return (
                               <p className="text-[11px] mt-0.5 flex items-center gap-2 flex-wrap">
@@ -11823,6 +11893,18 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                                         className="w-4 h-4 flex items-center justify-center rounded-full border border-slate-200 text-slate-500 text-[10px] leading-none hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed">＋</button>
                                                     </span>
                                                   ) : (mqty > 1 && <span className="text-[10px] text-slate-500 ml-0.5">×{mqty}</span>)}
+                                                  {/* 每個成員各自登記歸還：可能一半回來、一半沒回來 */}
+                                                  {canEdit ? (
+                                                    <span className="ml-1 pl-1 border-l border-slate-100">
+                                                      <ReturnToggle size="sm" value={m.settle}
+                                                        onSet={(mode) => settleBundleMember(list, it, mi, mode)} />
+                                                    </span>
+                                                  ) : m.settle && (
+                                                    <span className="ml-1 text-[9px]"
+                                                      style={{ color: m.settle === 'returned' ? '#059669' : '#e11d48' }}>
+                                                      {m.settle === 'returned' ? '✓' : '✗'}
+                                                    </span>
+                                                  )}
                                                 </div>
                                               );
                                             })}
@@ -11936,28 +12018,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         ) : (
                                           it.owner && <span className="text-[11px] text-slate-500">{it.owner}</span>
                                         )}
-                                        {/* 歸還登記：帶出去後回來逐項標記，直接連動樣品庫庫存 */}
-                                        {canEdit ? (
-                                          <span className="inline-flex items-center gap-1 ml-1">
-                                            <span className="text-[10px] text-slate-400">歸還</span>
-                                            <button onClick={() => settleListItem(list, it, 'returned')}
-                                              title="已歸還：解除預留，庫存回來"
-                                              className="text-[10px] px-1.5 py-0.5 rounded border transition"
-                                              style={it.settle === 'returned'
-                                                ? { background: '#059669', color: '#fff', borderColor: '#059669' }
-                                                : { background: '#fff', color: '#94a3b8', borderColor: '#e2e8f0' }}>
-                                              已歸還
-                                            </button>
-                                            <button onClick={() => settleListItem(list, it, 'kept')}
-                                              title="未歸還：從樣品庫總數永久扣除"
-                                              className="text-[10px] px-1.5 py-0.5 rounded border transition"
-                                              style={it.settle === 'kept'
-                                                ? { background: '#e11d48', color: '#fff', borderColor: '#e11d48' }
-                                                : { background: '#fff', color: '#94a3b8', borderColor: '#e2e8f0' }}>
-                                              未歸還
-                                            </button>
-                                          </span>
-                                        ) : it.settle && (
+                                        {!canEdit && it.settle && (
                                           <span className="text-[10px] px-1.5 py-0.5 rounded"
                                             style={it.settle === 'returned'
                                               ? { background: '#d1fae5', color: '#047857' }
@@ -11981,6 +12042,13 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         it.note && <p className="text-xs text-slate-400 mt-0.5 whitespace-pre-line">{it.note}</p>
                                       )}
                                     </div>
+                                    {/* 歸還登記：擺在數量旁邊，整份清單對齊成一欄，好逐項掃過去 */}
+                                    {canEdit && (
+                                      <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
+                                        <ReturnToggle value={it.settle} onSet={(m) => settleListItem(list, it, m)} />
+                                        <span className="text-[9px] text-slate-300">歸還</span>
+                                      </div>
+                                    )}
                                     <div className="flex items-center gap-1 text-xs text-slate-400">
                                       <span>×</span>
                                       {canEdit ? (() => {

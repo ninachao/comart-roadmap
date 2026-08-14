@@ -49,10 +49,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.48.1';
-const BUILD_ID = '20260811-1130';
+const APP_VERSION = 'v1.49.0';
+const BUILD_ID = '20260811-1330';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.49.0',
+    date: '2026-08-11',
+    changes: [
+      '🔢 歸還登記支援「還了幾個」：數量大於 1 時，✓ 與 ✗ 中間可直接填實際歸還數（例：帶 3 個只還 1 個 → 填 1），沒還的 2 個才從庫存永久扣除',
+      '　· ✓ = 全部歸還、✗ = 都沒還，中間欄位用於部分歸還；清空即取消登記',
+      '　· 部分歸還顯示為橘色，全還綠色、全沒還紅色',
+      '🧩 組合品成員同樣可填部分歸還數（以「成員量×套數」為總數）',
+      '📊 清單進度改為「全還／部分／未還／待登記」四段統計',
+    ],
+  },
   {
     version: 'v1.48.1',
     date: '2026-08-11',
@@ -7867,25 +7878,63 @@ const SAMPLE_TYPE_COLORS = {
 //   已歸還的領用 → 不影響剩餘（已回來了）
 //   在外未歸還的領用 → 影響剩餘（但總數不變）
 // 客戶清單預留量：sampleId → 已被所有清單排走的數量
-// 歸還登記的小控制項：兩顆圖示鈕（✓ 已歸還 / ✗ 未歸還），未設定時保持低調不搶版面
-function ReturnToggle({ value, onSet, size = 'md' }) {
+// 讀取一個單位（清單項目或組合品成員）已歸還的數量
+// 回傳 null = 還沒登記；相容舊的 settle: 'returned'|'kept' 資料
+function unitReturnedQty(unit, total) {
+  if (unit == null) return null;
+  if (unit.returnedQty != null && unit.returnedQty !== '') return Math.max(0, Math.min(total, Number(unit.returnedQty) || 0));
+  if (unit.settle === 'returned') return total;
+  if (unit.settle === 'kept') return 0;
+  return null;
+}
+function returnStateOf(returned, total) {
+  if (returned == null) return 'none';
+  if (returned >= total) return 'returned';
+  if (returned <= 0) return 'kept';
+  return 'partial';
+}
+
+// 歸還登記控制項：✓ 全還 / ✗ 全沒還，數量大於 1 時中間可填「實際還了幾個」
+function ReturnControl({ total, value, onSet, size = 'md' }) {
+  const state = returnStateOf(value, total);
   const s = size === 'sm'
-    ? { box: 'w-4 h-4 text-[9px]', gap: 'gap-0.5' }
-    : { box: 'w-5 h-5 text-[11px]', gap: 'gap-1' };
+    ? { box: 'w-4 h-4 text-[9px]', gap: 'gap-0.5', inp: 'w-6 text-[9px]' }
+    : { box: 'w-5 h-5 text-[11px]', gap: 'gap-1', inp: 'w-7 text-[10px]' };
   const base = `${s.box} flex items-center justify-center rounded border transition leading-none`;
+  const COLOR = { returned: '#059669', kept: '#e11d48', partial: '#d97706' };
   return (
-    <span className={`inline-flex ${s.gap} flex-shrink-0`}>
-      <button onClick={(e) => { e.stopPropagation(); onSet('returned'); }}
-        title="已歸還（庫存回來）"
+    <span className={`inline-flex items-center ${s.gap} flex-shrink-0`}>
+      <button onClick={(e) => { e.stopPropagation(); onSet(state === 'returned' ? null : total); }}
+        title={`全部歸還（${total} 個都回來了）`}
         className={base}
-        style={value === 'returned'
-          ? { background: '#059669', color: '#fff', borderColor: '#059669' }
+        style={state === 'returned'
+          ? { background: COLOR.returned, color: '#fff', borderColor: COLOR.returned }
           : { background: '#fff', color: '#cbd5e1', borderColor: '#e2e8f0' }}>✓</button>
-      <button onClick={(e) => { e.stopPropagation(); onSet('kept'); }}
-        title="未歸還（從總數永久扣除）"
+      {total > 1 && (
+        <span className="inline-flex items-baseline">
+          <input
+            type="number" min="0" max={total}
+            value={value == null ? '' : value}
+            placeholder="—"
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === '') { onSet(null); return; }
+              onSet(Math.max(0, Math.min(total, Number(raw) || 0)));
+            }}
+            title="實際歸還幾個（可填部分）"
+            className={`${s.inp} text-center border rounded px-0.5 py-0 tabular-nums focus:outline-none`}
+            style={state === 'none'
+              ? { borderColor: '#e2e8f0', color: '#94a3b8' }
+              : { borderColor: COLOR[state], color: COLOR[state] }} />
+          <span className="text-[9px] text-slate-300">/{total}</span>
+        </span>
+      )}
+      <button onClick={(e) => { e.stopPropagation(); onSet(state === 'kept' ? null : 0); }}
+        title={`都沒還（${total} 個全部從總數扣除）`}
         className={base}
-        style={value === 'kept'
-          ? { background: '#e11d48', color: '#fff', borderColor: '#e11d48' }
+        style={state === 'kept'
+          ? { background: COLOR.kept, color: '#fff', borderColor: COLOR.kept }
           : { background: '#fff', color: '#cbd5e1', borderColor: '#e2e8f0' }}>✗</button>
     </span>
   );
@@ -7915,9 +7964,9 @@ function computeReservedMap(customerLists, samples = []) {
   const byRequestId = new Map();   // 申請 refId -> 預留量
   const byRequestName = new Map(); // 申請項目名稱 -> 預留量（fromRequestId 缺失時的備援）
   (customerLists || []).forEach(l => (l.items || []).forEach(it => {
-    // 已結案的項目不再佔預留：已歸還 → 回到庫存；未歸還 → 已改由「不歸還」的領用紀錄永久扣除
-    if (it.settle === 'returned' || it.settle === 'kept') return;
     const q = Number(it.qty) || 1;
+    // 已登記歸還的項目不再佔預留：歸還的回到庫存，沒歸還的已由「不歸還」領用紀錄永久扣除
+    if (it.sourceType !== 'bundle' && unitReturnedQty(it, q) != null) return;
     if (it.sourceType === 'sample' && it.refId) {
       bySample.set(it.refId, (bySample.get(it.refId) || 0) + q);
     } else if (it.sourceType === 'request' && it.refId) {
@@ -7927,8 +7976,9 @@ function computeReservedMap(customerLists, samples = []) {
       // 組合品：每個成員（樣品）依 成員量 × 組合品份數 預留；已結案的成員不再佔預留
       (it.members || []).forEach(m => {
         if (!m.refId) return;
-        if (m.settle === 'returned' || m.settle === 'kept') return;
-        bySample.set(m.refId, (bySample.get(m.refId) || 0) + (Number(m.qty) || 1) * q);
+        const memTotal = (Number(m.qty) || 1) * q;
+        if (unitReturnedQty(m, memTotal) != null) return; // 已登記歸還就不再佔預留
+        bySample.set(m.refId, (bySample.get(m.refId) || 0) + memTotal);
       });
     }
   }));
@@ -10137,27 +10187,32 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   //   已歸還 → 解除預留，庫存回來
   //   未歸還 → 建立「不歸還」領用紀錄，從樣品總數永久扣除
   //   未處理 → 回到預留狀態（並刪掉先前建立的領用紀錄）
-  const settleListItem = async (list, it, mode) => {
-    const next = it.settle === mode ? null : mode; // 再點一次同一個 = 取消
+  // returnedQty = 實際歸還幾個（null 代表取消登記）；沒歸還的部分才扣庫存
+  const settleListItem = async (list, it, returnedQty) => {
+    const total = Number(it.qty) || 1;
     // 先清掉這個項目先前產生的「不歸還」紀錄，避免重複扣庫存
     const prev = (withdrawals || []).filter(w => w.fromListItemId === it.id);
     for (const w of prev) {
       await deleteDoc(doc(db, WITHDRAWALS_COL, w.id));
     }
-    if (next === 'kept') {
+    const keptTotal = returnedQty == null ? 0 : Math.max(0, total - returnedQty);
+    if (keptTotal > 0) {
       const usage = listItemSampleUsage(it, samples);
       if (usage.length === 0) {
-        alert('這個項目沒有連到樣品庫的樣品，無法扣庫存（仍會標記為未歸還）');
+        alert('這個項目沒有連到樣品庫的樣品，無法扣庫存（仍會記錄歸還數量）');
       }
       for (const u of usage) {
+        // 依比例換算該樣品實際沒還回來的數量（一般項目就是 keptTotal）
+        const perUnit = u.qty / total;
+        const qty = Math.max(1, Math.round(perUnit * keptTotal));
         const id = `w${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         await setDoc(doc(db, WITHDRAWALS_COL, id), {
           id,
           sampleId: u.sampleId,
           sampleName: u.name,
           personName: list.customer || list.name || '客戶',
-          quantity: u.qty,
-          purpose: `客戶清單「${list.name}」未歸還`,
+          quantity: qty,
+          purpose: `客戶清單「${list.name}」未歸還${returnedQty > 0 ? `（${total} 個中還了 ${returnedQty} 個）` : ''}`,
           timestamp: Date.now(),
           date: new Date().toISOString().split('T')[0],
           returned: false,
@@ -10167,29 +10222,34 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
         });
       }
     }
-    updateListItem(list, it.id, { settle: next, settledAt: next ? Date.now() : null });
+    updateListItem(list, it.id, {
+      returnedQty: returnedQty == null ? null : returnedQty,
+      settle: null, // 舊欄位不再使用，一律以 returnedQty 為準
+      settledAt: returnedQty == null ? null : Date.now(),
+    });
   };
 
   // 組合品：各成員分別登記歸還（可能一半回來、一半沒回來）
-  const settleBundleMember = async (list, it, memberIdx, mode) => {
+  const settleBundleMember = async (list, it, memberIdx, returnedQty) => {
     const m = (it.members || [])[memberIdx];
     if (!m) return;
-    const next = m.settle === mode ? null : mode;
+    const sets = Math.max(1, Number(it.qty) || 1);
+    const memTotal = (Number(m.qty) || 1) * sets;
     const key = `${it.id}:${memberIdx}`;
     const prev = (withdrawals || []).filter(w => w.fromListItemId === key);
     for (const w of prev) {
       await deleteDoc(doc(db, WITHDRAWALS_COL, w.id));
     }
-    if (next === 'kept' && m.refId) {
-      const sets = Math.max(1, Number(it.qty) || 1);
+    const kept = returnedQty == null ? 0 : Math.max(0, memTotal - returnedQty);
+    if (kept > 0 && m.refId) {
       const id = `w${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       await setDoc(doc(db, WITHDRAWALS_COL, id), {
         id,
         sampleId: m.refId,
         sampleName: m.name || '',
         personName: list.customer || list.name || '客戶',
-        quantity: (Number(m.qty) || 1) * sets,
-        purpose: `客戶清單「${list.name}」組合品「${it.name}」未歸還`,
+        quantity: kept,
+        purpose: `客戶清單「${list.name}」組合品「${it.name}」未歸還${returnedQty > 0 ? `（${memTotal} 個中還了 ${returnedQty} 個）` : ''}`,
         timestamp: Date.now(),
         date: new Date().toISOString().split('T')[0],
         returned: false,
@@ -10198,7 +10258,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
         operator: currentUser?.name || '',
       });
     }
-    updateBundleMember(list, it.id, memberIdx, { settle: next, settledAt: next ? Date.now() : null });
+    updateBundleMember(list, it.id, memberIdx, {
+      returnedQty: returnedQty == null ? null : returnedQty,
+      settle: null,
+      settledAt: returnedQty == null ? null : Date.now(),
+    });
   };
   // 更新組合品裡某個成員的欄位（例如各自的數量）
   const updateBundleMember = (list, itemId, memberIdx, patch) => {
@@ -11554,19 +11618,25 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                           {/* 歸還登記進度：老闆回來後一眼看出還有幾項沒結案 */}
                           {(() => {
                             // 組合品以「成員」為單位計算，因為歸還是逐個成員登記的
+                            const sets = (x) => Math.max(1, Number(x.qty) || 1);
                             const units = items.flatMap(x =>
-                              x.sourceType === 'bundle' ? (x.members || []) : [x]
+                              x.sourceType === 'bundle'
+                                ? (x.members || []).map(m => ({ u: m, total: (Number(m.qty) || 1) * sets(x) }))
+                                : [{ u: x, total: sets(x) }]
                             );
-                            const ret = units.filter(u => u.settle === 'returned').length;
-                            const kept = units.filter(u => u.settle === 'kept').length;
-                            const todo = units.length - ret - kept;
-                            if (ret + kept === 0) return null;
+                            const st = units.map(({ u, total }) => returnStateOf(unitReturnedQty(u, total), total));
+                            const ret = st.filter(x => x === 'returned').length;
+                            const kept = st.filter(x => x === 'kept').length;
+                            const partial = st.filter(x => x === 'partial').length;
+                            const todo = st.filter(x => x === 'none').length;
+                            if (ret + kept + partial === 0) return null;
                             return (
                               <p className="text-[11px] mt-0.5 flex items-center gap-2 flex-wrap">
-                                <span className="text-emerald-600">已歸還 {ret}</span>
-                                {kept > 0 && <span className="text-rose-600">未歸還 {kept}</span>}
+                                <span className="text-emerald-600">全還 {ret}</span>
+                                {partial > 0 && <span className="text-amber-600">部分 {partial}</span>}
+                                {kept > 0 && <span className="text-rose-600">未還 {kept}</span>}
                                 {todo > 0
-                                  ? <span className="text-amber-600">待登記 {todo}</span>
+                                  ? <span className="text-slate-400">待登記 {todo}</span>
                                   : <span className="text-slate-400">✓ 全部登記完成</span>}
                               </p>
                             );
@@ -11896,15 +11966,22 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                                   {/* 每個成員各自登記歸還：可能一半回來、一半沒回來 */}
                                                   {canEdit ? (
                                                     <span className="ml-1 pl-1 border-l border-slate-100">
-                                                      <ReturnToggle size="sm" value={m.settle}
-                                                        onSet={(mode) => settleBundleMember(list, it, mi, mode)} />
+                                                      <ReturnControl size="sm"
+                                                        total={mqty * sets}
+                                                        value={unitReturnedQty(m, mqty * sets)}
+                                                        onSet={(q) => settleBundleMember(list, it, mi, q)} />
                                                     </span>
-                                                  ) : m.settle && (
-                                                    <span className="ml-1 text-[9px]"
-                                                      style={{ color: m.settle === 'returned' ? '#059669' : '#e11d48' }}>
-                                                      {m.settle === 'returned' ? '✓' : '✗'}
-                                                    </span>
-                                                  )}
+                                                  ) : (() => {
+                                                    const r = unitReturnedQty(m, mqty * sets);
+                                                    if (r == null) return null;
+                                                    const st = returnStateOf(r, mqty * sets);
+                                                    return (
+                                                      <span className="ml-1 text-[9px]"
+                                                        style={{ color: st === 'returned' ? '#059669' : st === 'kept' ? '#e11d48' : '#d97706' }}>
+                                                        {st === 'returned' ? '✓' : st === 'kept' ? '✗' : `還${r}`}
+                                                      </span>
+                                                    );
+                                                  })()}
                                                 </div>
                                               );
                                             })}
@@ -12018,14 +12095,20 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                         ) : (
                                           it.owner && <span className="text-[11px] text-slate-500">{it.owner}</span>
                                         )}
-                                        {!canEdit && it.settle && (
-                                          <span className="text-[10px] px-1.5 py-0.5 rounded"
-                                            style={it.settle === 'returned'
-                                              ? { background: '#d1fae5', color: '#047857' }
-                                              : { background: '#ffe4e6', color: '#be123c' }}>
-                                            {it.settle === 'returned' ? '已歸還' : '未歸還'}
-                                          </span>
-                                        )}
+                                        {!canEdit && (() => {
+                                          const tot = Number(it.qty) || 1;
+                                          const r = unitReturnedQty(it, tot);
+                                          if (r == null) return null;
+                                          const st = returnStateOf(r, tot);
+                                          const style = st === 'returned' ? { background: '#d1fae5', color: '#047857' }
+                                            : st === 'kept' ? { background: '#ffe4e6', color: '#be123c' }
+                                            : { background: '#fef3c7', color: '#b45309' };
+                                          return (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded" style={style}>
+                                              {st === 'returned' ? '已歸還' : st === 'kept' ? '未歸還' : `已還 ${r}/${tot}`}
+                                            </span>
+                                          );
+                                        })()}
                                       </div>
                                       {/* 來源樣品自己的備註/材質（即時帶入，和給客戶的備註分開） */}
                                       {linkedSample && (linkedSample.notes || linkedSample.material) && (
@@ -12045,8 +12128,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                     {/* 歸還登記：擺在數量旁邊，整份清單對齊成一欄，好逐項掃過去 */}
                                     {canEdit && (
                                       <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
-                                        <ReturnToggle value={it.settle} onSet={(m) => settleListItem(list, it, m)} />
-                                        <span className="text-[9px] text-slate-300">歸還</span>
+                                        <ReturnControl
+                                          total={Number(it.qty) || 1}
+                                          value={unitReturnedQty(it, Number(it.qty) || 1)}
+                                          onSet={(q) => settleListItem(list, it, q)} />
+                                        <span className="text-[9px] text-slate-300">已還</span>
                                       </div>
                                     )}
                                     <div className="flex items-center gap-1 text-xs text-slate-400">

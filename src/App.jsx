@@ -49,10 +49,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.47.0';
-const BUILD_ID = '20260810-2300';
+const APP_VERSION = 'v1.48.0';
+const BUILD_ID = '20260811-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.48.0',
+    date: '2026-08-11',
+    changes: [
+      '🔄 客戶清單新增「歸還登記」：每個項目可標記「已歸還／未歸還」，直接連動樣品庫庫存',
+      '　· 已歸還 → 解除預留，庫存回到可用數量',
+      '　· 未歸還 → 自動建立「不歸還」領用紀錄，從樣品總數永久扣除（組合品會依成員逐一扣）',
+      '　· 再點一次同一顆可取消，會自動撤銷先前建立的領用紀錄，不會重複扣',
+      '📊 清單標題列顯示歸還進度：已歸還 N／未歸還 N／待登記 N，全部登記完成會標示',
+    ],
+  },
   {
     version: 'v1.47.0',
     date: '2026-08-10',
@@ -7847,11 +7858,32 @@ const SAMPLE_TYPE_COLORS = {
 //   已歸還的領用 → 不影響剩餘（已回來了）
 //   在外未歸還的領用 → 影響剩餘（但總數不變）
 // 客戶清單預留量：sampleId → 已被所有清單排走的數量
+// 客戶清單的一個項目實際會用到哪些樣品、各用幾個
+// （用於「未歸還」時建立領用紀錄，跟 computeReservedMap 的預留邏輯對應）
+function listItemSampleUsage(it, samples = []) {
+  const q = Number(it.qty) || 1;
+  const out = [];
+  if (it.sourceType === 'sample' && it.refId) {
+    out.push({ sampleId: it.refId, qty: q, name: it.name || '' });
+  } else if (it.sourceType === 'bundle') {
+    (it.members || []).forEach(m => {
+      if (m.refId) out.push({ sampleId: m.refId, qty: (Number(m.qty) || 1) * q, name: m.name || '' });
+    });
+  } else if (it.sourceType === 'request' && it.refId) {
+    const s = (samples || []).find(x => x.fromRequestId === it.refId)
+      || (samples || []).find(x => (x.notes || '').startsWith('由樣品申請轉入') && x.name === it.name);
+    if (s) out.push({ sampleId: s.id, qty: q, name: s.name || it.name || '' });
+  }
+  return out;
+}
+
 function computeReservedMap(customerLists, samples = []) {
   const bySample = new Map();      // sampleId -> 預留量（直接從樣品庫挑）
   const byRequestId = new Map();   // 申請 refId -> 預留量
   const byRequestName = new Map(); // 申請項目名稱 -> 預留量（fromRequestId 缺失時的備援）
   (customerLists || []).forEach(l => (l.items || []).forEach(it => {
+    // 已結案的項目不再佔預留：已歸還 → 回到庫存；未歸還 → 已改由「不歸還」的領用紀錄永久扣除
+    if (it.settle === 'returned' || it.settle === 'kept') return;
     const q = Number(it.qty) || 1;
     if (it.sourceType === 'sample' && it.refId) {
       bySample.set(it.refId, (bySample.get(it.refId) || 0) + q);
@@ -10065,6 +10097,43 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const removeListItem = (list, itemId) => {
     saveCustomerList({ ...list, items: (list.items || []).filter(it => it.id !== itemId) });
   };
+
+  // 歸還登記：老闆帶清單出去後，逐項標記「已歸還／未歸還」，並連動樣品庫庫存
+  //   已歸還 → 解除預留，庫存回來
+  //   未歸還 → 建立「不歸還」領用紀錄，從樣品總數永久扣除
+  //   未處理 → 回到預留狀態（並刪掉先前建立的領用紀錄）
+  const settleListItem = async (list, it, mode) => {
+    const next = it.settle === mode ? null : mode; // 再點一次同一個 = 取消
+    // 先清掉這個項目先前產生的「不歸還」紀錄，避免重複扣庫存
+    const prev = (withdrawals || []).filter(w => w.fromListItemId === it.id);
+    for (const w of prev) {
+      await deleteDoc(doc(db, WITHDRAWALS_COL, w.id));
+    }
+    if (next === 'kept') {
+      const usage = listItemSampleUsage(it, samples);
+      if (usage.length === 0) {
+        alert('這個項目沒有連到樣品庫的樣品，無法扣庫存（仍會標記為未歸還）');
+      }
+      for (const u of usage) {
+        const id = `w${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        await setDoc(doc(db, WITHDRAWALS_COL, id), {
+          id,
+          sampleId: u.sampleId,
+          sampleName: u.name,
+          personName: list.customer || list.name || '客戶',
+          quantity: u.qty,
+          purpose: `客戶清單「${list.name}」未歸還`,
+          timestamp: Date.now(),
+          date: new Date().toISOString().split('T')[0],
+          returned: false,
+          noReturn: true,          // 永久扣除
+          fromListItemId: it.id,   // 記住來源，之後改狀態時可撤銷
+          operator: currentUser?.name || '',
+        });
+      }
+    }
+    updateListItem(list, it.id, { settle: next, settledAt: next ? Date.now() : null });
+  };
   // 更新組合品裡某個成員的欄位（例如各自的數量）
   const updateBundleMember = (list, itemId, memberIdx, patch) => {
     saveCustomerList({
@@ -11416,6 +11485,22 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                           <p className="text-[11px] text-slate-400">
                             {list.customer && `客戶：${list.customer} · `}{list.visitDate && `${list.visitDate} · `}{items.length} 項 · 已準備 {preparedCount}/{items.length}
                           </p>
+                          {/* 歸還登記進度：老闆回來後一眼看出還有幾項沒結案 */}
+                          {(() => {
+                            const ret = items.filter(x => x.settle === 'returned').length;
+                            const kept = items.filter(x => x.settle === 'kept').length;
+                            const todo = items.length - ret - kept;
+                            if (ret + kept === 0) return null;
+                            return (
+                              <p className="text-[11px] mt-0.5 flex items-center gap-2 flex-wrap">
+                                <span className="text-emerald-600">已歸還 {ret}</span>
+                                {kept > 0 && <span className="text-rose-600">未歸還 {kept}</span>}
+                                {todo > 0
+                                  ? <span className="text-amber-600">待登記 {todo}</span>
+                                  : <span className="text-slate-400">✓ 全部登記完成</span>}
+                              </p>
+                            );
+                          })()}
                         </div>
                         <button onClick={async e => { e.stopPropagation(); exportCustomerListPDF(list, await exportItems()); }}
                           className="px-2 py-1 text-[11px] text-slate-500 border border-slate-200 rounded hover:bg-slate-50 transition">🖨 PDF</button>
@@ -11850,6 +11935,35 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                             className="w-20 text-[11px] text-slate-600 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5" />
                                         ) : (
                                           it.owner && <span className="text-[11px] text-slate-500">{it.owner}</span>
+                                        )}
+                                        {/* 歸還登記：帶出去後回來逐項標記，直接連動樣品庫庫存 */}
+                                        {canEdit ? (
+                                          <span className="inline-flex items-center gap-1 ml-1">
+                                            <span className="text-[10px] text-slate-400">歸還</span>
+                                            <button onClick={() => settleListItem(list, it, 'returned')}
+                                              title="已歸還：解除預留，庫存回來"
+                                              className="text-[10px] px-1.5 py-0.5 rounded border transition"
+                                              style={it.settle === 'returned'
+                                                ? { background: '#059669', color: '#fff', borderColor: '#059669' }
+                                                : { background: '#fff', color: '#94a3b8', borderColor: '#e2e8f0' }}>
+                                              已歸還
+                                            </button>
+                                            <button onClick={() => settleListItem(list, it, 'kept')}
+                                              title="未歸還：從樣品庫總數永久扣除"
+                                              className="text-[10px] px-1.5 py-0.5 rounded border transition"
+                                              style={it.settle === 'kept'
+                                                ? { background: '#e11d48', color: '#fff', borderColor: '#e11d48' }
+                                                : { background: '#fff', color: '#94a3b8', borderColor: '#e2e8f0' }}>
+                                              未歸還
+                                            </button>
+                                          </span>
+                                        ) : it.settle && (
+                                          <span className="text-[10px] px-1.5 py-0.5 rounded"
+                                            style={it.settle === 'returned'
+                                              ? { background: '#d1fae5', color: '#047857' }
+                                              : { background: '#ffe4e6', color: '#be123c' }}>
+                                            {it.settle === 'returned' ? '已歸還' : '未歸還'}
+                                          </span>
                                         )}
                                       </div>
                                       {/* 來源樣品自己的備註/材質（即時帶入，和給客戶的備註分開） */}

@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.49.2';
-const BUILD_ID = '20260817-1000';
+const APP_VERSION = 'v1.50.0';
+const BUILD_ID = '20260817-1130';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.50.0',
+    date: '2026-08-17',
+    changes: [
+      '🗑 提醒可以直接清除：每則提醒右邊多一個 ✕，點了就不再提醒，不必走「已跟追」流程、也不會新增進度紀錄',
+      '🧹 新增「清除全部提醒」：忙起來沒空一則則處理時可整批關掉、重新來過（會先確認）',
+      '　· 清除只是停止提醒，產品與既有進度內容都不會被刪除，之後仍可重新設定跟追日期',
+    ],
+  },
   {
     version: 'v1.49.2',
     date: '2026-08-17',
@@ -3589,6 +3598,20 @@ export default function ProductRoadmap() {
             }
             saveProjectToCloud({ ...p, updates: allUpdates });
             setProjects(prev => prev.map(pr => pr.id === p.id ? { ...pr, updates: allUpdates } : pr));
+          }}
+          onDismissFollowUps={(list) => {
+            // 單純把提醒關掉：標記為已跟追、不新增任何進度紀錄，也不動原本的跟追日期
+            const byProject = new Map();
+            list.forEach(({ project: p, update: u }) => {
+              if (!byProject.has(p.id)) byProject.set(p.id, { p, updates: [...(p.updates || [])] });
+              const entry = byProject.get(p.id);
+              const idx = entry.updates.findIndex(x => x.date === u.date && x.text === u.text && !x.followedUp);
+              if (idx >= 0) entry.updates[idx] = { ...entry.updates[idx], followedUp: true };
+            });
+            byProject.forEach(({ p, updates }) => {
+              saveProjectToCloud({ ...p, updates });
+              setProjects(prev => prev.map(pr => pr.id === p.id ? { ...pr, updates } : pr));
+            });
           }}
           onClose={() => setShowReminders(false)}
           isAdmin={isAdmin}
@@ -13581,7 +13604,7 @@ function WithdrawalModal({ sample, currentUser, onSave, onClose }) {
 }
 
 // ============= 提醒頁面 Modal =============
-function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOverrides, onSetOverride, onJumpToProject, onMarkFollowedUp, onClose, isAdmin }) {
+function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOverrides, onSetOverride, onJumpToProject, onMarkFollowedUp, onDismissFollowUps, onClose, isAdmin }) {
   const [activeTab, setActiveTab] = useState('followup'); // 'followup' | 'stale' | 'calendar'
   const [followUpTarget, setFollowUpTarget] = useState(null);
 
@@ -13670,14 +13693,25 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
           <p className="text-[11px] text-slate-300 mt-1">跟追日 {u.followUpDate}</p>
         </div>
         {isAdmin && (
-          <button
-            onClick={() => setFollowUpTarget({ project: p, update: u })}
-            className="flex-shrink-0 self-center px-3.5 py-2 rounded-full text-[13px] font-medium transition-all duration-150"
-            style={{ background: '#1e293b', color: '#fff' }}
-            onMouseEnter={e => e.currentTarget.style.background = '#0f172a'}
-            onMouseLeave={e => e.currentTarget.style.background = '#1e293b'}>
-            已跟追
-          </button>
+          <div className="flex-shrink-0 self-center flex items-center gap-1.5">
+            <button
+              onClick={() => setFollowUpTarget({ project: p, update: u })}
+              className="px-3.5 py-2 rounded-full text-[13px] font-medium transition-all duration-150"
+              style={{ background: '#1e293b', color: '#fff' }}
+              onMouseEnter={e => e.currentTarget.style.background = '#0f172a'}
+              onMouseLeave={e => e.currentTarget.style.background = '#1e293b'}>
+              已跟追
+            </button>
+            {/* 純粹把提醒關掉：不新增進度紀錄，只是不再提醒 */}
+            {onDismissFollowUps && (
+              <button
+                onClick={() => onDismissFollowUps([{ project: p, update: u }])}
+                title="清除這則提醒（不新增進度紀錄）"
+                className="w-7 h-7 rounded-full flex items-center justify-center text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition">
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -13744,6 +13778,25 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
                 </div>
               ) : (
                 <div className="space-y-4">
+                  {/* 一次清空：太忙沒空一則則處理時，可以直接重新來過 */}
+                  {isAdmin && onDismissFollowUps && (overdueItems.length + todayItems.length) > 0 && (
+                    <div className="flex justify-end -mb-1">
+                      <button
+                        onClick={() => {
+                          const targets = [...overdueItems, ...todayItems];
+                          if (!window.confirm(
+                            `要清除這 ${targets.length} 則提醒嗎？\n\n` +
+                            `· 只是不再提醒，不會新增任何進度紀錄\n` +
+                            `· 產品與既有的進度內容都不會被刪除\n` +
+                            `· 之後可以再重新設定跟追日期`
+                          )) return;
+                          onDismissFollowUps(targets);
+                        }}
+                        className="text-[12px] text-slate-400 hover:text-rose-500 hover:underline">
+                        清除全部提醒（{overdueItems.length + todayItems.length}）
+                      </button>
+                    </div>
+                  )}
                   {/* 逾期 */}
                   {overdueItems.length > 0 && (
                     <div>

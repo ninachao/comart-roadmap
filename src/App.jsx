@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.49.1';
-const BUILD_ID = '20260811-1430';
+const APP_VERSION = 'v1.49.2';
+const BUILD_ID = '20260817-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.49.2',
+    date: '2026-08-17',
+    changes: [
+      '🐞 修正一次上傳多個檔案時文件類型判斷錯誤：原本只取「第一個猜得出類型的檔案」，所以 STP＋PDF 一起上傳時若 PDF 在前就會被判成 ID。改為看整批檔案，依 3D ＞ BOM ＞ ID 的優先序判斷',
+      '　· 批次匯入資料夾也套用同一規則（改為收齊整組檔案後再判類型）',
+    ],
+  },
   {
     version: 'v1.49.1',
     date: '2026-08-11',
@@ -4480,7 +4488,7 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
       setUploading(u => ({ ...u, done: u.done + 1 }));
     }
     if (attachments.length) {
-      const docType = files.map(f => guessDocType(f.name)).find(Boolean) || '';
+      const docType = guessDocTypeFromFiles(files);
       const title = [project.code, project.name, docType].filter(Boolean).join('_')
         || files[0].name.replace(/\.[^.]+$/, '');
       const id = `ref_${Date.now()}`;
@@ -8391,6 +8399,15 @@ function guessDocType(name = '') {
   return EXT_TO_DOCTYPE[ext] || '';
 }
 
+// 一次上傳多個檔案時，看「整批」決定類型，而不是取第一個猜到的
+// 優先序：3D > BOM > ID —— 例如 STP＋PDF 一起丟通常是 3D 釋出（PDF 是隨附圖面），應判為 3D
+const DOCTYPE_PRIORITY = ['3D', 'BOM', 'ID'];
+function guessDocTypeFromFiles(files = []) {
+  const found = new Set(Array.from(files).map(f => guessDocType(f.name)).filter(Boolean));
+  if (!found.size) return '';
+  return DOCTYPE_PRIORITY.find(t => found.has(t)) || [...found][0];
+}
+
 // 標籤維度定義（key 對應存進 Firestore 的欄位；registry=true 的維度會把新值記進共用清單）
 const REF_DIMS = [
   { key: 'natures', label: '文件類型', color: '#7c3aed', bg: '#ede9fe', ph: '例：BOM、Test Report、報價' },
@@ -8535,7 +8552,7 @@ function BatchImportModal({ projects, currentUser, existingItems, onClose }) {
         map.set(key, {
           key, folder, files: [],
           projectId: pid,
-          docType: guessDocType(f.name) || '',
+          docType: '',
           // 有配對到產品就用命名規則，沒有就用資料夾／檔名
           title: proj ? [proj.code, proj.name].filter(Boolean).join('_') : leaf,
           // 路徑上的每一層資料夾都變成關鍵字標籤，保留老闆原本的分類資訊
@@ -8543,15 +8560,16 @@ function BatchImportModal({ projects, currentUser, existingItems, onClose }) {
           skip: false,
         });
       }
-      const g = map.get(key);
-      g.files.push(f);
-      if (!g.docType) g.docType = guessDocType(f.name) || '';
+      map.get(key).files.push(f);
     });
-    // 標題補上文件類型
-    return [...map.values()].map(g => ({
-      ...g,
-      title: g.docType && !g.title.endsWith(g.docType) ? `${g.title}_${g.docType}` : g.title,
-    }));
+    // 收齊整組檔案後再判類型（依 3D > BOM > ID 的優先序），並把類型補進標題
+    return [...map.values()].map(g => {
+      const docType = guessDocTypeFromFiles(g.files);
+      return {
+        ...g, docType,
+        title: docType && !g.title.endsWith(docType) ? `${g.title}_${docType}` : g.title,
+      };
+    });
   };
 
   const onPick = (fileList) => {
@@ -9007,7 +9025,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
       setDrillUploading(u => ({ ...u, done: u.done + 1 }));
     }
     if (attachments.length) {
-      const docType = files.map(f => guessDocType(f.name)).find(Boolean) || '';
+      const docType = guessDocTypeFromFiles(files);
       const title = [proj.code, proj.name, docType].filter(Boolean).join('_')
         || files[0].name.replace(/\.[^.]+$/, '');
       const id = `ref_${Date.now()}`;
@@ -9033,7 +9051,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     const files = Array.from(fileList || []);
     if (!files.length) return;
     // 依副檔名自動帶入文件類型（僅在還沒選任何類型時），使用者仍可自行更改
-    const guessed = files.map(f => guessDocType(f.name)).find(Boolean);
+    const guessed = guessDocTypeFromFiles(files);
     if (guessed) setEditing(v => (v && (v.natures || []).length === 0 ? { ...v, natures: [guessed] } : v));
     for (const f of files) {
       try {

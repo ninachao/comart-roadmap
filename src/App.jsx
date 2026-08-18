@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.53.0';
-const BUILD_ID = '20260818-1600';
+const APP_VERSION = 'v1.53.1';
+const BUILD_ID = '20260818-1730';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.53.1',
+    date: '2026-08-18',
+    changes: [
+      '🐞 修正版號愈跳愈高：版本原本是「跨所有文件類型」計算，BOM 或 ID 的版號會把 3D 往上推。改為只在「同一種文件類型」內遞增',
+      '👁 版本欄位會標示版號的來源文件（例：「3D 目前最新 V4 · 來自「豆莢_3D_V3」」），基準抓錯時一眼看得出來',
+      '⚡ 自動命名選類型時，各類型分別計算自己的下一版',
+    ],
+  },
   {
     version: 'v1.53.0',
     date: '2026-08-18',
@@ -9401,19 +9410,39 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     return '';
   }, [editing, projects]);
 
-  // 此產品目前的最高版號與下一版（命名選單與「版本」欄位共用同一套算法，避免兩邊不一致）
-  const verInfo = useMemo(() => {
+  // 同產品、且「同一種文件類型」的既有文件（版本只在同類型內遞增，
+  // 否則 BOM 的版號會把 3D 往上推，造成版號愈跳愈高）
+  const versionSiblings = useMemo(() => {
     const relIds = (editing?.relatedProjectIds || []).map(String);
-    if (!relIds.length) return { max: null, next: null, used: [] };
-    const used = items
-      .filter(it => it.id !== editing.id && refLinkedProjIds(it).some(pid => relIds.includes(String(pid))))
-      .flatMap(it => refDimVals(it, 'versions'));
-    const nums = used
-      .map(v => { const m = String(v).match(/^\s*V\s*(\d+)/i); return m ? Number(m[1]) : null; })
-      .filter(n => n != null);
-    const max = nums.length ? Math.max(...nums) : null;
-    return { max, next: max == null ? 'V1' : `V${max + 1}`, used: [...new Set(used)] };
+    if (!relIds.length) return [];
+    return items.filter(it =>
+      it.id !== editing.id && refLinkedProjIds(it).some(pid => relIds.includes(String(pid)))
+    );
   }, [editing, items]);
+
+  // 算出某個文件類型的目前最高版與下一版；同時回報版號是從哪一份文件來的，方便你發現抓錯基準
+  const computeVerInfo = (type) => {
+    if (!versionSiblings.length) return { max: null, next: 'V1', used: [], maxFrom: '' };
+    const scoped = type
+      ? versionSiblings.filter(it => (refDimVals(it, 'natures')[0] || '') === type)
+      : versionSiblings;
+    const used = scoped.flatMap(it => refDimVals(it, 'versions'));
+    let max = null, maxFrom = '';
+    scoped.forEach(it => {
+      refDimVals(it, 'versions').forEach(v => {
+        const m = String(v).match(/^\s*V\s*(\d+)/i);
+        if (!m) return;
+        const n = Number(m[1]);
+        if (max == null || n > max) { max = n; maxFrom = it.title || ''; }
+      });
+    });
+    return { max, next: max == null ? 'V1' : `V${max + 1}`, used: [...new Set(used)], maxFrom };
+  };
+
+  const verInfo = useMemo(
+    () => computeVerInfo((editing?.natures || [])[0] || ''),
+    [versionSiblings, editing]
+  );
 
   // 單張文件卡（大圖檢視）
   const renderDocCard = (it) => {
@@ -9948,8 +9977,8 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                       <p className="text-[11px] text-slate-600 mb-1.5">這份文件是哪一種？（選了會同時設定「文件類型」與版本）</p>
                       <div className="flex flex-wrap gap-1">
                         {REF_DIM_PRESETS.natures.map(t => {
-                          // 版本沒填時自動用「下一版」，否則這份文件會被當成沒有版本、誤判為舊版
-                          const ver = (editing.versions || [])[0] || verInfo.next || '';
+                          // 版本沒填時自動用「該類型的下一版」，否則這份文件會被當成沒有版本、誤判為舊版
+                          const ver = (editing.versions || [])[0] || computeVerInfo(t).next || '';
                           const preview = [nameBase, t, ver].filter(Boolean).join('_');
                           const on = (editing.natures || [])[0] === t;
                           return (
@@ -9975,18 +10004,14 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                       </div>
                       {(() => {
                         const cur = (editing.versions || [])[0];
-                        const ver = cur || verInfo.next || '';
                         return (
                           <p className="text-[10px] text-slate-400 mt-1.5">
                             將命名為：
                             <span className="font-mono text-slate-500">
-                              {nameBase}_<span className="text-violet-500">類型</span>{ver ? `_${ver}` : ''}
+                              {nameBase}_<span className="text-violet-500">類型</span>
+                              {cur ? `_${cur}` : <span className="text-emerald-600">_版本</span>}
                             </span>
-                            {!cur && ver && (
-                              <span className="ml-1 text-emerald-600">
-                                · 自動帶入 {ver}{verInfo.max != null ? `（此產品目前最新 V${verInfo.max}）` : '（此產品第一版）'}
-                              </span>
-                            )}
+                            {!cur && <span className="ml-1">· 版本會依「該類型」既有文件自動接續（同類型才算，BOM 不會影響 3D）</span>}
                           </p>
                         );
                       })()}
@@ -10014,7 +10039,10 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                       hint = '（選好關聯產品後可自動算下一版）';
                     } else {
                       priorityOptions = verInfo.used;
-                      hint = verInfo.max != null ? `（此產品目前最新 V${verInfo.max}）` : '（此產品尚無版本）';
+                      const curType = (editing.natures || [])[0];
+                      hint = verInfo.max != null
+                        ? `（${curType ? `${curType} ` : ''}目前最新 V${verInfo.max}${verInfo.maxFrom ? ` · 來自「${verInfo.maxFrom}」` : ''}）`
+                        : `（${curType ? `此產品的 ${curType} ` : '此產品'}尚無版本）`;
                       if (verInfo.next && !(editing.versions || []).includes(verInfo.next)) {
                         action = (
                           <button onClick={() => setEditing(v => ({ ...v, versions: [...(v.versions || []), verInfo.next] }))}

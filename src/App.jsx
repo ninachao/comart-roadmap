@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.50.0';
-const BUILD_ID = '20260817-1130';
+const APP_VERSION = 'v1.51.0';
+const BUILD_ID = '20260818-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.51.0',
+    date: '2026-08-18',
+    changes: [
+      '⚡ 自動命名改為「先選類型再命名」：按下後會列出 ID／3D／BOM／圖檔… 讓你親自確認這份是什麼，選了會同時設定「文件類型」並套用標題',
+      '　· 原因：檔案格式不等於用途（3D 圖常以 PDF 或圖片形式提供），交給人確認才不會命名錯、版本也才分得清',
+      '　· 每個選項滑過去會顯示將產生的完整標題，下方也有格式預覽；版本已設定時會一併帶入',
+    ],
+  },
   {
     version: 'v1.50.0',
     date: '2026-08-17',
@@ -8798,6 +8807,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const [viewingImg, setViewingImg] = useState(null); // 放大預覽 src
   const [previewDoc, setPreviewDoc] = useState(null); // 點文件開啟預覽（看該文件所有附件）
   const [showBatchImport, setShowBatchImport] = useState(false);
+  const [namingOpen, setNamingOpen] = useState(false); // 自動命名時先選文件類型
   const [showFilters, setShowFilters] = useState(false); // 篩選區預設收合（版本值可能有數十個，會把列表擠掉）
   const [expandedDims, setExpandedDims] = useState({});  // 各維度是否展開完整值
   const [drillUploading, setDrillUploading] = useState(null); // 產品分頁內直接上傳的進度
@@ -8978,18 +8988,18 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   }, [drillPid, grouped]);
 
   const blankDims = () => Object.fromEntries(REF_DIMS.map(d => [d.key, []]));
-  const startAdd = (presetPid) => setEditing({
+  const startAdd = (presetPid) => (setNamingOpen(false), setEditing({
     isNew: true, id: 'ref_' + Date.now(), title: '', ...blankDims(), note: '', images: [],
     relatedProjectIds: presetPid && presetPid !== '__none__' ? [presetPid] : [],
     docDate: tsToDateInput(Date.now()),
-  });
-  const startEdit = (it) => setEditing({
+  }));
+  const startEdit = (it) => (setNamingOpen(false), setEditing({
     isNew: false, id: it.id, title: it.title || '',
     ...Object.fromEntries(REF_DIMS.map(d => [d.key, refDimVals(it, d.key)])),
     note: it.note || '', images: it.images || [],
     relatedProjectIds: refLinkedProjIds(it),
     docDate: tsToDateInput(it.createdAt),
-  });
+  }));
 
   const saveEditing = async () => {
     if (!editing.title.trim()) return;
@@ -9195,6 +9205,17 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
       </div>
     );
   };
+
+  // 命名用的前半段（產品部分）：單一產品用「編碼_產品名稱」；跨多個產品時用編碼並列，避免只掛第一個產品造成誤解
+  const nameBase = useMemo(() => {
+    if (!editing) return '';
+    const ps = (editing.relatedProjectIds || [])
+      .map(id => projects.find(x => String(x.id) === String(id))).filter(Boolean);
+    if (ps.length === 1) return [ps[0].code, ps[0].name].filter(Boolean).join('_');
+    if (ps.length === 2) return ps.map(p => p.code || p.name).join('+');
+    if (ps.length > 2) return `${ps[0].code || ps[0].name}+其他${ps.length - 1}個`;
+    return '';
+  }, [editing, projects]);
 
   // 單張文件卡（大圖檢視）
   const renderDocCard = (it) => {
@@ -9683,18 +9704,6 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-xs text-slate-600">標題 *</label>
                     {(() => {
-                      // 建議命名：單一產品用「編碼_產品名稱_類型」；跨多個產品時改用編碼並列，避免只掛第一個產品造成誤解
-                      const ps = (editing.relatedProjectIds || [])
-                        .map(id => projects.find(x => String(x.id) === String(id))).filter(Boolean);
-                      const typeVal = (editing.natures || [])[0] || '';
-                      const verVal = (editing.versions || [])[0] || '';
-                      let base = '';
-                      if (ps.length === 1) base = [ps[0].code, ps[0].name].filter(Boolean).join('_');
-                      else if (ps.length === 2) base = ps.map(p => p.code || p.name).join('+');
-                      else if (ps.length > 2) base = `${ps[0].code || ps[0].name}+其他${ps.length - 1}個`;
-                      // 版本也要進標題，否則同一產品的 V1／V2 同類型文件會長得一模一樣，看起來像重複
-                      const suggestion = [base, typeVal, verVal].filter(Boolean).join('_');
-                      // 檔名本身常常已經講得很清楚（例：球窩+QI风扇电性规格.xls），提供一鍵沿用
                       const f0 = (editing.images || [])[0];
                       const fileBase = f0?.name ? String(f0.name).replace(/\.[^.]+$/, '') : '';
                       return (
@@ -9704,15 +9713,48 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                               title={`套用：${fileBase}`}
                               className="text-[11px] text-slate-500 hover:text-violet-600 hover:underline">📄 用檔名</button>
                           )}
-                          {suggestion && suggestion !== editing.title && (
-                            <button onClick={() => setEditing(v => ({ ...v, title: suggestion }))}
-                              title={`套用：${suggestion}`}
+                          {nameBase && (
+                            <button onClick={() => setNamingOpen(v => !v)}
                               className="text-[11px] text-violet-600 hover:underline">⚡ 自動命名</button>
                           )}
                         </span>
                       );
                     })()}
                   </div>
+
+                  {/* 自動命名：先選文件類型再命名。上傳的檔案格式常常跟實際用途不同
+                      （例如 3D 圖以 PDF／圖片形式給），所以讓人親自確認類型才不會命名錯 */}
+                  {namingOpen && nameBase && (
+                    <div className="mb-1.5 p-2 rounded-lg border border-violet-200 bg-violet-50/50">
+                      <p className="text-[11px] text-slate-600 mb-1.5">這份文件是哪一種？（選了會同時設定「文件類型」）</p>
+                      <div className="flex flex-wrap gap-1">
+                        {REF_DIM_PRESETS.natures.map(t => {
+                          const preview = [nameBase, t, (editing.versions || [])[0] || ''].filter(Boolean).join('_');
+                          const on = (editing.natures || [])[0] === t;
+                          return (
+                            <button key={t}
+                              title={`命名為：${preview}`}
+                              onClick={() => {
+                                setEditing(v => ({ ...v, natures: [t], title: preview }));
+                                setNamingOpen(false);
+                              }}
+                              className="px-2 py-0.5 text-[11px] rounded-full border transition"
+                              style={on
+                                ? { background: '#7c3aed', color: '#fff', borderColor: '#7c3aed' }
+                                : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+                              {t}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-1.5">
+                        將命名為：<span className="font-mono text-slate-500">{nameBase}_
+                          <span className="text-violet-500">類型</span>
+                          {(editing.versions || [])[0] ? `_${(editing.versions || [])[0]}` : ''}</span>
+                        {!(editing.versions || [])[0] && '（想帶版本可先在下方「版本」設定）'}
+                      </p>
+                    </div>
+                  )}
                   <input value={editing.title} onChange={e => setEditing(v => ({ ...v, title: e.target.value }))}
                     placeholder="例：HDRH0001_鎖定式平板支架-拉伸版_ID" autoFocus
                     className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />

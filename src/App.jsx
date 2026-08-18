@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.51.1';
-const BUILD_ID = '20260818-1130';
+const APP_VERSION = 'v1.52.0';
+const BUILD_ID = '20260818-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.52.0',
+    date: '2026-08-18',
+    changes: [
+      '⬇ 文件預覽新增「下載全部」：依序下載該文件的所有附件，並顯示進度',
+      '⬇ 產品卡片「相關文件」每份文件也有「下載全部」，非圖片附件點縮圖即可下載',
+      '📅 產品卡片的相關文件補上日期，與文件中心一致',
+      '🔤 下載一律先抓成 blob 再存檔，由程式指定原始檔名，徹底避免檔名亂碼；被跨網域擋住時退回原本機制（已設 Content-Disposition，檔名仍正確）',
+    ],
+  },
   {
     version: 'v1.51.1',
     date: '2026-08-18',
@@ -4490,6 +4500,7 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
   const [pickSearch, setPickSearch] = useState('');
   const [uploading, setUploading] = useState(null); // {done,total,name} 直接在產品頁上傳
   const [dragOver, setDragOver] = useState(false);
+  const [dlDoc, setDlDoc] = useState(null); // {id,i,n} 某份文件的批次下載進度
   const isLinked = (r) => refLinkedProjIds(r).some(pid => String(pid) === String(project.id));
   const linked = useMemo(
     () => (refFiles || []).filter(isLinked),
@@ -4730,11 +4741,25 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
                       <span key={d.key + ':' + v} className="text-[10px] px-1.5 py-0.5 rounded"
                         style={{ background: d.bg, color: d.color }}>{v}</span>
                     )))}
+                    {/* 文件日期：跟文件中心顯示一致 */}
+                    {it.createdAt && (
+                      <span className="text-[10px] text-slate-400 tabular-nums">{tsToDateInput(it.createdAt)}</span>
+                    )}
                   </div>
-                  {canEdit && (
-                    <button onClick={() => setLink(it, false)}
-                      className="text-[10px] text-slate-300 hover:text-rose-500 flex-shrink-0 whitespace-nowrap">取消關聯</button>
-                  )}
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {imgs.length > 0 && (
+                      <button onClick={() => downloadAllAttachments(imgs, (i, n) => setDlDoc(n ? { id: it.id, i, n } : null))}
+                        disabled={dlDoc?.id === it.id}
+                        title="下載這份文件的所有檔案（維持原檔名）"
+                        className="text-[10px] text-slate-400 hover:text-violet-600 whitespace-nowrap disabled:opacity-50">
+                        {dlDoc?.id === it.id ? `下載中 ${dlDoc.i}/${dlDoc.n}` : `⬇ 下載全部（${imgs.length}）`}
+                      </button>
+                    )}
+                    {canEdit && (
+                      <button onClick={() => setLink(it, false)}
+                        className="text-[10px] text-slate-300 hover:text-rose-500 whitespace-nowrap">取消關聯</button>
+                    )}
+                  </div>
                 </div>
                 {it.note && <p className="text-[11px] text-slate-500 mb-1.5 whitespace-pre-line line-clamp-2">{it.note}</p>}
                 {imgs.length > 0 && (
@@ -4748,12 +4773,12 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
                           <StorageImage src={src} path={img.path} alt="" className="w-full h-full object-contain" />
                         </div>
                       ) : (
-                        // 非圖片（PDF／Excel／STEP…）顯示檔案類型圖示，點擊可開啟下載，不再硬塞給 <img> 變破圖
-                        <a key={i} href={src || undefined} target="_blank" rel="noreferrer" title={img.name}
+                        // 非圖片（PDF／Excel／STEP…）顯示檔案類型圖示，點擊直接下載（檔名維持原檔名）
+                        <button key={i} onClick={() => downloadAttachment(img)} title={`下載 ${img.name || ''}`}
                           className="w-16 h-16 rounded border border-slate-200 bg-white hover:ring-2 hover:ring-violet-300 flex flex-col items-center justify-center overflow-hidden p-1">
                           <span className="text-xl leading-none">{getFileIcon(img.name, img.type)}</span>
                           <span className="text-[8px] text-slate-500 leading-tight line-clamp-2 text-center mt-0.5">{img.name}</span>
-                        </a>
+                        </button>
                       );
                     })}
                   </div>
@@ -6880,6 +6905,42 @@ async function deleteFileFromStorage(path) {
   }
 }
 
+// 下載單一附件：先抓成 blob 再用 blob: 網址存檔，這樣檔名由我們指定（跨網域時 <a download> 會被瀏覽器忽略）
+// 若抓取被擋（CORS 等），退回直接開網址——上傳時已設 Content-Disposition，檔名一樣正確
+async function downloadAttachment(f) {
+  const url = f?.url || f?.dataUrl;
+  if (!url) return false;
+  const name = f.name || 'download';
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(String(res.status));
+    const blob = await res.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(objUrl), 5000);
+  } catch {
+    const a = document.createElement('a');
+    a.href = url; a.target = '_blank'; a.rel = 'noreferrer'; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  return true;
+}
+
+// 依序下載多個附件（間隔一下，避免瀏覽器把連續下載當成濫用而擋掉）
+async function downloadAllAttachments(files, onProgress) {
+  const list = (files || []).filter(f => f && (f.url || f.dataUrl));
+  for (let i = 0; i < list.length; i++) {
+    if (onProgress) onProgress(i + 1, list.length, list[i].name || '');
+    await downloadAttachment(list[i]);
+    if (i < list.length - 1) await new Promise(r => setTimeout(r, 400));
+  }
+  if (onProgress) onProgress(0, 0, '');
+  return list.length;
+}
+
 function getFileIcon(name = '', type = '') {
   const ext = (name.split('.').pop() || '').toLowerCase();
   if (type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return '🖼️';
@@ -8817,6 +8878,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const [previewDoc, setPreviewDoc] = useState(null); // 點文件開啟預覽（看該文件所有附件）
   const [showBatchImport, setShowBatchImport] = useState(false);
   const [namingOpen, setNamingOpen] = useState(false); // 自動命名時先選文件類型
+  const [dlProgress, setDlProgress] = useState(null);  // 批次下載進度
   const [showFilters, setShowFilters] = useState(false); // 篩選區預設收合（版本值可能有數十個，會把列表擠掉）
   const [expandedDims, setExpandedDims] = useState({});  // 各維度是否展開完整值
   const [drillUploading, setDrillUploading] = useState(null); // 產品分頁內直接上傳的進度
@@ -9655,6 +9717,14 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                     )}
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
+                    {files.length > 0 && (
+                      <button onClick={() => downloadAllAttachments(files, (i, n) => setDlProgress(n ? { i, n } : null))}
+                        disabled={!!dlProgress}
+                        title="依序下載這份文件的所有附件（檔名維持原檔名）"
+                        className="text-[11px] px-2 py-1 rounded text-slate-600 hover:text-violet-600 hover:bg-slate-50 disabled:opacity-50">
+                        {dlProgress ? `下載中 ${dlProgress.i}/${dlProgress.n}` : `⬇ 下載全部（${files.length}）`}
+                      </button>
+                    )}
                     {canEdit && (
                       <button onClick={() => setAsCurrent(cur)}
                         title="讓其他人知道這份才是要依循的版本"
@@ -9697,9 +9767,13 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                       <div className="flex items-center justify-between px-2 py-1.5 bg-white">
                         <span className="text-[10px] text-slate-400 truncate">{f.name || ''}</span>
                         {(f.url || f.dataUrl) && (
-                          <a href={f.url || f.dataUrl} target="_blank" rel="noreferrer"
-                            download={f.name || undefined}
-                            className="text-[11px] text-blue-500 hover:underline flex-shrink-0">開啟 / 下載 ↗</a>
+                          <span className="flex items-center gap-2 flex-shrink-0">
+                            <button onClick={() => downloadAttachment(f)}
+                              title={`下載 ${f.name || ''}`}
+                              className="text-[11px] text-blue-500 hover:underline">⬇ 下載</button>
+                            <a href={f.url || f.dataUrl} target="_blank" rel="noreferrer"
+                              className="text-[11px] text-slate-400 hover:text-blue-500 hover:underline">開啟 ↗</a>
+                          </span>
                         )}
                       </div>
                     </div>

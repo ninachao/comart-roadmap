@@ -49,10 +49,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.52.0';
-const BUILD_ID = '20260818-1400';
+const APP_VERSION = 'v1.53.0';
+const BUILD_ID = '20260818-1600';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.53.0',
+    date: '2026-08-18',
+    changes: [
+      '🗜 大檔自動壓縮：上傳 STP／STEP／IGS／STL／DXF 等 CAD 或文字檔時，超過 2MB 會自動壓成 ZIP 再上傳（實測 STP 可省約 80～90%），解決檔案太大傳不上去的問題',
+      '　· 壓縮在瀏覽器本機完成，不需額外套件；壓不小的檔案會維持原樣',
+      '　· 已壓縮的附件會標示「已自動壓縮（原 XX MB，省 XX%）」，下載後解壓縮即為原始檔',
+      '　· 圖片、PDF、Excel、ZIP 等本身已壓縮的格式不會重複壓',
+      '📏 上傳大小上限由 10／20MB 放寬到 200MB',
+    ],
+  },
   {
     version: 'v1.52.0',
     date: '2026-08-18',
@@ -6871,7 +6882,10 @@ async function compressImageFile(file) {
   });
 }
 
-async function uploadFileToStorage(file, onProgress) {
+async function uploadFileToStorage(inputFile, onProgress) {
+  // 大型 CAD／文字檔先壓成 ZIP 再傳（STP 這類通常可縮到 1/10），避免傳不上去也省流量
+  const comp = await maybeCompressFile(inputFile);
+  const file = comp.file;
   // 保留中日文等字元（只去掉會影響路徑的符號），避免檔名被換成一串底線
   const safeName = file.name.replace(/[\/\\?%*:|"<>#\s]+/g, '_');
   const path = `${STORAGE_FOLDER}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeName}`;
@@ -6890,7 +6904,11 @@ async function uploadFileToStorage(file, onProgress) {
       reject,
       async () => {
         const url = await getDownloadURL(uploadTask.snapshot.ref);
-        resolve({ url, path, name: file.name, size: file.size, type: file.type });
+        resolve({
+          url, path, name: file.name, size: file.size, type: file.type,
+          // 有壓縮時保留原始資訊，UI 可標示「已壓縮」
+          ...(comp.compressed ? { zipped: true, originalName: inputFile.name, originalSize: comp.originalSize } : {}),
+        });
       }
     );
   });
@@ -6902,6 +6920,99 @@ async function deleteFileFromStorage(path) {
     await deleteObject(storageRef(storage, path));
   } catch (e) {
     console.warn('刪除 Storage 檔案失敗:', e.message);
+  }
+}
+
+// ===== 大檔自動壓縮成 ZIP =====
+// STP／STEP／IGS 這類 CAD 交換檔是純文字，壓縮率通常有 85～90%，
+// 壓成 zip 後才傳，可以解決「檔案太大傳不上去」，也省儲存與流量。
+// 用瀏覽器原生 CompressionStream，不額外引入套件。
+
+// 這些副檔名值得壓（純文字或未壓縮）；jpg/png/pdf/xlsx/zip 等本身已壓過就不處理
+const ZIPPABLE_EXT = ['stp', 'step', 'igs', 'iges', 'stl', 'obj', 'dxf', 'txt', 'csv', 'json', 'xml', 'x_t', 'x_b', 'sat'];
+const ZIP_MIN_BYTES = 2 * 1024 * 1024; // 2MB 以下不值得壓
+
+const CRC32_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(buf) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) c = CRC32_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+// 把單一檔案包成標準 ZIP（Windows 可直接開）
+async function makeZipBlob(fileName, bytes) {
+  const cs = new CompressionStream('deflate-raw');
+  const compressed = new Uint8Array(await new Response(
+    new Blob([bytes]).stream().pipeThrough(cs)
+  ).arrayBuffer());
+
+  const nameBytes = new TextEncoder().encode(fileName);
+  const crc = crc32(bytes);
+  const put = (arr, off, val, size) => {
+    for (let i = 0; i < size; i++) arr[off + i] = (val >>> (i * 8)) & 0xFF;
+  };
+
+  const localLen = 30 + nameBytes.length;
+  const local = new Uint8Array(localLen);
+  put(local, 0, 0x04034b50, 4);
+  put(local, 4, 20, 2);          // version needed
+  put(local, 6, 0x0800, 2);      // UTF-8 檔名
+  put(local, 8, 8, 2);           // deflate
+  put(local, 10, 0, 2); put(local, 12, 0, 2); // time/date
+  put(local, 14, crc, 4);
+  put(local, 18, compressed.length, 4);
+  put(local, 22, bytes.length, 4);
+  put(local, 26, nameBytes.length, 2);
+  put(local, 28, 0, 2);
+  local.set(nameBytes, 30);
+
+  const centralLen = 46 + nameBytes.length;
+  const central = new Uint8Array(centralLen);
+  put(central, 0, 0x02014b50, 4);
+  put(central, 4, 20, 2); put(central, 6, 20, 2);
+  put(central, 8, 0x0800, 2);
+  put(central, 10, 8, 2);
+  put(central, 12, 0, 2); put(central, 14, 0, 2);
+  put(central, 16, crc, 4);
+  put(central, 20, compressed.length, 4);
+  put(central, 24, bytes.length, 4);
+  put(central, 28, nameBytes.length, 2);
+  put(central, 30, 0, 2); put(central, 32, 0, 2);
+  put(central, 34, 0, 2); put(central, 36, 0, 2);
+  put(central, 38, 0, 4);
+  put(central, 42, 0, 4); // local header offset
+  central.set(nameBytes, 46);
+
+  const eocd = new Uint8Array(22);
+  put(eocd, 0, 0x06054b50, 4);
+  put(eocd, 8, 1, 2); put(eocd, 10, 1, 2);
+  put(eocd, 12, centralLen, 4);
+  put(eocd, 16, localLen + compressed.length, 4);
+
+  return new Blob([local, compressed, central, eocd], { type: 'application/zip' });
+}
+
+// 需要時把檔案換成壓縮版；不適合壓或壓不小就原樣回傳
+async function maybeCompressFile(file) {
+  try {
+    if (typeof CompressionStream === 'undefined') return { file, compressed: false };
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (!ZIPPABLE_EXT.includes(ext) || file.size < ZIP_MIN_BYTES) return { file, compressed: false };
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const zipBlob = await makeZipBlob(file.name, bytes);
+    if (zipBlob.size >= file.size * 0.95) return { file, compressed: false }; // 壓不下來就別換
+    const zipFile = new File([zipBlob], `${file.name}.zip`, { type: 'application/zip' });
+    return { file: zipFile, compressed: true, originalSize: file.size, newSize: zipBlob.size };
+  } catch {
+    return { file, compressed: false };
   }
 }
 
@@ -7089,8 +7200,9 @@ function AttachmentList({ attachments, onChange, readOnly, showBomStatus = false
     const newItems = [];
     try {
       for (const file of files) {
-        if (file.size > 20 * 1024 * 1024) {
-          alert(`「${file.name}」超過 20MB，請改用「貼連結」上傳到 Google Drive`);
+        // STP／STEP 等大檔會在上傳時自動壓成 ZIP，所以上限放寬
+        if (file.size > 200 * 1024 * 1024) {
+          alert(`「${file.name}」超過 200MB，請改用「貼連結」上傳到 Google Drive`);
           continue;
         }
         const result = await uploadFileToStorage(file, setProgress);
@@ -9162,7 +9274,8 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
         if (f.type.startsWith('image/')) {
           await addEditingImage(f);
         } else {
-          if (f.size > 10 * 1024 * 1024) { alert(`「${f.name}」超過 10MB，跳過`); continue; }
+          // 大檔會在 uploadFileToStorage 內先壓成 ZIP，這裡只擋真的過大的
+          if (f.size > 200 * 1024 * 1024) { alert(`「${f.name}」超過 200MB，請改用「貼連結」`); continue; }
           const r = await uploadFileToStorage(f, () => {});
           setEditing(v => ({
             ...v,
@@ -9759,8 +9872,17 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                           <span className="text-3xl">{getFileIcon(f.name, f.type)}</span>
                           <div className="min-w-0 flex-1">
                             <p className="text-xs text-slate-700 break-all">{f.name || '附件'}</p>
-                            {f.size ? <p className="text-[10px] text-slate-400">{(f.size / 1024).toFixed(0)} KB</p> : null}
-                            <p className="text-[10px] text-slate-400">此檔案類型無法直接預覽，請開啟或下載</p>
+                            <p className="text-[10px] text-slate-400">
+                              {f.size ? `${(f.size / 1024).toFixed(0)} KB` : ''}
+                              {f.zipped && f.originalSize ? (
+                                <span className="text-emerald-600 ml-1">
+                                  · 已自動壓縮（原 {(f.originalSize / 1024 / 1024).toFixed(1)} MB，省 {Math.round((1 - f.size / f.originalSize) * 100)}%）
+                                </span>
+                              ) : null}
+                            </p>
+                            <p className="text-[10px] text-slate-400">
+                              {f.zipped ? '下載後解壓縮即可取得原始檔' : '此檔案類型無法直接預覽，請開啟或下載'}
+                            </p>
                           </div>
                         </div>
                       )}

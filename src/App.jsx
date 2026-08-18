@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.51.0';
-const BUILD_ID = '20260818-1000';
+const APP_VERSION = 'v1.51.1';
+const BUILD_ID = '20260818-1130';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.51.1',
+    date: '2026-08-18',
+    changes: [
+      '🔢 自動命名選類型時會一併帶入版本：版本欄位空白時自動用「下一版」，標題直接產生成「編碼_產品名稱_3D_V3」，不會再因為沒有版本而被判成舊版',
+      '👁 選單下方會標示「自動帶入 V3（此產品目前最新 V2）」，看得到系統怎麼判斷；已自行填版本時則沿用你填的',
+      '🔧 命名選單與「版本」欄位改用同一套版號計算，兩邊不會再算出不同結果',
+    ],
+  },
   {
     version: 'v1.51.0',
     date: '2026-08-18',
@@ -9217,6 +9226,20 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     return '';
   }, [editing, projects]);
 
+  // 此產品目前的最高版號與下一版（命名選單與「版本」欄位共用同一套算法，避免兩邊不一致）
+  const verInfo = useMemo(() => {
+    const relIds = (editing?.relatedProjectIds || []).map(String);
+    if (!relIds.length) return { max: null, next: null, used: [] };
+    const used = items
+      .filter(it => it.id !== editing.id && refLinkedProjIds(it).some(pid => relIds.includes(String(pid))))
+      .flatMap(it => refDimVals(it, 'versions'));
+    const nums = used
+      .map(v => { const m = String(v).match(/^\s*V\s*(\d+)/i); return m ? Number(m[1]) : null; })
+      .filter(n => n != null);
+    const max = nums.length ? Math.max(...nums) : null;
+    return { max, next: max == null ? 'V1' : `V${max + 1}`, used: [...new Set(used)] };
+  }, [editing, items]);
+
   // 單張文件卡（大圖檢視）
   const renderDocCard = (it) => {
     const cover = (it.images || [])[0];
@@ -9726,16 +9749,23 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                       （例如 3D 圖以 PDF／圖片形式給），所以讓人親自確認類型才不會命名錯 */}
                   {namingOpen && nameBase && (
                     <div className="mb-1.5 p-2 rounded-lg border border-violet-200 bg-violet-50/50">
-                      <p className="text-[11px] text-slate-600 mb-1.5">這份文件是哪一種？（選了會同時設定「文件類型」）</p>
+                      <p className="text-[11px] text-slate-600 mb-1.5">這份文件是哪一種？（選了會同時設定「文件類型」與版本）</p>
                       <div className="flex flex-wrap gap-1">
                         {REF_DIM_PRESETS.natures.map(t => {
-                          const preview = [nameBase, t, (editing.versions || [])[0] || ''].filter(Boolean).join('_');
+                          // 版本沒填時自動用「下一版」，否則這份文件會被當成沒有版本、誤判為舊版
+                          const ver = (editing.versions || [])[0] || verInfo.next || '';
+                          const preview = [nameBase, t, ver].filter(Boolean).join('_');
                           const on = (editing.natures || [])[0] === t;
                           return (
                             <button key={t}
                               title={`命名為：${preview}`}
                               onClick={() => {
-                                setEditing(v => ({ ...v, natures: [t], title: preview }));
+                                setEditing(v => ({
+                                  ...v,
+                                  natures: [t],
+                                  versions: (v.versions || []).length ? v.versions : (ver ? [ver] : []),
+                                  title: preview,
+                                }));
                                 setNamingOpen(false);
                               }}
                               className="px-2 py-0.5 text-[11px] rounded-full border transition"
@@ -9747,12 +9777,23 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                           );
                         })}
                       </div>
-                      <p className="text-[10px] text-slate-400 mt-1.5">
-                        將命名為：<span className="font-mono text-slate-500">{nameBase}_
-                          <span className="text-violet-500">類型</span>
-                          {(editing.versions || [])[0] ? `_${(editing.versions || [])[0]}` : ''}</span>
-                        {!(editing.versions || [])[0] && '（想帶版本可先在下方「版本」設定）'}
-                      </p>
+                      {(() => {
+                        const cur = (editing.versions || [])[0];
+                        const ver = cur || verInfo.next || '';
+                        return (
+                          <p className="text-[10px] text-slate-400 mt-1.5">
+                            將命名為：
+                            <span className="font-mono text-slate-500">
+                              {nameBase}_<span className="text-violet-500">類型</span>{ver ? `_${ver}` : ''}
+                            </span>
+                            {!cur && ver && (
+                              <span className="ml-1 text-emerald-600">
+                                · 自動帶入 {ver}{verInfo.max != null ? `（此產品目前最新 V${verInfo.max}）` : '（此產品第一版）'}
+                              </span>
+                            )}
+                          </p>
+                        );
+                      })()}
                     </div>
                   )}
                   <input value={editing.title} onChange={e => setEditing(v => ({ ...v, title: e.target.value }))}
@@ -9770,40 +9811,21 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                     className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
                 </div>
                 {REF_DIMS.map(d => {
-                  // 版本：依「同一產品已用過的版本」自動算出下一版，不用自己數
+                  // 版本：沿用 verInfo（與「自動命名」選單同一套算法），不用自己數
                   let action = null, priorityOptions = [], hint = '';
                   if (d.key === 'versions') {
-                    const relIds = (editing.relatedProjectIds || []).map(String);
-                    if (relIds.length) {
-                      const used = items
-                        .filter(it => it.id !== editing.id && refLinkedProjIds(it).some(pid => relIds.includes(String(pid))))
-                        .flatMap(it => refDimVals(it, 'versions'));
-                      priorityOptions = [...new Set(used)];
-                      const nums = used
-                        .map(v => { const m = String(v).match(/^\s*V\s*(\d+)/i); return m ? Number(m[1]) : null; })
-                        .filter(n => n != null);
-                      if (nums.length) {
-                        const max = Math.max(...nums);
-                        const next = `V${max + 1}`;
-                        hint = `（此產品目前最新 V${max}）`;
-                        if (!(editing.versions || []).includes(next)) {
-                          action = (
-                            <button onClick={() => setEditing(v => ({ ...v, versions: [...(v.versions || []), next] }))}
-                              title={`加入 ${next}`}
-                              className="text-[11px] text-emerald-600 hover:underline">⚡ 下一版 {next}</button>
-                          );
-                        }
-                      } else {
-                        hint = '（此產品尚無版本）';
-                        if (!(editing.versions || []).includes('V1')) {
-                          action = (
-                            <button onClick={() => setEditing(v => ({ ...v, versions: [...(v.versions || []), 'V1'] }))}
-                              className="text-[11px] text-emerald-600 hover:underline">⚡ 下一版 V1</button>
-                          );
-                        }
-                      }
-                    } else {
+                    if (!(editing.relatedProjectIds || []).length) {
                       hint = '（選好關聯產品後可自動算下一版）';
+                    } else {
+                      priorityOptions = verInfo.used;
+                      hint = verInfo.max != null ? `（此產品目前最新 V${verInfo.max}）` : '（此產品尚無版本）';
+                      if (verInfo.next && !(editing.versions || []).includes(verInfo.next)) {
+                        action = (
+                          <button onClick={() => setEditing(v => ({ ...v, versions: [...(v.versions || []), verInfo.next] }))}
+                            title={`加入 ${verInfo.next}`}
+                            className="text-[11px] text-emerald-600 hover:underline">⚡ 下一版 {verInfo.next}</button>
+                        );
+                      }
                     }
                   }
                   return (

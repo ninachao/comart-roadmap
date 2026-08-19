@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.57.2';
-const BUILD_ID = '20260820-1300';
+const APP_VERSION = 'v1.58.0';
+const BUILD_ID = '20260820-1500';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.58.0',
+    date: '2026-08-20',
+    changes: [
+      '🖼 滑到海報標記可直接看到海報稿預覽圖，不用再點開下方清單',
+      '📦 滑到櫃位標記可看到該櫃的樣品縮圖（最多 6 張，超過顯示 +N），一眼知道這一櫃擺什麼',
+    ],
+  },
   {
     version: 'v1.57.2',
     date: '2026-08-20',
@@ -8413,6 +8421,24 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
                     : (n > 0 ? `樣品 ${n} 項` : '尚未放樣品')}
                 </span>
                 {z.owner ? <span className="block text-slate-300">負責 {z.owner}</span> : null}
+                {/* 海報：直接把稿件縮圖放進泡泡，滑過去就看得到是哪一張 */}
+                {k === 'poster' && z.artwork && (
+                  <span className="block mt-1 rounded overflow-hidden bg-white" style={{ width: 120 }}>
+                    <StorageImage src={z.artwork.url || ''} path={z.artwork.path} alt=""
+                      className="w-full max-h-[150px] object-contain" />
+                  </span>
+                )}
+                {/* 櫃位：放上這一櫃的樣品縮圖，不用點開也知道擺什麼 */}
+                {k === 'cabinet' && n > 0 && (
+                  <span className="flex gap-0.5 flex-wrap mt-1" style={{ maxWidth: 132 }}>
+                    {itemThumbs(zoneItems(z.id)).slice(0, 6).map((m, i) => (
+                      <span key={i} className="w-10 h-10 rounded overflow-hidden bg-white flex items-center justify-center">
+                        <SampleMediaThumb media={m} className="w-full h-full object-contain" />
+                      </span>
+                    ))}
+                    {n > 6 && <span className="text-[10px] text-slate-400 self-end">+{n - 6}</span>}
+                  </span>
+                )}
                 {z.note ? <span className="block text-slate-400 whitespace-normal border-t border-white/15 mt-1 pt-1">{z.note}</span> : null}
               </span>
             </span>

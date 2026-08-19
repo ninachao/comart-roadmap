@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.54.0';
-const BUILD_ID = '20260819-1000';
+const APP_VERSION = 'v1.54.1';
+const BUILD_ID = '20260819-1130';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.54.1',
+    date: '2026-08-19',
+    changes: [
+      '🐞 修正「選檔案上傳」按鈕沒反應：程式在呼叫上傳前就先清空了 input，連帶把選到的檔案清單也清掉，導致靜靜地什麼都沒發生（拖曳上傳不受影響）',
+      '　· 影響範圍：攤位配置圖、產品卡片「上傳文件」、文件中心產品分頁「上傳到此產品」三處，皆已修正',
+      '🔔 選到不支援的檔案時會明確提示，不會再靜靜沒反應',
+    ],
+  },
   {
     version: 'v1.54.0',
     date: '2026-08-19',
@@ -4668,7 +4677,7 @@ function LinkedRefFilesSection({ project, refFiles = [], onOpenRefLibrary, canEd
             <label className="text-[11px] px-2 py-0.5 rounded bg-slate-900 text-white hover:bg-slate-700 cursor-pointer">
               ⬆ 上傳文件
               <input type="file" multiple className="hidden"
-                onChange={async e => { const fs = e.target.files; e.target.value = ''; await uploadHere(fs); }} />
+                onChange={async e => { const fs = Array.from(e.target.files || []); e.target.value = ''; await uploadHere(fs); }} />
             </label>
           )}
           {canEdit && migrationJobs.length > 0 && (
@@ -8232,8 +8241,13 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave }) {
   });
 
   const addLayout = async (fileList) => {
-    const files = Array.from(fileList || []).filter(f => f.type.startsWith('image/'));
-    if (!files.length) return;
+    const picked = Array.from(fileList || []);
+    const files = picked.filter(f => (f.type || '').startsWith('image/'));
+    if (!files.length) {
+      // 不要靜靜地什麼都不做——一定要讓人知道為什麼沒反應
+      alert(picked.length ? '配置圖請選圖片檔（JPG／PNG）' : '沒有讀到檔案，請再選一次');
+      return;
+    }
     setUploading(true);
     try {
       const added = [];
@@ -8290,7 +8304,7 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave }) {
             <label className="text-[11px] px-2 py-0.5 rounded border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 cursor-pointer">
               {uploading ? '上傳中…' : (layouts.length ? '＋ 加配置圖' : '⬆ 上傳配置圖')}
               <input type="file" accept="image/*" multiple className="hidden"
-                onChange={async e => { const fs = e.target.files; e.target.value = ''; await addLayout(fs); }} />
+                onChange={async e => { const fs = Array.from(e.target.files || []); e.target.value = ''; await addLayout(fs); }} />
             </label>
           </div>
         )}
@@ -9930,7 +9944,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                       <label className="text-[11px] px-2 py-1 rounded bg-slate-900 text-white hover:bg-slate-700 cursor-pointer flex-shrink-0">
                         ⬆ 上傳到此產品
                         <input type="file" multiple className="hidden"
-                          onChange={async e => { const fs = e.target.files; e.target.value = ''; await uploadToDrilledProject(fs); }} />
+                          onChange={async e => { const fs = Array.from(e.target.files || []); e.target.value = ''; await uploadToDrilledProject(fs); }} />
                       </label>
                     )}
                     {drillGroup?.project && (

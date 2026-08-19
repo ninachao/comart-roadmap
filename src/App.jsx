@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.57.0';
-const BUILD_ID = '20260820-1000';
+const APP_VERSION = 'v1.57.1';
+const BUILD_ID = '20260820-1130';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.57.1',
+    date: '2026-08-20',
+    changes: [
+      '🖱 配置圖只留紅／藍標記，滑鼠移到標記上才顯示說明泡泡（名稱、項數或海報尺寸、負責人、備註）',
+      '　· 原本標記旁邊那個白色小方塊其實是「名稱標籤」，因為櫃位當時就命名為 1、2、3，看起來才像重複的圖示；現在名稱改為預設不常駐，需要時可用「名稱常駐顯示」開關打開',
+      '✏️ 領用紀錄的「未歸還·已流出」改稱「客戶未歸還」',
+    ],
+  },
   {
     version: 'v1.57.0',
     date: '2026-08-20',
@@ -8256,7 +8265,7 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
   const [uploading, setUploading] = useState(false);
   const [placingKind, setPlacingKind] = useState(null); // 'cabinet' | 'poster' | null
   const [dragZone, setDragZone] = useState(null);       // 正在拖曳的標記
-  const [showLabels, setShowLabels] = useState(true);   // 圖上是否顯示名稱
+  const [showLabels, setShowLabels] = useState(false);  // 圖上是否常駐顯示名稱（預設關，改用滑鼠移上去顯示）
   const [presenting, setPresenting] = useState(false);  // 簡報模式
   const [artUploading, setArtUploading] = useState(null);
 
@@ -8375,10 +8384,21 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
         const k = kindOf(z);
         const n = zoneItems(z.id).length;
         return (
-          <span key={z.id} className="absolute -translate-x-1/2 -translate-y-1/2 flex items-center gap-1"
+          <span key={z.id} className="group/pin absolute -translate-x-1/2 -translate-y-1/2 flex items-center gap-1"
             style={{ left: `${live.x}%`, top: `${live.y}%`, touchAction: 'none' }}>
+            {/* 滑鼠移到標記上才顯示的說明泡泡 */}
+            <span className="hidden group-hover/pin:block absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 z-20 pointer-events-none">
+              <span className="block whitespace-nowrap rounded-lg px-2 py-1 text-[11px] leading-snug shadow-lg"
+                style={{ background: 'rgba(15,23,42,0.92)', color: '#fff' }}>
+                <span className="font-medium">{z.name || '(未命名)'}</span>
+                {k === 'poster'
+                  ? (z.size ? <span className="ml-1 text-blue-200">{z.size}</span> : null)
+                  : <span className="ml-1 text-rose-200">{n} 項</span>}
+                {z.owner ? <span className="ml-1 text-slate-300">· {z.owner}</span> : null}
+                {z.note ? <span className="block text-slate-300 max-w-[220px] whitespace-normal">{z.note}</span> : null}
+              </span>
+            </span>
             <span
-              title={`${z.name}${k === 'cabinet' ? `（${n} 項）` : ''}${canEdit && !big ? ' · 可拖曳移動' : ''}`}
               onPointerDown={(e) => {
                 if (!canEdit || big) return;
                 e.preventDefault(); e.stopPropagation();
@@ -8418,7 +8438,7 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
             <>
               <label className="text-[11px] text-slate-500 flex items-center gap-1 cursor-pointer">
                 <input type="checkbox" checked={showLabels} onChange={e => setShowLabels(e.target.checked)} />
-                圖上顯示名稱
+                名稱常駐顯示
               </label>
               <button onClick={() => setPresenting(true)}
                 className="text-[11px] px-2 py-0.5 rounded border border-slate-300 text-slate-700 bg-white hover:bg-slate-100">
@@ -11506,7 +11526,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
               {[
                 ['all', '全部', withdrawals.length],
                 ['out', '在外未還', withdrawals.filter(w => !w.returned && !w.noReturn).length],
-                ['gone', '已流出未歸還', withdrawals.filter(w => w.noReturn).length],
+                ['gone', '客戶未歸還', withdrawals.filter(w => w.noReturn).length],
               ].map(([k, label, n]) => (
                 <button key={k} onClick={() => setWFilter(k)}
                   className="px-3 py-2 text-xs rounded-lg border transition whitespace-nowrap"
@@ -11566,7 +11586,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                       {/* 狀態徽章 */}
                       {w.returned && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded whitespace-nowrap">已歸還</span>}
                       {w.fromListItemId && <span className="text-[10px] px-1.5 py-0.5 bg-violet-50 text-violet-700 border border-violet-200 rounded whitespace-nowrap">客戶樣品</span>}
-                      {w.noReturn && <span className="text-[10px] px-1.5 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded whitespace-nowrap" title={w.noReturnReason}>{w.noReturnReason || '未歸還·已流出'}</span>}
+                      {w.noReturn && <span className="text-[10px] px-1.5 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded whitespace-nowrap" title={w.noReturnReason}>{w.noReturnReason || '客戶未歸還'}</span>}
                       {isOut && <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded whitespace-nowrap">在外</span>}
                       {/* 操作（hover 才浮現，減少視覺噪音） */}
                       {canEdit && (

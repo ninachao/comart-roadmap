@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.57.1';
-const BUILD_ID = '20260820-1130';
+const APP_VERSION = 'v1.57.2';
+const BUILD_ID = '20260820-1300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.57.2',
+    date: '2026-08-20',
+    changes: [
+      '🐞 修正說明泡泡看不懂：櫃位取名為數字時（例如「2」）會和項數連在一起顯示成「2 0項」，讀起來像 20 項。改為分行標示',
+      '💬 泡泡改為結構化排版：第一行標「櫃位 N／海報 N」、第二行是名稱、第三行才是「樣品 3 項」或「尺寸 90*120」，備註另起一段',
+      '🏷 未命名的位置會明確顯示「尚未命名」，海報未填尺寸顯示「尺寸未填」，不再只給一個看不出意思的括號',
+    ],
+  },
   {
     version: 'v1.57.1',
     date: '2026-08-20',
@@ -8386,16 +8395,25 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
         return (
           <span key={z.id} className="group/pin absolute -translate-x-1/2 -translate-y-1/2 flex items-center gap-1"
             style={{ left: `${live.x}%`, top: `${live.y}%`, touchAction: 'none' }}>
-            {/* 滑鼠移到標記上才顯示的說明泡泡 */}
+            {/* 滑鼠移到標記上才顯示的說明泡泡：分行標示，避免名稱和數量黏在一起看錯
+                （例如櫃位取名「2」又有 0 項，連在一起會讀成「20 項」） */}
             <span className="hidden group-hover/pin:block absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 z-20 pointer-events-none">
-              <span className="block whitespace-nowrap rounded-lg px-2 py-1 text-[11px] leading-snug shadow-lg"
-                style={{ background: 'rgba(15,23,42,0.92)', color: '#fff' }}>
-                <span className="font-medium">{z.name || '(未命名)'}</span>
-                {k === 'poster'
-                  ? (z.size ? <span className="ml-1 text-blue-200">{z.size}</span> : null)
-                  : <span className="ml-1 text-rose-200">{n} 項</span>}
-                {z.owner ? <span className="ml-1 text-slate-300">· {z.owner}</span> : null}
-                {z.note ? <span className="block text-slate-300 max-w-[220px] whitespace-normal">{z.note}</span> : null}
+              <span className="block rounded-lg px-2.5 py-1.5 text-[11px] leading-relaxed shadow-lg text-left min-w-[110px] max-w-[240px]"
+                style={{ background: 'rgba(15,23,42,0.94)', color: '#fff' }}>
+                <span className="block text-[9px] tracking-widest"
+                  style={{ color: k === 'poster' ? '#93c5fd' : '#fda4af' }}>
+                  {k === 'poster' ? '海報' : '櫃位'} {zones.indexOf(z) + 1}
+                </span>
+                <span className="block font-medium text-[12px]">
+                  {z.name ? z.name : <span className="text-slate-400 font-normal">尚未命名</span>}
+                </span>
+                <span className="block text-slate-300">
+                  {k === 'poster'
+                    ? (z.size ? `尺寸 ${z.size}` : '尺寸未填')
+                    : (n > 0 ? `樣品 ${n} 項` : '尚未放樣品')}
+                </span>
+                {z.owner ? <span className="block text-slate-300">負責 {z.owner}</span> : null}
+                {z.note ? <span className="block text-slate-400 whitespace-normal border-t border-white/15 mt-1 pt-1">{z.note}</span> : null}
               </span>
             </span>
             <span
@@ -8414,9 +8432,9 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
             {showLabels && (
               <span className={`${big ? 'text-[11px] px-1.5 py-0.5' : 'text-[9px] px-1 py-0.5'} rounded whitespace-nowrap shadow-sm select-none`}
                 style={{ background: 'rgba(255,255,255,0.92)', color: PIN[k], border: `1px solid ${PIN[k]}33` }}>
-                {z.name}
-                {k === 'poster' && z.size ? ` ${z.size}` : ''}
-                {k === 'cabinet' && n > 0 ? ` ·${n}` : ''}
+                {z.name || '未命名'}
+                {k === 'poster' && z.size ? `（${z.size}）` : ''}
+                {k === 'cabinet' && n > 0 ? `（${n}項）` : ''}
               </span>
             )}
           </span>

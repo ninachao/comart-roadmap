@@ -49,10 +49,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.56.0';
-const BUILD_ID = '20260819-1700';
+const APP_VERSION = 'v1.57.0';
+const BUILD_ID = '20260820-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.57.0',
+    date: '2026-08-20',
+    changes: [
+      '🔀 分頁順序調整為：樣品 → 樣品申請 → 領用紀錄 → 展覽 → 客戶樣品，貼近實際流程',
+      '✏️ 「客戶清單」更名為「客戶樣品」',
+      '🐞 修正找不到流出樣品的問題：領用紀錄原本的「只看未歸還」把 noReturn（客戶沒還的）排除掉了，所以客戶樣品未歸還的紀錄雖然有建立卻篩不出來',
+      '🔎 領用紀錄改為三段篩選：全部／在外未還／已流出未歸還，可直接查出所有流出的樣品',
+      '🏷 來自客戶樣品的紀錄會標「客戶樣品」徽章；未歸還改為紅色標示且不再淡化，避免被忽略',
+    ],
+  },
   {
     version: 'v1.56.0',
     date: '2026-08-19',
@@ -8752,7 +8763,7 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
               <span className="text-sm font-semibold tabular-nums">
                 <span className={isOut ? 'text-rose-600' : remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}>{remaining}</span>
                 <span className="text-slate-400 text-xs font-normal"> / {s._effectiveTotal ?? s.initialQuantity ?? 0}</span>
-                {(s._reserved || 0) > 0 && <span className="block text-[9px] text-blue-400 font-normal" title="被客戶清單預留的數量">清單排 {s._reserved}</span>}
+                {(s._reserved || 0) > 0 && <span className="block text-[9px] text-blue-400 font-normal" title="被客戶樣品預留的數量">清單排 {s._reserved}</span>}
               </span>
               <span className="text-xs text-emerald-700 truncate">{s.location ? `📍 ${s.location}` : <span className="text-slate-300">—</span>}</span>
               <span className="text-xs text-slate-600 truncate">{s.material || <span className="text-slate-300">—</span>}</span>
@@ -8979,7 +8990,7 @@ function exportCustomerListPDF(list, items) {
 async function exportCustomerListXLSX(list, items) {
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet(list.name ? list.name.slice(0, 28) : '客戶清單');
+  const ws = wb.addWorksheet(list.name ? list.name.slice(0, 28) : '客戶樣品');
   ws.columns = [
     { header: '圖片', width: 14 },
     { header: '品名', width: 32 },
@@ -10973,7 +10984,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
           sampleName: u.name,
           personName: list.customer || list.name || '客戶',
           quantity: qty,
-          purpose: `客戶清單「${list.name}」未歸還${returnedQty > 0 ? `（${total} 個中還了 ${returnedQty} 個）` : ''}`,
+          purpose: `客戶樣品「${list.name}」未歸還${returnedQty > 0 ? `（${total} 個中還了 ${returnedQty} 個）` : ''}`,
           timestamp: Date.now(),
           date: new Date().toISOString().split('T')[0],
           returned: false,
@@ -11010,7 +11021,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
         sampleName: m.name || '',
         personName: list.customer || list.name || '客戶',
         quantity: kept,
-        purpose: `客戶清單「${list.name}」組合品「${it.name}」未歸還${returnedQty > 0 ? `（${memTotal} 個中還了 ${returnedQty} 個）` : ''}`,
+        purpose: `客戶樣品「${list.name}」組合品「${it.name}」未歸還${returnedQty > 0 ? `（${memTotal} 個中還了 ${returnedQty} 個）` : ''}`,
         timestamp: Date.now(),
         date: new Date().toISOString().split('T')[0],
         returned: false,
@@ -11076,7 +11087,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [locationFilter, setLocationFilter] = useState('全部');
   const [searchTerm, setSearchTerm] = useState('');
   const [withdrawalSearch, setWithdrawalSearch] = useState('');
-  const [wOnlyOut, setWOnlyOut] = useState(false);            // 只看未歸還
+  const [wFilter, setWFilter] = useState('all');              // 領用紀錄篩選：all｜out 在外未還｜gone 已流出未歸還
   const [noReturnEditId, setNoReturnEditId] = useState(null); // 行內填不歸還原因的紀錄 id
   const [noReturnReasonDraft, setNoReturnReasonDraft] = useState('');
   const [editingSample, setEditingSample] = useState(null);
@@ -11328,6 +11339,12 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             📦 樣品 ({samples.length})
           </button>
           <button
+            onClick={() => setTab('requests')}
+            className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'requests' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          >
+            📋 樣品申請 {allRequests.filter(r => r.status !== '已完成').length > 0 && <span className="ml-1 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{allRequests.filter(r => r.status !== '已完成').length}</span>}
+          </button>
+          <button
             onClick={() => setTab('withdrawals')}
             className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'withdrawals' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
           >
@@ -11340,16 +11357,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             🎪 展覽 ({exhibitions.length})
           </button>
           <button
-            onClick={() => setTab('requests')}
-            className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'requests' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-          >
-            📋 樣品申請 {allRequests.filter(r => r.status !== '已完成').length > 0 && <span className="ml-1 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{allRequests.filter(r => r.status !== '已完成').length}</span>}
-          </button>
-          <button
             onClick={() => setTab('lists')}
             className={`px-3 py-2 text-sm font-medium transition border-b-2 ${tab === 'lists' ? 'border-amber-500 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
           >
-            🧳 客戶清單 ({customerLists.length})
+            🧳 客戶樣品 ({customerLists.length})
           </button>
         </div>
 
@@ -11491,13 +11502,20 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                   className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400"
                 />
               </div>
-              <button onClick={() => setWOnlyOut(v => !v)}
-                className="px-3 py-2 text-xs rounded-lg border transition whitespace-nowrap"
-                style={wOnlyOut
-                  ? { background: '#1e293b', color: '#fff', borderColor: '#1e293b' }
-                  : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
-                只看未歸還 ({withdrawals.filter(w => !w.returned && !w.noReturn).length})
-              </button>
+              {/* 三段篩選：原本「只看未歸還」會把客戶沒還的（noReturn）排除，反而找不到流出的樣品 */}
+              {[
+                ['all', '全部', withdrawals.length],
+                ['out', '在外未還', withdrawals.filter(w => !w.returned && !w.noReturn).length],
+                ['gone', '已流出未歸還', withdrawals.filter(w => w.noReturn).length],
+              ].map(([k, label, n]) => (
+                <button key={k} onClick={() => setWFilter(k)}
+                  className="px-3 py-2 text-xs rounded-lg border transition whitespace-nowrap"
+                  style={wFilter === k
+                    ? { background: '#1e293b', color: '#fff', borderColor: '#1e293b' }
+                    : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+                  {label} ({n})
+                </button>
+              ))}
             </div>
             {(() => {
               // 建立 sampleId → sample 對照（取圖片）
@@ -11505,7 +11523,8 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
               samples.forEach(s => { sampleMap[s.id] = s; });
               const kw = withdrawalSearch.trim().toLowerCase();
               const filteredW = withdrawals.filter(w => {
-                if (wOnlyOut && (w.returned || w.noReturn)) return false;
+                if (wFilter === 'out' && (w.returned || w.noReturn)) return false;
+                if (wFilter === 'gone' && !w.noReturn) return false;
                 return !kw || [w.personName, w.sampleName, w.purpose, w.noReturnReason].some(v => (v || '').toLowerCase().includes(kw));
               });
 
@@ -11524,7 +11543,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                   return (
                   <div key={w.id} className="group">
                     {/* 單行緊湊列 */}
-                    <div className={`flex items-center gap-2.5 px-2.5 py-1.5 ${isOut ? '' : 'opacity-55'}`}>
+                    <div className={`flex items-center gap-2.5 px-2.5 py-1.5 ${w.returned ? 'opacity-55' : ''}`}>
                       {/* 縮圖 */}
                       <div className="flex-shrink-0 w-8 h-8 rounded bg-slate-50 border border-slate-100 overflow-hidden flex items-center justify-center">
                         {sampleImg ? (
@@ -11546,7 +11565,8 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                       </div>
                       {/* 狀態徽章 */}
                       {w.returned && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded whitespace-nowrap">已歸還</span>}
-                      {w.noReturn && <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded whitespace-nowrap" title={w.noReturnReason}>{w.noReturnReason || '不歸還'}</span>}
+                      {w.fromListItemId && <span className="text-[10px] px-1.5 py-0.5 bg-violet-50 text-violet-700 border border-violet-200 rounded whitespace-nowrap">客戶樣品</span>}
+                      {w.noReturn && <span className="text-[10px] px-1.5 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded whitespace-nowrap" title={w.noReturnReason}>{w.noReturnReason || '未歸還·已流出'}</span>}
                       {isOut && <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded whitespace-nowrap">在外</span>}
                       {/* 操作（hover 才浮現，減少視覺噪音） */}
                       {canEdit && (
@@ -12301,7 +12321,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
           <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
             {/* 工具列 */}
             <div className="flex items-center gap-2 mb-3">
-              <p className="text-xs text-slate-400">給客戶看的樣品清單 · 可從樣品庫 / 樣品申請挑選，也可手動加入</p>
+              <p className="text-xs text-slate-400">給客戶的樣品 · 可從樣品庫 / 樣品申請挑選，也可手動加入</p>
               <div className="flex-1" />
               {canEdit && (
                 <button onClick={() => setShowNewListForm(true)}

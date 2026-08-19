@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.55.0';
-const BUILD_ID = '20260819-1400';
+const APP_VERSION = 'v1.56.0';
+const BUILD_ID = '20260819-1700';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.56.0',
+    date: '2026-08-19',
+    changes: [
+      '🏷 配置圖上直接顯示名稱：標記旁會標出櫃位／海報名稱（海報另顯示尺寸、櫃位顯示項數），可用「圖上顯示名稱」開關切換，報告時不必再往下捲',
+      '🖥 新增「簡報模式」：全螢幕顯示配置圖，右側同時列出每個位置的名稱、負責人、備註與樣品縮圖，可直接用來跟主管報告',
+      '🖼 新增「海報」管理：與櫃位一樣可在圖上點位置、拖曳調整，並可填名稱（老產品／Qi／HD…）、尺寸（90*120、90*240）、內容備註，還能上傳海報稿件',
+      '🎨 櫃位標記為紅色、海報標記為藍色，一眼分得出來',
+    ],
+  },
   {
     version: 'v1.55.0',
     date: '2026-08-19',
@@ -8233,11 +8243,17 @@ function listItemSampleUsage(it, samples = []) {
 // 樣品指派到櫃位後就能用「照片牆」預覽每一櫃會擺什麼——取代把實體樣品全部搬出來擺的做法
 function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
   const [uploading, setUploading] = useState(false);
-  const [placing, setPlacing] = useState(false); // 點圖新增櫃位模式
-  const [dragZone, setDragZone] = useState(null); // 正在拖曳的櫃位標記 id
+  const [placingKind, setPlacingKind] = useState(null); // 'cabinet' | 'poster' | null
+  const [dragZone, setDragZone] = useState(null);       // 正在拖曳的標記
+  const [showLabels, setShowLabels] = useState(true);   // 圖上是否顯示名稱
+  const [presenting, setPresenting] = useState(false);  // 簡報模式
+  const [artUploading, setArtUploading] = useState(null);
+
   const zones = ex.zones || [];
   const layouts = ex.layoutImages || [];
   const items = ex.items || [];
+  const kindOf = (z) => z.kind === 'poster' ? 'poster' : 'cabinet';
+  const PIN = { cabinet: '#e11d48', poster: '#2563eb' };
 
   const zoneItems = (zoneId) => items.filter(it => (it.zoneId || '') === zoneId);
   const itemThumbs = (list) => list.flatMap(it => {
@@ -8254,7 +8270,6 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
     const picked = Array.from(fileList || []);
     const files = picked.filter(f => (f.type || '').startsWith('image/'));
     if (!files.length) {
-      // 不要靜靜地什麼都不做——一定要讓人知道為什麼沒反應
       alert(picked.length ? '配置圖請選圖片檔（JPG／PNG）' : '沒有讀到檔案，請再選一次');
       return;
     }
@@ -8271,22 +8286,30 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
     } finally { setUploading(false); }
   };
 
-  // 在配置圖上點一下 → 於該座標新增一個櫃位
+  // 在配置圖上點一下 → 於該座標新增一個櫃位或海報
   const handleMapClick = async (e, imgIdx) => {
-    if (!placing || !canEdit) return;
+    if (!placingKind || !canEdit) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const x = Math.round(((e.clientX - rect.left) / rect.width) * 1000) / 10;
     const y = Math.round(((e.clientY - rect.top) / rect.height) * 1000) / 10;
-    const name = window.prompt('這個櫃位叫什麼？（例：TS高櫃-上層、F1-下層、LC矮櫃）');
+    const isPoster = placingKind === 'poster';
+    const name = window.prompt(isPoster
+      ? '這張海報叫什麼？（例：老產品、Qi、HD、板子+磁吸）'
+      : '這個櫃位叫什麼？（例：TS高櫃-上層、F1-下層、LC矮櫃）');
     if (!name || !name.trim()) return;
-    const z = { id: `z${Date.now()}`, name: name.trim(), note: '', owner: '', x, y, imgIdx };
+    const z = {
+      id: `z${Date.now()}`, kind: placingKind, name: name.trim(),
+      note: '', owner: '', x, y, imgIdx,
+      ...(isPoster ? { size: '' } : {}),
+    };
     await onSave({ ...ex, zones: [...zones, z] });
-    setPlacing(false);
+    setPlacingKind(null);
   };
 
   const updZone = (id, patch) => onSave({ ...ex, zones: zones.map(z => z.id === id ? { ...z, ...patch } : z) });
   const delZone = async (z) => {
-    if (!window.confirm(`刪除櫃位「${z.name}」？\n該櫃位底下的 ${zoneItems(z.id).length} 項會變回「未指派」，樣品本身不會被刪除。`)) return;
+    const n = zoneItems(z.id).length;
+    if (!window.confirm(`刪除「${z.name}」？${n ? `\n底下的 ${n} 項會變回「未指派」，樣品本身不會被刪除。` : ''}`)) return;
     await onSave({
       ...ex,
       zones: zones.filter(x => x.id !== z.id),
@@ -8294,106 +8317,151 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
     });
   };
 
+  // 海報稿件上傳
+  const uploadArtwork = async (z, fileList) => {
+    const files = Array.from(fileList || []).filter(f => (f.type || '').startsWith('image/'));
+    if (!files.length) { alert('海報稿請選圖片檔'); return; }
+    setArtUploading(z.id);
+    try {
+      const r = await uploadFileToStorage(files[0], () => {});
+      await updZone(z.id, { artwork: { url: r.url, path: r.path, name: r.name } });
+    } catch (e) {
+      alert(`上傳失敗：${e.message}`);
+    } finally { setArtUploading(null); }
+  };
+
   const unassigned = zoneItems('');
+  const cabinets = zones.filter(z => kindOf(z) === 'cabinet');
+  const posters = zones.filter(z => kindOf(z) === 'poster');
+
+  // 配置圖 + 標記（簡報模式與編輯模式共用）
+  const renderMap = (img, imgIdx, big = false) => (
+    <div key={imgIdx} className="relative inline-block max-w-full"
+      onPointerMove={(e) => {
+        if (!dragZone || !canEdit || big) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+        const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+        setDragZone(d => (d ? { ...d, x, y } : d));
+      }}
+      onPointerUp={() => {
+        if (!dragZone || big) return;
+        const d = dragZone;
+        setDragZone(null);
+        onSave({
+          ...ex,
+          zones: zones.map(z => z.id === d.id
+            ? { ...z, x: Math.round(d.x * 10) / 10, y: Math.round(d.y * 10) / 10, imgIdx }
+            : z),
+        });
+      }}
+      onPointerLeave={() => { if (!big) setDragZone(null); }}>
+      <StorageImage src={img.url || ''} path={img.path} alt=""
+        onClick={(e) => { if (!big) handleMapClick(e, imgIdx); }}
+        className={`max-w-full rounded border border-slate-200 select-none ${placingKind && !big ? 'cursor-crosshair ring-2 ring-violet-400' : ''}`} />
+      {zones.filter(z => (z.imgIdx ?? 0) === imgIdx && z.x != null).map((z) => {
+        const live = dragZone && dragZone.id === z.id ? dragZone : z;
+        const k = kindOf(z);
+        const n = zoneItems(z.id).length;
+        return (
+          <span key={z.id} className="absolute -translate-x-1/2 -translate-y-1/2 flex items-center gap-1"
+            style={{ left: `${live.x}%`, top: `${live.y}%`, touchAction: 'none' }}>
+            <span
+              title={`${z.name}${k === 'cabinet' ? `（${n} 項）` : ''}${canEdit && !big ? ' · 可拖曳移動' : ''}`}
+              onPointerDown={(e) => {
+                if (!canEdit || big) return;
+                e.preventDefault(); e.stopPropagation();
+                setDragZone({ id: z.id, x: z.x, y: z.y });
+              }}
+              className={`${big ? 'px-2 py-0.5 text-xs' : 'px-1.5 py-0.5 text-[10px]'} rounded-full font-bold text-white shadow select-none flex-shrink-0 ${
+                canEdit && !big ? 'cursor-grab active:cursor-grabbing' : ''
+              }`}
+              style={{ background: PIN[k], outline: dragZone?.id === z.id ? '2px solid #fff' : 'none' }}>
+              {zones.indexOf(z) + 1}
+            </span>
+            {/* 名稱直接標在圖上，報告時不用往下捲 */}
+            {showLabels && (
+              <span className={`${big ? 'text-[11px] px-1.5 py-0.5' : 'text-[9px] px-1 py-0.5'} rounded whitespace-nowrap shadow-sm select-none`}
+                style={{ background: 'rgba(255,255,255,0.92)', color: PIN[k], border: `1px solid ${PIN[k]}33` }}>
+                {z.name}
+                {k === 'poster' && z.size ? ` ${z.size}` : ''}
+                {k === 'cabinet' && n > 0 ? ` ·${n}` : ''}
+              </span>
+            )}
+          </span>
+        );
+      })}
+      {canEdit && !big && (
+        <button onClick={() => onSave({ ...ex, layoutImages: layouts.filter((_, i) => i !== imgIdx) })}
+          className="absolute top-1 right-1 w-5 h-5 rounded-full bg-white/90 border border-slate-200 text-slate-400 hover:text-rose-500 text-xs leading-none">×</button>
+      )}
+    </div>
+  );
 
   return (
     <div className="mb-3 border border-slate-200 rounded-lg overflow-hidden">
       <div className="px-3 py-2 bg-slate-50 flex items-center justify-between gap-2 flex-wrap">
         <span className="text-xs font-medium text-slate-700">🗺 攤位配置</span>
-        {canEdit && (
-          <div className="flex items-center gap-2">
-            {layouts.length > 0 && (
-              <button onClick={() => setPlacing(v => !v)}
-                className="text-[11px] px-2 py-0.5 rounded border transition"
-                style={placing
-                  ? { background: '#7c3aed', color: '#fff', borderColor: '#7c3aed' }
-                  : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
-                {placing ? '點圖上位置新增櫃位…（再按可取消）' : '＋ 在圖上點出櫃位'}
+        <div className="flex items-center gap-2 flex-wrap">
+          {layouts.length > 0 && (
+            <>
+              <label className="text-[11px] text-slate-500 flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={showLabels} onChange={e => setShowLabels(e.target.checked)} />
+                圖上顯示名稱
+              </label>
+              <button onClick={() => setPresenting(true)}
+                className="text-[11px] px-2 py-0.5 rounded border border-slate-300 text-slate-700 bg-white hover:bg-slate-100">
+                🖥 簡報模式
               </button>
-            )}
+            </>
+          )}
+          {canEdit && layouts.length > 0 && (
+            <>
+              <button onClick={() => setPlacingKind(k => k === 'cabinet' ? null : 'cabinet')}
+                className="text-[11px] px-2 py-0.5 rounded border transition"
+                style={placingKind === 'cabinet'
+                  ? { background: '#e11d48', color: '#fff', borderColor: '#e11d48' }
+                  : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+                {placingKind === 'cabinet' ? '點圖上位置…' : '＋ 櫃位'}
+              </button>
+              <button onClick={() => setPlacingKind(k => k === 'poster' ? null : 'poster')}
+                className="text-[11px] px-2 py-0.5 rounded border transition"
+                style={placingKind === 'poster'
+                  ? { background: '#2563eb', color: '#fff', borderColor: '#2563eb' }
+                  : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+                {placingKind === 'poster' ? '點圖上位置…' : '＋ 海報'}
+              </button>
+            </>
+          )}
+          {canEdit && (
             <label className="text-[11px] px-2 py-0.5 rounded border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 cursor-pointer">
               {uploading ? '上傳中…' : (layouts.length ? '＋ 加配置圖' : '⬆ 上傳配置圖')}
               <input type="file" accept="image/*" multiple className="hidden"
                 onChange={async e => { const fs = Array.from(e.target.files || []); e.target.value = ''; await addLayout(fs); }} />
             </label>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <div className="p-3 space-y-3">
         {layouts.length === 0 ? (
           <p className="text-[11px] text-slate-400 text-center py-4">
-            先上傳這次的攤位配置圖（平面圖或 3D 示意圖都行），再在圖上點出櫃位
+            先上傳這次的攤位配置圖（平面圖或 3D 示意圖都行），再在圖上點出櫃位與海報位置
           </p>
-        ) : (
-          layouts.map((img, imgIdx) => (
-            <div key={imgIdx} className="relative inline-block max-w-full"
-              // 拖曳標記：在容器上追蹤游標，放開才寫入資料庫
-              onPointerMove={(e) => {
-                if (!dragZone || !canEdit) return;
-                const rect = e.currentTarget.getBoundingClientRect();
-                const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-                const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
-                setDragZone(d => (d ? { ...d, x, y } : d));
-              }}
-              onPointerUp={() => {
-                if (!dragZone) return;
-                const d = dragZone;
-                setDragZone(null);
-                onSave({
-                  ...ex,
-                  zones: zones.map(z => z.id === d.id
-                    ? { ...z, x: Math.round(d.x * 10) / 10, y: Math.round(d.y * 10) / 10, imgIdx }
-                    : z),
-                });
-              }}
-              onPointerLeave={() => setDragZone(null)}>
-              <StorageImage src={img.url || ''} path={img.path} alt=""
-                onClick={(e) => handleMapClick(e, imgIdx)}
-                className={`max-w-full rounded border border-slate-200 select-none ${placing ? 'cursor-crosshair ring-2 ring-violet-400' : ''}`} />
-              {/* 櫃位標記：可直接拖曳調整位置 */}
-              {zones.filter(z => (z.imgIdx ?? 0) === imgIdx && z.x != null).map((z) => {
-                const live = dragZone && dragZone.id === z.id ? dragZone : z;
-                return (
-                  <span key={z.id}
-                    title={`${z.name}（${zoneItems(z.id).length} 項）${canEdit ? ' · 可拖曳移動' : ''}`}
-                    onPointerDown={(e) => {
-                      if (!canEdit) return;
-                      e.preventDefault(); e.stopPropagation();
-                      setDragZone({ id: z.id, x: z.x, y: z.y });
-                    }}
-                    className={`absolute -translate-x-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white shadow select-none ${
-                      canEdit ? 'cursor-grab active:cursor-grabbing' : ''
-                    }`}
-                    style={{
-                      left: `${live.x}%`, top: `${live.y}%`,
-                      background: '#e11d48',
-                      touchAction: 'none',
-                      outline: dragZone?.id === z.id ? '2px solid #fff' : 'none',
-                    }}>
-                    {zones.indexOf(z) + 1}
-                  </span>
-                );
-              })}
-              {canEdit && (
-                <button onClick={() => onSave({ ...ex, layoutImages: layouts.filter((_, i) => i !== imgIdx) })}
-                  className="absolute top-1 right-1 w-5 h-5 rounded-full bg-white/90 border border-slate-200 text-slate-400 hover:text-rose-500 text-xs leading-none">×</button>
-              )}
-            </div>
-          ))
-        )}
+        ) : layouts.map((img, i) => renderMap(img, i))}
 
-        {/* 各櫃位的照片牆＝數位版「擺出來」 */}
-        {zones.length > 0 && (
+        {/* 櫃位 */}
+        {cabinets.length > 0 && (
           <div className="space-y-2">
-            {zones.map((z, zi) => {
+            <p className="text-[11px] font-medium text-rose-600">📦 櫃位 · {cabinets.length}</p>
+            {cabinets.map((z) => {
               const list = zoneItems(z.id);
               const thumbs = itemThumbs(list);
               return (
                 <div key={z.id} className="border border-slate-100 rounded-lg p-2 bg-slate-50/40">
                   <div className="flex items-center gap-2 flex-wrap mb-1.5">
                     <span className="w-5 h-5 rounded-full text-[10px] font-bold text-white flex items-center justify-center flex-shrink-0"
-                      style={{ background: '#e11d48' }}>{zi + 1}</span>
+                      style={{ background: PIN.cabinet }}>{zones.indexOf(z) + 1}</span>
                     {canEdit ? (
                       <input defaultValue={z.name}
                         onBlur={e => { if (e.target.value !== z.name) updZone(z.id, { name: e.target.value }); }}
@@ -8408,14 +8476,13 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
                     ) : <span className="text-[11px] text-slate-600">{z.owner || '—'}</span>}
                     {canEdit && (
                       <span className="ml-auto flex items-center gap-2">
-                        {/* 直接在這一櫃加樣品，不用先加到最下面再一個個指派 */}
                         {onAddToZone && (
                           <button onClick={() => onAddToZone(z.id)}
                             className="text-[10px] px-2 py-0.5 rounded border border-violet-200 text-violet-600 bg-white hover:bg-violet-50">
                             ＋ 加入樣品到這一櫃
                           </button>
                         )}
-                        <button onClick={() => delZone(z)} className="text-[10px] text-slate-300 hover:text-rose-500">刪除櫃位</button>
+                        <button onClick={() => delZone(z)} className="text-[10px] text-slate-300 hover:text-rose-500">刪除</button>
                       </span>
                     )}
                   </div>
@@ -8434,7 +8501,7 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
                       ))}
                     </div>
                   ) : (
-                    <p className="text-[10px] text-slate-300">尚未指派樣品到這一櫃（在下方清單用「櫃位」選單指派）</p>
+                    <p className="text-[10px] text-slate-300">尚未指派樣品到這一櫃</p>
                   )}
                 </div>
               );
@@ -8444,7 +8511,113 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
             )}
           </div>
         )}
+
+        {/* 海報 */}
+        {posters.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[11px] font-medium text-blue-600">🖼 海報 · {posters.length}</p>
+            {posters.map((z) => (
+              <div key={z.id} className="border border-blue-100 rounded-lg p-2 bg-blue-50/30 flex gap-2">
+                <div className="w-16 h-20 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center flex-shrink-0">
+                  {z.artwork ? (
+                    <StorageImage src={z.artwork.url || ''} path={z.artwork.path} alt="" className="w-full h-full object-contain" />
+                  ) : <span className="text-slate-300 text-lg">🖼</span>}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <span className="w-5 h-5 rounded-full text-[10px] font-bold text-white flex items-center justify-center flex-shrink-0"
+                      style={{ background: PIN.poster }}>{zones.indexOf(z) + 1}</span>
+                    {canEdit ? (
+                      <input defaultValue={z.name}
+                        onBlur={e => { if (e.target.value !== z.name) updZone(z.id, { name: e.target.value }); }}
+                        className="text-xs font-medium text-slate-800 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5 w-32" />
+                    ) : <span className="text-xs font-medium text-slate-800">{z.name}</span>}
+                    <span className="text-[10px] text-slate-400">尺寸</span>
+                    {canEdit ? (
+                      <input defaultValue={z.size || ''} placeholder="90*120"
+                        onBlur={e => { if (e.target.value !== (z.size || '')) updZone(z.id, { size: e.target.value }); }}
+                        className="w-20 text-[11px] text-slate-600 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5" />
+                    ) : <span className="text-[11px] text-slate-600">{z.size || '—'}</span>}
+                    {canEdit && (
+                      <span className="ml-auto flex items-center gap-2">
+                        <label className="text-[10px] px-2 py-0.5 rounded border border-blue-200 text-blue-600 bg-white hover:bg-blue-50 cursor-pointer">
+                          {artUploading === z.id ? '上傳中…' : (z.artwork ? '換稿' : '⬆ 上傳海報稿')}
+                          <input type="file" accept="image/*" className="hidden"
+                            onChange={async e => { const fs = Array.from(e.target.files || []); e.target.value = ''; await uploadArtwork(z, fs); }} />
+                        </label>
+                        <button onClick={() => delZone(z)} className="text-[10px] text-slate-300 hover:text-rose-500">刪除</button>
+                      </span>
+                    )}
+                  </div>
+                  {canEdit ? (
+                    <textarea defaultValue={z.note || ''} rows={1}
+                      placeholder="海報內容／備註（例：老產品、Qi、HD、板子+磁吸）"
+                      onBlur={e => { if (e.target.value !== (z.note || '')) updZone(z.id, { note: e.target.value }); }}
+                      className="w-full text-[11px] text-slate-500 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5 resize-none leading-snug" />
+                  ) : (z.note && <p className="text-[11px] text-slate-500 whitespace-pre-line">{z.note}</p>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* 簡報模式：報告時用這個，圖大、名稱直接標在圖上，右側有對照清單 */}
+      {presenting && (
+        <div className="fixed inset-0 z-[80] bg-slate-900 flex flex-col" onClick={() => setPresenting(false)}>
+          <div className="flex items-center justify-between px-5 py-3 text-white flex-shrink-0">
+            <div>
+              <p className="text-base font-medium">{ex.name}</p>
+              <p className="text-[11px] text-slate-400">
+                {ex.date || ''} {ex.location ? `· ${ex.location}` : ''} · 櫃位 {cabinets.length} · 海報 {posters.length}
+              </p>
+            </div>
+            <button onClick={() => setPresenting(false)} className="text-slate-300 hover:text-white text-sm">關閉 ✕</button>
+          </div>
+          <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-3 px-5 pb-5 overflow-auto"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex-1 min-w-0 flex items-start justify-center">
+              <div className="bg-white rounded-lg p-2 max-w-full">
+                {layouts.map((img, i) => renderMap(img, i, true))}
+              </div>
+            </div>
+            <div className="w-full lg:w-72 flex-shrink-0 space-y-1.5 overflow-y-auto">
+              {zones.map((z) => {
+                const k = kindOf(z);
+                const list = zoneItems(z.id);
+                return (
+                  <div key={z.id} className="bg-white/95 rounded-lg p-2">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="w-5 h-5 rounded-full text-[10px] font-bold text-white flex items-center justify-center flex-shrink-0"
+                        style={{ background: PIN[k] }}>{zones.indexOf(z) + 1}</span>
+                      <span className="text-xs font-medium text-slate-800">{z.name}</span>
+                      {k === 'poster'
+                        ? <span className="text-[10px] text-blue-600">{z.size || '海報'}</span>
+                        : <span className="text-[10px] text-violet-600">{list.length} 項</span>}
+                      {z.owner && <span className="text-[10px] text-slate-400">· {z.owner}</span>}
+                    </div>
+                    {z.note && <p className="text-[10px] text-slate-500 mt-0.5 whitespace-pre-line">{z.note}</p>}
+                    {k === 'cabinet' && list.length > 0 && (
+                      <div className="flex gap-1 flex-wrap mt-1">
+                        {itemThumbs(list).map((m, i) => (
+                          <div key={i} className="w-9 h-9 bg-white border border-slate-200 rounded overflow-hidden">
+                            <SampleMediaThumb media={m} className="w-full h-full object-contain" />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {k === 'poster' && z.artwork && (
+                      <div className="w-16 h-20 bg-white border border-slate-200 rounded overflow-hidden mt-1">
+                        <StorageImage src={z.artwork.url || ''} path={z.artwork.path} alt="" className="w-full h-full object-contain" />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

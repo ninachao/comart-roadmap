@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.54.1';
-const BUILD_ID = '20260819-1130';
+const APP_VERSION = 'v1.55.0';
+const BUILD_ID = '20260819-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.55.0',
+    date: '2026-08-19',
+    changes: [
+      '➕ 每個櫃位可直接「加入樣品到這一櫃」：挑完就自動歸到該櫃位，不必先加到清單最下面再一項項指派',
+      '🖱 配置圖上的櫃位標記可直接拖曳移動位置，放開才儲存；不再固定死',
+      '🏷 挑選樣品時會標示「會直接放進櫃位『TS高櫃-上層』」，避免加錯地方',
+    ],
+  },
   {
     version: 'v1.54.1',
     date: '2026-08-19',
@@ -8222,9 +8231,10 @@ function listItemSampleUsage(it, samples = []) {
 // ===== 展覽：攤位配置 =====
 // 每場展的攤位都不一樣，所以先上傳這次的配置圖，再直接在圖上點出櫃位，
 // 樣品指派到櫃位後就能用「照片牆」預覽每一櫃會擺什麼——取代把實體樣品全部搬出來擺的做法
-function BoothLayoutSection({ ex, samples, canEdit, onSave }) {
+function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
   const [uploading, setUploading] = useState(false);
   const [placing, setPlacing] = useState(false); // 點圖新增櫃位模式
+  const [dragZone, setDragZone] = useState(null); // 正在拖曳的櫃位標記 id
   const zones = ex.zones || [];
   const layouts = ex.layoutImages || [];
   const items = ex.items || [];
@@ -8317,19 +8327,54 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave }) {
           </p>
         ) : (
           layouts.map((img, imgIdx) => (
-            <div key={imgIdx} className="relative inline-block max-w-full">
+            <div key={imgIdx} className="relative inline-block max-w-full"
+              // 拖曳標記：在容器上追蹤游標，放開才寫入資料庫
+              onPointerMove={(e) => {
+                if (!dragZone || !canEdit) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+                const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+                setDragZone(d => (d ? { ...d, x, y } : d));
+              }}
+              onPointerUp={() => {
+                if (!dragZone) return;
+                const d = dragZone;
+                setDragZone(null);
+                onSave({
+                  ...ex,
+                  zones: zones.map(z => z.id === d.id
+                    ? { ...z, x: Math.round(d.x * 10) / 10, y: Math.round(d.y * 10) / 10, imgIdx }
+                    : z),
+                });
+              }}
+              onPointerLeave={() => setDragZone(null)}>
               <StorageImage src={img.url || ''} path={img.path} alt=""
                 onClick={(e) => handleMapClick(e, imgIdx)}
-                className={`max-w-full rounded border border-slate-200 ${placing ? 'cursor-crosshair ring-2 ring-violet-400' : ''}`} />
-              {/* 櫃位標記 */}
-              {zones.filter(z => (z.imgIdx ?? 0) === imgIdx && z.x != null).map((z, zi) => (
-                <span key={z.id}
-                  title={`${z.name}（${zoneItems(z.id).length} 項）`}
-                  className="absolute -translate-x-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white shadow"
-                  style={{ left: `${z.x}%`, top: `${z.y}%`, background: '#e11d48' }}>
-                  {zones.indexOf(z) + 1}
-                </span>
-              ))}
+                className={`max-w-full rounded border border-slate-200 select-none ${placing ? 'cursor-crosshair ring-2 ring-violet-400' : ''}`} />
+              {/* 櫃位標記：可直接拖曳調整位置 */}
+              {zones.filter(z => (z.imgIdx ?? 0) === imgIdx && z.x != null).map((z) => {
+                const live = dragZone && dragZone.id === z.id ? dragZone : z;
+                return (
+                  <span key={z.id}
+                    title={`${z.name}（${zoneItems(z.id).length} 項）${canEdit ? ' · 可拖曳移動' : ''}`}
+                    onPointerDown={(e) => {
+                      if (!canEdit) return;
+                      e.preventDefault(); e.stopPropagation();
+                      setDragZone({ id: z.id, x: z.x, y: z.y });
+                    }}
+                    className={`absolute -translate-x-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white shadow select-none ${
+                      canEdit ? 'cursor-grab active:cursor-grabbing' : ''
+                    }`}
+                    style={{
+                      left: `${live.x}%`, top: `${live.y}%`,
+                      background: '#e11d48',
+                      touchAction: 'none',
+                      outline: dragZone?.id === z.id ? '2px solid #fff' : 'none',
+                    }}>
+                    {zones.indexOf(z) + 1}
+                  </span>
+                );
+              })}
               {canEdit && (
                 <button onClick={() => onSave({ ...ex, layoutImages: layouts.filter((_, i) => i !== imgIdx) })}
                   className="absolute top-1 right-1 w-5 h-5 rounded-full bg-white/90 border border-slate-200 text-slate-400 hover:text-rose-500 text-xs leading-none">×</button>
@@ -8362,7 +8407,16 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave }) {
                         className="w-16 text-[11px] text-slate-600 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5" />
                     ) : <span className="text-[11px] text-slate-600">{z.owner || '—'}</span>}
                     {canEdit && (
-                      <button onClick={() => delZone(z)} className="ml-auto text-[10px] text-slate-300 hover:text-rose-500">刪除櫃位</button>
+                      <span className="ml-auto flex items-center gap-2">
+                        {/* 直接在這一櫃加樣品，不用先加到最下面再一個個指派 */}
+                        {onAddToZone && (
+                          <button onClick={() => onAddToZone(z.id)}
+                            className="text-[10px] px-2 py-0.5 rounded border border-violet-200 text-violet-600 bg-white hover:bg-violet-50">
+                            ＋ 加入樣品到這一櫃
+                          </button>
+                        )}
+                        <button onClick={() => delZone(z)} className="text-[10px] text-slate-300 hover:text-rose-500">刪除櫃位</button>
+                      </span>
                     )}
                   </div>
                   {canEdit ? (
@@ -10859,6 +10913,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [editingExhibition, setEditingExhibition] = useState(null); // 編輯/新增展覽
   const [openExhibitionId, setOpenExhibitionId] = useState(null);    // 展開的展覽
   const [addingSamplesToExId, setAddingSamplesToExId] = useState(null); // 正在加散件的展覽
+  const [addingToZoneId, setAddingToZoneId] = useState('');            // 要直接加到哪個櫃位（空=不指定）
   const [addingBundleToExId, setAddingBundleToExId] = useState(null);   // 正在建組合品的展覽
 
   const locationOptions = useMemo(() => [...new Set(samples.map(s => s.location).filter(Boolean))], [samples]);
@@ -11000,12 +11055,13 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     const existingIds = new Set(existing.filter(it => it.type !== 'bundle').map(it => it.sampleId));
     const newItems = sampleIds
       .filter(sid => !existingIds.has(sid))
-      .map(sid => ({ type: 'single', sampleId: sid, qty: 1, packStatus: '待準備' }));
+      .map(sid => ({ type: 'single', sampleId: sid, qty: 1, packStatus: '待準備', zoneId: addingToZoneId || '' }));
     const updated = { ...ex, items: [...existing, ...newItems] };
     const cleaned = {};
     Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
     await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
     setAddingSamplesToExId(null);
+    setAddingToZoneId('');
   };
 
   // 加入組合品
@@ -11490,6 +11546,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                             samples={samplesWithRemaining}
                             canEdit={canEdit}
                             onSave={handleSaveExhibition}
+                            onAddToZone={(zoneId) => { setAddingToZoneId(zoneId); setAddingSamplesToExId(ex.id); }}
                           />
                           {items.length === 0 ? (
                             <p className="text-xs text-slate-400 py-3 text-center">尚未加入樣品或組合品</p>
@@ -12825,8 +12882,13 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
           <AddSamplesToExhibitionModal
             exhibition={exhibitions.find(e => e.id === addingSamplesToExId)}
             samples={samplesWithRemaining}
+            targetZoneName={(() => {
+              const ex = exhibitions.find(e => e.id === addingSamplesToExId);
+              const z = (ex?.zones || []).find(z => z.id === addingToZoneId);
+              return z ? z.name : '';
+            })()}
             onConfirm={(sampleIds) => handleAddSamplesToExhibition(addingSamplesToExId, sampleIds)}
-            onClose={() => setAddingSamplesToExId(null)}
+            onClose={() => { setAddingSamplesToExId(null); setAddingToZoneId(''); }}
           />
         )}
 
@@ -12966,7 +13028,7 @@ function ExhibitionEditModal({ exhibition, onSave, onClose }) {
 }
 
 // === 加樣品到展覽 Modal ===
-function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose }) {
+function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, targetZoneName = '' }) {
   const [selected, setSelected] = useState(new Set());
   const [search, setSearch] = useState('');
 
@@ -12993,7 +13055,12 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose }
     <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/70 z-[60] flex items-start sm:items-center justify-center p-3 overflow-y-auto">
       <div className="bg-white rounded-xl max-w-md w-full p-4 my-auto max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-base font-medium">加入樣品到「{exhibition?.name}」</h3>
+          <div>
+            <h3 className="text-base font-medium">加入樣品到「{exhibition?.name}」</h3>
+            {targetZoneName && (
+              <p className="text-[11px] text-violet-600 mt-0.5">會直接放進櫃位「{targetZoneName}」</p>
+            )}
+          </div>
           <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
             <X className="w-5 h-5 text-slate-500" />
           </button>

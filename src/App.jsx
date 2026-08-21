@@ -49,10 +49,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.58.0';
-const BUILD_ID = '20260820-1500';
+const APP_VERSION = 'v1.59.0';
+const BUILD_ID = '20260821-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.59.0',
+    date: '2026-08-21',
+    changes: [
+      '🧪 樣品類型新增「試產樣」',
+      '📋 「手板訂單」改為「請購／訂單資訊」，且所有類型都能填（原本只有「手板」看得到，所以請工程做試產樣時無處記錄單號）',
+      '　· 欄位改名為「請購單號／訂單編號」「樣品料號（工廠端）」，並新增「預計交期」',
+      '🚚 未到貨的樣品不再虛報庫存：狀態為「已下單」「生產中」時顯示「在途 N（尚未到貨，不列入可用）」，改為「已收到」才計入可用庫存；「已取消」不計',
+      '　· 狀態空白視為已收到，既有 180 筆樣品的數字完全不受影響',
+    ],
+  },
   {
     version: 'v1.58.0',
     date: '2026-08-20',
@@ -7960,8 +7971,8 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly, custom
     const reservedMap = computeReservedMap(customerLists, samples);
     return samples.filter(s => s.relatedProjectId === project.id)
       .map(s => {
-        const { remaining, effectiveTotal, reserved } = computeRemaining(s, withdrawals, reservedMap.get(s.id) || 0);
-        return { ...s, _remaining: remaining, _effectiveTotal: effectiveTotal, _reserved: reserved };
+        const { remaining, effectiveTotal, reserved, inTransit, notReceived } = computeRemaining(s, withdrawals, reservedMap.get(s.id) || 0);
+        return { ...s, _remaining: remaining, _effectiveTotal: effectiveTotal, _reserved: reserved, _inTransit: inTransit, _notReceived: notReceived };
       })
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   }, [samples, withdrawals, project.id, customerLists]);
@@ -8096,10 +8107,18 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly, custom
                     </div>
                   </div>
                   <div className="flex items-baseline gap-3 mb-0.5 text-xs">
-                    <span className="font-medium">
-                      剩餘 <span className={`${isOut ? 'text-rose-600' : s._remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}`}>{s._remaining}</span>
-                      <span className="text-slate-400"> / {s._effectiveTotal ?? s.initialQuantity ?? 0}</span>
-                    </span>
+                    {/* 還沒到貨的顯示「在途」，避免跟「庫存 0」混淆 */}
+                    {s._notReceived ? (
+                      <span className="font-medium text-blue-600">
+                        在途 {s._inTransit || s.initialQuantity || 0}
+                        <span className="text-slate-400 font-normal">（尚未到貨，不列入可用）</span>
+                      </span>
+                    ) : (
+                      <span className="font-medium">
+                        剩餘 <span className={`${isOut ? 'text-rose-600' : s._remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}`}>{s._remaining}</span>
+                        <span className="text-slate-400"> / {s._effectiveTotal ?? s.initialQuantity ?? 0}</span>
+                      </span>
+                    )}
                     {s.location && <span className="text-emerald-700">📍 {s.location}</span>}
                   </div>
                   <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-2 items-center">
@@ -8164,7 +8183,7 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly, custom
 
 // ============= 樣品庫 Modal =============
 // 統合所有樣品（手板、量產樣、外購品、不知名、其他）+ 領用紀錄
-const SAMPLE_TYPES = ['手板', 'T1', 'T2', 'T3', 'T4', '量產樣', '外購品', '不知名', '其他'];
+const SAMPLE_TYPES = ['手板', 'T1', 'T2', 'T3', 'T4', '試產樣', '量產樣', '外購品', '不知名', '其他'];
 const SAMPLE_STATUS = ['已收到', '已下單', '生產中', '已取消'];
 const SAMPLE_STATUS_COLORS = {
   '已收到': 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -8178,6 +8197,7 @@ const SAMPLE_TYPE_COLORS = {
   'T2': 'bg-yellow-50 text-yellow-700 border-yellow-200',
   'T3': 'bg-lime-50 text-lime-700 border-lime-200',
   'T4': 'bg-teal-50 text-teal-700 border-teal-200',
+  '試產樣': 'bg-cyan-50 text-cyan-700 border-cyan-200',
   '量產樣': 'bg-emerald-50 text-emerald-700 border-emerald-200',
   '外購品': 'bg-blue-50 text-blue-700 border-blue-200',
   '不知名': 'bg-slate-50 text-slate-600 border-slate-200',
@@ -8734,6 +8754,17 @@ function computeReservedMap(customerLists, samples = []) {
 }
 
 function computeRemaining(sample, withdrawalsList, reservedQty = 0) {
+  // 還沒到貨的樣品不能算進可用庫存，否則會虛報（狀態空白視為已收到，相容舊資料）
+  const st = sample.status || '已收到';
+  if (st === '已取消') {
+    return { remaining: 0, effectiveTotal: 0, reserved: 0, inTransit: 0, notReceived: true };
+  }
+  if (st === '已下單' || st === '生產中') {
+    return {
+      remaining: 0, effectiveTotal: 0, reserved: 0,
+      inTransit: Number(sample.initialQuantity || 0), notReceived: true,
+    };
+  }
   const sampleWithdrawals = withdrawalsList.filter(w => w.sampleId === sample.id);
 
   // 不歸還的：永久消耗，從總數扣
@@ -8750,7 +8781,7 @@ function computeRemaining(sample, withdrawalsList, reservedQty = 0) {
   // 剩餘 = 總數 − 在外未歸還 − 客戶清單預留
   const remaining = Math.max(0, effectiveTotal - outQty - (Number(reservedQty) || 0));
 
-  return { remaining, effectiveTotal, reserved: Number(reservedQty) || 0 };
+  return { remaining, effectiveTotal, reserved: Number(reservedQty) || 0, inTransit: 0, notReceived: false };
 }
 
 // 樣品列表元件（可獨立使用，供分組和不分組共用）
@@ -11178,12 +11209,14 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       const relatedProj = s.relatedProjectId
         ? projects.find(p => String(p.id) === String(s.relatedProjectId))
         : null;
-      const { remaining, effectiveTotal, reserved } = computeRemaining(s, withdrawals, reservedMap.get(s.id) || 0);
+      const { remaining, effectiveTotal, reserved, inTransit, notReceived } = computeRemaining(s, withdrawals, reservedMap.get(s.id) || 0);
       return {
         ...s,
         _remaining: remaining,
         _effectiveTotal: effectiveTotal,
         _reserved: reserved,
+        _inTransit: inTransit,
+        _notReceived: notReceived,
         // 優先用樣品自己填的名稱；沒填或和產品名一樣才用產品名
         _displayName: (s.name && s.name.trim()) ? s.name : (relatedProj ? relatedProj.name : s.name),
         _displayCode: relatedProj ? (relatedProj.code || '') : (s.relatedProjectCode || ''),
@@ -14094,13 +14127,13 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
             );
           })()}
 
-          {/* 手板訂單欄位：只有「手板」類型才出現 */}
-          {data.type === '手板' && (
+          {/* 請購／訂單資訊：所有類型都可能要向工程或工廠下單（手板、試產樣、T1~T4…） */}
+          {data.type !== '不知名' && (
             <div className="bg-amber-50/50 border border-amber-200 rounded-lg p-3 space-y-2">
-              <p className="text-xs text-amber-800 font-medium">📋 手板訂單（台北向工程下單時填寫，工程直接提供可略）</p>
+              <p className="text-xs text-amber-800 font-medium">📋 請購／訂單資訊（向工程或工廠下單時填寫，對方直接提供可略）</p>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[10px] text-slate-500 mb-0.5">訂單編號</label>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">請購單號／訂單編號</label>
                   <input
                     type="text"
                     value={data.orderNo}
@@ -14142,7 +14175,6 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                     <option value="USD">USD</option>
                     <option value="CNY">CNY</option>
                     <option value="VND">VND</option>
-                    <option value="VND">VND</option>
                   </select>
                 </div>
                 <div>
@@ -14155,7 +14187,7 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                 </div>
               </div>
               <div>
-                <label className="block text-[10px] text-slate-500 mb-0.5">手板料號</label>
+                <label className="block text-[10px] text-slate-500 mb-0.5">樣品料號（工廠端）</label>
                 <input
                   type="text"
                   value={data.partNo}
@@ -14171,6 +14203,15 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                   value={data.supplier}
                   onChange={(e) => setData(prev => ({ ...prev, supplier: e.target.value }))}
                   placeholder="恆群、新益..."
+                  className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-500 mb-0.5">預計交期</label>
+                <input
+                  type="date"
+                  value={data.etaDate || ''}
+                  onChange={(e) => setData(prev => ({ ...prev, etaDate: e.target.value }))}
                   className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
                 />
               </div>

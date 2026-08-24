@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.67.1';
-const BUILD_ID = '20260825-0010';
+const APP_VERSION = 'v1.68.0';
+const BUILD_ID = '20260825-0100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.68.0',
+    date: '2026-08-25',
+    changes: [
+      '🕐 EVT 與 PVT 的登記面板都新增「待確認」：知道要做但時間還沒定，可以先記下來',
+      '　· 徽章顯示「EVT · 手板 待確認」「PVT · T2 待確認」，試模區塊顯示「時間待確認」',
+      '　· 待確認不會被算成逾期，也不會出現在提醒面板的試模逾期清單',
+    ],
+  },
   {
     version: 'v1.67.1',
     date: '2026-08-25',
@@ -4119,12 +4128,20 @@ function computeAutoPhase(project) {
 // 只填預計日 → 還沒跑；填了完成日 → 已完成；預計日過了還沒完成日 → 逾期。
 const TRIAL_TODAY = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
 function trialRunState(r) {
-  if (r?.date) return 'done';
+  if (r?.date && r.date !== DATE_TBD) return 'done';
+  if (r?.plannedDate === DATE_TBD) return 'planned';   // 日期未定，不該被算成逾期
   if (r?.plannedDate) {
     const p = new Date(r.plannedDate); p.setHours(0, 0, 0, 0);
     return p < TRIAL_TODAY() ? 'overdue' : 'planned';
   }
   return 'todo';
+}
+// 「時間還沒定」也是一種有意義的狀態：知道要做、但日期未定。
+// 用一個哨兵值存，這樣它既不會被當成逾期，也不會假裝有日期。
+const DATE_TBD = 'TBD';
+function trialDateText(v) {
+  if (v === DATE_TBD) return '待確認';
+  return trialShortDate(v);
 }
 function trialShortDate(s) {
   const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -4213,6 +4230,7 @@ function getPhaseDetail(project) {
       const next = trials.find(r => trialRunState(r) === 'overdue')
         || trials.find(r => trialRunState(r) === 'planned');
       if (next) {
+        if (next.plannedDate === DATE_TBD) return `${next.round} 時間待確認`;
         const d = trialShortDate(next.plannedDate);
         return trialRunState(next) === 'overdue'
           ? `${next.round} 逾期${d ? ` ${d}` : ''}`
@@ -4244,19 +4262,28 @@ function QuickTrialPopover({ runs, onSave, onClose }) {
   const initial = TRIAL_ROUNDS.find(r => { const e = existing(r); return !e || !e.date; }) || 'T4';
   const [round, setRound] = useState(initial);
   const cur = existing(round);
-  const [kind, setKind] = useState(cur?.date ? 'done' : 'planned');
-  const [date, setDate] = useState(cur?.date || cur?.plannedDate || new Date().toISOString().split('T')[0]);
+  const kindOf = (e) => e?.date && e.date !== DATE_TBD ? 'done' : (e?.plannedDate === DATE_TBD ? 'tbd' : 'planned');
+  const [kind, setKind] = useState(kindOf(cur));
+  const [date, setDate] = useState(
+    (cur?.date && cur.date !== DATE_TBD) ? cur.date
+      : (cur?.plannedDate && cur.plannedDate !== DATE_TBD) ? cur.plannedDate
+        : new Date().toISOString().split('T')[0]
+  );
 
   // 切換輪次時，把該輪已有的資料帶出來
   const pickRound = (r) => {
     setRound(r);
     const e = existing(r);
-    setKind(e?.date ? 'done' : 'planned');
-    setDate(e?.date || e?.plannedDate || new Date().toISOString().split('T')[0]);
+    setKind(kindOf(e));
+    setDate((e?.date && e.date !== DATE_TBD) ? e.date
+      : (e?.plannedDate && e.plannedDate !== DATE_TBD) ? e.plannedDate
+        : new Date().toISOString().split('T')[0]);
   };
 
   const save = () => {
-    const patch = kind === 'done' ? { date, plannedDate: cur?.plannedDate || '' } : { plannedDate: date, date: '' };
+    const patch = kind === 'tbd' ? { plannedDate: DATE_TBD, date: '' }
+      : kind === 'done' ? { date, plannedDate: cur?.plannedDate === DATE_TBD ? '' : (cur?.plannedDate || '') }
+        : { plannedDate: date, date: '' };
     const list = existing(round)
       ? runs.map(r => r.round === round ? { ...r, ...patch } : r)
       : [...runs, { round, issues: '', ...patch }];
@@ -4292,7 +4319,7 @@ function QuickTrialPopover({ runs, onSave, onClose }) {
       </div>
 
       <div className="flex gap-1 mb-1.5">
-        {[['planned', '預計'], ['done', '已完成']].map(([k, label]) => (
+        {[['planned', '預計'], ['done', '已完成'], ['tbd', '待確認']].map(([k, label]) => (
           <button key={k} onClick={() => setKind(k)}
             className={`flex-1 text-[11px] py-1 rounded border ${
               kind === k ? 'bg-slate-100 text-slate-800 border-slate-300 font-medium'
@@ -4303,8 +4330,14 @@ function QuickTrialPopover({ runs, onSave, onClose }) {
         ))}
       </div>
 
-      <input type="date" value={date} onChange={e => setDate(e.target.value)}
-        className="w-full px-2 py-1 text-xs border border-slate-200 rounded mb-2" />
+      {kind === 'tbd' ? (
+        <p className="text-[11px] text-slate-400 mb-2 leading-snug">
+          先記下這一輪要做、時間還沒定。不會被算成逾期。
+        </p>
+      ) : (
+        <input type="date" value={date} onChange={e => setDate(e.target.value)}
+          className="w-full px-2 py-1 text-xs border border-slate-200 rounded mb-2" />
+      )}
 
       <div className="flex gap-1.5">
         <button onClick={save}
@@ -4321,7 +4354,8 @@ function QuickTrialPopover({ runs, onSave, onClose }) {
 
 // EVT 的快速登記：只記「下批手板完成時間」一個日期，其餘細節留在產品頁的手板訂單裡
 function QuickProtoPopover({ value, onSave, onClose }) {
-  const [date, setDate] = useState(value || new Date().toISOString().split('T')[0]);
+  const [tbd, setTbd] = useState(value === DATE_TBD);
+  const [date, setDate] = useState(value && value !== DATE_TBD ? value : new Date().toISOString().split('T')[0]);
   return (
     <div onClick={(e) => e.stopPropagation()}
       className="absolute right-0 -top-1 z-30 w-60 rounded-xl border border-slate-200 bg-white shadow-xl p-2.5 text-left">
@@ -4329,10 +4363,25 @@ function QuickProtoPopover({ value, onSave, onClose }) {
         <span className="text-[11px] font-medium text-slate-600">下批手板完成時間</span>
         <button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-xs leading-none">✕</button>
       </div>
-      <input type="date" value={date} onChange={e => setDate(e.target.value)}
-        className="w-full px-2 py-1 text-xs border border-slate-200 rounded mb-2" />
+      <div className="flex gap-1 mb-1.5">
+        {[[false, '指定日期'], [true, '待確認']].map(([v, label]) => (
+          <button key={String(v)} onClick={() => setTbd(v)}
+            className={`flex-1 text-[11px] py-1 rounded border ${
+              tbd === v ? 'bg-slate-100 text-slate-800 border-slate-300 font-medium'
+                        : 'bg-white text-slate-400 border-slate-200'
+            }`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {tbd ? (
+        <p className="text-[11px] text-slate-400 mb-2 leading-snug">工程還沒回覆時間，先標記為待確認。</p>
+      ) : (
+        <input type="date" value={date} onChange={e => setDate(e.target.value)}
+          className="w-full px-2 py-1 text-xs border border-slate-200 rounded mb-2" />
+      )}
       <div className="flex gap-1.5">
-        <button onClick={() => onSave(date)}
+        <button onClick={() => onSave(tbd ? DATE_TBD : date)}
           className="flex-1 text-[11px] py-1.5 rounded bg-slate-900 text-white hover:bg-slate-800">儲存</button>
         {value && (
           <button onClick={() => onSave('')}
@@ -4353,7 +4402,7 @@ function TrialTrack({ runs = [], className = '' }) {
       {TRIAL_ROUNDS.map((round, i) => {
         const r = byRound[round];
         const st = r ? trialRunState(r) : 'none';
-        const d = st === 'done' ? trialShortDate(r.date) : trialShortDate(r?.plannedDate);
+        const d = st === 'done' ? trialDateText(r.date) : trialDateText(r?.plannedDate);
         const style = {
           done:    'bg-emerald-50 text-emerald-700 border-emerald-200',
           planned: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -4394,13 +4443,13 @@ function ProjectRow({ project, onClick, onQuickTrial, onQuickProto, draggable = 
       const runs = project.trialRuns || [];
       if (!runs.length) return '';
       const next = runs.find(r => trialRunState(r) === 'overdue') || runs.find(r => trialRunState(r) === 'planned');
-      if (next) return `${next.round} ${trialShortDate(next.plannedDate)}`.trim();
+      if (next) return `${next.round} ${trialDateText(next.plannedDate)}`.trim();
       const done = runs.filter(r => trialRunState(r) === 'done');
-      if (done.length) { const l = done[done.length - 1]; return `${l.round} ${trialShortDate(l.date)}`.trim(); }
+      if (done.length) { const l = done[done.length - 1]; return `${l.round} ${trialDateText(l.date)}`.trim(); }
       return runs[runs.length - 1].round;
     }
     if (currentPhase === 'EVT') {
-      return project.nextProtoDate ? `手板 ${trialShortDate(project.nextProtoDate)}` : '';
+      return project.nextProtoDate ? `手板 ${trialDateText(project.nextProtoDate)}` : '';
     }
     return '';
   })();
@@ -16929,7 +16978,7 @@ function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes, defa
   const badgeText = overdueRuns.length
     ? `${overdueRuns[0].round} 逾期`
     : nextRun
-      ? `${nextRun.round} 預計 ${trialShortDate(nextRun.plannedDate)}`
+      ? `${nextRun.round} ${nextRun.plannedDate === DATE_TBD ? '時間待確認' : `預計 ${trialShortDate(nextRun.plannedDate)}`}`
       : latestRound ? `已到 ${latestRound}` : '未開始';
 
   const handleAdd = () => {
@@ -16990,16 +17039,18 @@ function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes, defa
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <div className="flex items-baseline gap-2 flex-wrap">
                     <span className="text-sm font-medium text-emerald-700">{r.round}</span>
-                    {r.plannedDate && (
+                    {r.plannedDate === DATE_TBD ? (
+                      <span className="text-xs text-slate-500">時間待確認</span>
+                    ) : r.plannedDate ? (
                       <span className="text-xs text-slate-500 tabular-nums">預計 {r.plannedDate}</span>
-                    )}
-                    {r.date && (
+                    ) : null}
+                    {r.date && r.date !== DATE_TBD && (
                       <span className="text-xs text-emerald-700 tabular-nums">完成 {r.date}</span>
                     )}
                     {(() => {
                       const st = trialRunState(r);
                       if (st === 'overdue') return <span className="text-[10px] px-1.5 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-300">逾期未完成</span>;
-                      if (st === 'planned') return <span className="text-[10px] px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">尚未進行</span>;
+                      if (st === 'planned') return <span className="text-[10px] px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">{r.plannedDate === DATE_TBD ? '待排期' : '尚未進行'}</span>;
                       if (st === 'todo') return <span className="text-[10px] px-1.5 py-0.5 rounded border bg-slate-50 text-slate-500 border-slate-200">未排日期</span>;
                       return null;
                     })()}
@@ -17098,7 +17149,7 @@ function TrialRunForm({ data, availableRounds, onChange, onCancel, onSave }) {
               <label className="block text-xs text-slate-600 mb-1">預計試模日</label>
               <input
                 type="date"
-                value={data.plannedDate || ''}
+                value={data.plannedDate === DATE_TBD ? '' : (data.plannedDate || '')}
                 onChange={(e) => onChange({ ...data, plannedDate: e.target.value })}
                 className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
               />

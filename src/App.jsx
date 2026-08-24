@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.59.0';
-const BUILD_ID = '20260821-1000';
+const APP_VERSION = 'v1.59.1';
+const BUILD_ID = '20260821-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.59.1',
+    date: '2026-08-21',
+    changes: [
+      '⚠ 新增「標題與標籤不符」警示：版本與最新版是依「標籤」判斷，不是看標題文字。若標題寫 3D_V8 但標籤是 ID／V7，列表會直接標出並可點擊修正',
+      '　· 這正是「明明標題是 V8，V7 卻顯示最新版」的原因——兩筆文件的類型標籤其實分屬 3D 與 ID，各自都是自己類型裡最新的',
+      '💬 最新版／待更新／舊版徽章的說明改為明確指出是在哪個文件類型裡比較，且註明依標籤判斷',
+    ],
+  },
   {
     version: 'v1.59.0',
     date: '2026-08-21',
@@ -9169,6 +9178,28 @@ const REF_DIMS = [
   { key: 'tags', label: '關鍵字', color: '#64748b', bg: '#f1f5f9', ph: '例：黑色、折疊、供 2025 展會' },
 ];
 
+// 檢查「標題寫的」和「標籤設定的」有沒有打架
+// 版本徽章是依標籤計算的，但人是看標題判斷；兩邊不一致就會出現「明明是 V8 卻顯示最新版在 V7」這種困惑
+function titleTagMismatch(it, natures = []) {
+  const title = String(it.title || '');
+  const typeTag = (it.natures || [])[0] || '';
+  const verTag = (it.versions || [])[0] || '';
+  const issues = [];
+  const typeInTitle = title.split('_').map(x => x.trim()).find(x => natures.includes(x));
+  if (typeInTitle && typeTag && typeInTitle !== typeTag) {
+    issues.push(`標題寫「${typeInTitle}」，但文件類型標籤是「${typeTag}」`);
+  }
+  const mT = title.match(/V\s*(\d+)/i);
+  const mG = String(verTag).match(/V\s*(\d+)/i);
+  if (mT && mG && mT[1] !== mG[1]) {
+    issues.push(`標題寫「V${mT[1]}」，但版本標籤是「${verTag}」`);
+  }
+  if (mT && !verTag) {
+    issues.push(`標題寫「V${mT[1]}」，但沒有設定版本標籤`);
+  }
+  return issues;
+}
+
 // 讀取某維度的值（相容舊資料）
 function refDimVals(it, key) { return it[key] || []; }
 
@@ -9862,10 +9893,25 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               }`}
               title={it.title}>{it.title}</button>
             {/* 讓不熟狀況的人一眼知道該用哪一份 */}
+            {/* 標題與標籤打架時明確警告：徽章是依標籤算的，不一致就會看起來矛盾 */}
+            {(() => {
+              const issues = titleTagMismatch(it, REF_DIM_PRESETS.natures);
+              if (!issues.length) return null;
+              return (
+                <button onClick={() => startEdit(it)}
+                  title={`${issues.join('\n')}\n\n（版本／最新版是依「標籤」判斷，不是看標題文字。點此修正）`}
+                  className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 inline-flex items-center gap-1"
+                  style={{ background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>
+                  ⚠ 標題與標籤不符
+                </button>
+              );
+            })()}
             {vs?.state === 'current' && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 inline-flex items-center gap-1"
                 style={{ background: '#fff1f2', color: '#e11d48', border: '1px solid #fecdd3' }}
-                title={vs.pinned ? '已手動指定為最新版' : '目前最新、且已跟上產品版本'}>
+                title={vs.pinned
+                  ? '已手動指定為最新版'
+                  : `在「${(it.natures || [])[0] || '未分類'}」這個文件類型裡最新，且已跟上產品版本（依標籤判斷，不是看標題文字）`}>
                 <span className="blink-dot inline-block w-1.5 h-1.5 rounded-full" style={{ background: '#f43f5e' }} />
                 最新版{vs.pinned ? '·已指定' : ''}
               </span>
@@ -9873,7 +9919,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
             {vs?.state === 'stale' && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 inline-flex items-center gap-1"
                 style={{ background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' }}
-                title={`這是此類型最新的一份，但產品已進到 V${vs.productMax}，這份還在 V${vs.myNum}，尚未跟上`}>
+                title={`這是「${(it.natures || [])[0] || '未分類'}」類型最新的一份，但產品已進到 V${vs.productMax}，這份還在 V${vs.myNum}，尚未跟上（依標籤判斷）`}>
                 待更新
                 {vs.productMax != null && vs.myNum != null && (
                   <span className="opacity-55 tabular-nums">V{vs.myNum}→V{vs.productMax}</span>
@@ -9882,6 +9928,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
             )}
             {vs?.state === 'old' && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0"
+                title={`「${(it.natures || [])[0] || '未分類'}」類型裡已有更新的版本（依標籤判斷）`}
                 style={{ background: '#f8fafc', color: '#94a3b8', border: '1px solid #f1f5f9' }}>舊版</span>
             )}
           </div>

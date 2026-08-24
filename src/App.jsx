@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.66.1';
-const BUILD_ID = '20260824-2300';
+const APP_VERSION = 'v1.67.0';
+const BUILD_ID = '20260824-2340';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.67.0',
+    date: '2026-08-24',
+    changes: [
+      '⚡ EVT 徽章也能點開登記：填手板的「預計到手」或「已收到」日期，徽章會顯示「EVT · 手板 9/15」',
+      '　· 有多筆手板訂單時先選是哪一筆；填了收到日會同步把該筆狀態改為「已收到」',
+      '　· 規劃／DVT／MP 仍不會跳出面板（沒有對應的時間節點可登記）',
+    ],
+  },
   {
     version: 'v1.66.1',
     date: '2026-08-24',
@@ -3724,6 +3733,7 @@ export default function ProductRoadmap() {
                           project={p}
                           onClick={() => setSelectedProject(p)}
                           onQuickTrial={isAdmin ? (runs) => handleUpdateProjectField(p.id, 'trialRuns', runs) : null}
+                          onQuickProto={isAdmin ? (orders) => handleUpdateProjectField(p.id, 'prototypeOrders', orders) : null}
                           draggable={isAdmin && groupMode === 'none'}
                           isDragging={dragProjectId === p.id}
                           isDropTarget={dropTargetId === p.id && dragProjectId !== p.id}
@@ -4112,6 +4122,19 @@ function trialShortDate(s) {
   const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${Number(m[2])}/${Number(m[3])}` : '';
 }
+// 手板訂單：etaDate = 預計到手日，receivedDate = 實際收到日（沿用原本的 status 欄位）
+function protoOrderState(o) {
+  if (o?.receivedDate || o?.status === '已收到') return 'done';
+  if (o?.etaDate) {
+    const p = new Date(o.etaDate); p.setHours(0, 0, 0, 0);
+    return p < TRIAL_TODAY() ? 'overdue' : 'planned';
+  }
+  return 'todo';
+}
+function protoOrderLabel(o, i) {
+  return o?.partNo || o?.orderNo || `手板 ${i + 1}`;
+}
+
 // 這個產品所有已逾期的試模輪次
 function overdueTrialRuns(project) {
   return (project.trialRuns || []).filter(r => trialRunState(r) === 'overdue');
@@ -4301,6 +4324,76 @@ function QuickTrialPopover({ runs, onSave, onClose }) {
   );
 }
 
+// EVT 的快速登記：手板什麼時候會到／什麼時候收到。
+// 一張卡片可能有多筆手板訂單，所以先選是哪一筆，再填日期。
+function QuickProtoPopover({ orders, onSave, onClose }) {
+  const initialIdx = (() => {
+    const i = orders.findIndex(o => protoOrderState(o) !== 'done');
+    return i >= 0 ? i : Math.max(0, orders.length - 1);
+  })();
+  const [idx, setIdx] = useState(initialIdx);
+  const cur = orders[idx] || {};
+  const [kind, setKind] = useState(protoOrderState(cur) === 'done' ? 'done' : 'planned');
+  const [date, setDate] = useState(cur.receivedDate || cur.etaDate || new Date().toISOString().split('T')[0]);
+
+  const pick = (i) => {
+    setIdx(i);
+    const o = orders[i] || {};
+    setKind(protoOrderState(o) === 'done' ? 'done' : 'planned');
+    setDate(o.receivedDate || o.etaDate || new Date().toISOString().split('T')[0]);
+  };
+
+  const save = () => {
+    const patch = kind === 'done'
+      ? { receivedDate: date, status: '已收到' }
+      : { etaDate: date, receivedDate: '', status: cur.status === '已收到' ? '已下單' : (cur.status || '已下單') };
+    onSave(orders.map((o, i) => i === idx ? { ...o, ...patch } : o));
+  };
+
+  return (
+    <div onClick={(e) => e.stopPropagation()}
+      className="absolute right-0 -top-1 z-30 w-60 rounded-xl border border-slate-200 bg-white shadow-xl p-2.5 text-left">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[11px] font-medium text-slate-600">手板時間</span>
+        <button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-xs leading-none">✕</button>
+      </div>
+
+      {orders.length > 1 && (
+        <div className="flex flex-col gap-1 mb-2 max-h-24 overflow-y-auto">
+          {orders.map((o, i) => (
+            <button key={i} onClick={() => pick(i)}
+              className={`text-[11px] px-1.5 py-1 rounded border text-left truncate ${
+                idx === i ? 'bg-slate-900 text-white border-slate-900'
+                  : protoOrderState(o) === 'done' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+              }`}>
+              {protoOrderLabel(o, i)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-1 mb-1.5">
+        {[['planned', '預計到手'], ['done', '已收到']].map(([k, label]) => (
+          <button key={k} onClick={() => setKind(k)}
+            className={`flex-1 text-[11px] py-1 rounded border ${
+              kind === k ? 'bg-slate-100 text-slate-800 border-slate-300 font-medium'
+                         : 'bg-white text-slate-400 border-slate-200'
+            }`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <input type="date" value={date} onChange={e => setDate(e.target.value)}
+        className="w-full px-2 py-1 text-xs border border-slate-200 rounded mb-2" />
+
+      <button onClick={save}
+        className="w-full text-[11px] py-1.5 rounded bg-slate-900 text-white hover:bg-slate-800">儲存</button>
+    </div>
+  );
+}
+
 // T1~T4 迷你軌道：完成打勾＋日期、預計顯示沙漏、逾期轉紅。
 // 一眼看得出「走到哪」與「下一關什麼時候」，不必點進去讀進度紀錄。
 function TrialTrack({ runs = [], className = '' }) {
@@ -4334,7 +4427,7 @@ function TrialTrack({ runs = [], className = '' }) {
   );
 }
 
-function ProjectRow({ project, onClick, onQuickTrial, draggable = false, isDragging = false, isDropTarget = false, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd }) {
+function ProjectRow({ project, onClick, onQuickTrial, onQuickProto, draggable = false, isDragging = false, isDropTarget = false, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd }) {
   const latest = project.updates?.[0];
   const cfg = STATUS_COLORS[project.status];
 
@@ -4343,19 +4436,31 @@ function ProjectRow({ project, onClick, onQuickTrial, draggable = false, isDragg
   const phaseColor = PHASE_COLORS[currentPhase];
   const isOverridden = !!project.phaseOverride;
   const [quickTrial, setQuickTrial] = useState(false);
-  // T1~T4 只存在於試產階段，其他階段（規劃／EVT／DVT／MP）點徽章不該跳出登記面板
-  const canQuickTrial = !!onQuickTrial && currentPhase === 'PVT';
+  // 只有 EVT（手板完成時間）與 PVT（T1~T4）有東西可登記；規劃／DVT／MP 點徽章不該跳面板
+  const canQuickTrial = !!onQuickTrial
+    && ((currentPhase === 'PVT') || (currentPhase === 'EVT' && (project.prototypeOrders || []).length > 0));
 
   // 徽章上要顯示的試模輪次：優先講「接下來哪一次、什麼時候」，沒有待辦才講最後完成的
   const trialBadge = (() => {
-    if (currentPhase !== 'PVT') return '';
-    const runs = project.trialRuns || [];
-    if (!runs.length) return '';
-    const next = runs.find(r => trialRunState(r) === 'overdue') || runs.find(r => trialRunState(r) === 'planned');
-    if (next) return `${next.round} ${trialShortDate(next.plannedDate)}`.trim();
-    const done = runs.filter(r => trialRunState(r) === 'done');
-    if (done.length) { const l = done[done.length - 1]; return `${l.round} ${trialShortDate(l.date)}`.trim(); }
-    return runs[runs.length - 1].round;
+    if (currentPhase === 'PVT') {
+      const runs = project.trialRuns || [];
+      if (!runs.length) return '';
+      const next = runs.find(r => trialRunState(r) === 'overdue') || runs.find(r => trialRunState(r) === 'planned');
+      if (next) return `${next.round} ${trialShortDate(next.plannedDate)}`.trim();
+      const done = runs.filter(r => trialRunState(r) === 'done');
+      if (done.length) { const l = done[done.length - 1]; return `${l.round} ${trialShortDate(l.date)}`.trim(); }
+      return runs[runs.length - 1].round;
+    }
+    if (currentPhase === 'EVT') {
+      const orders = project.prototypeOrders || [];
+      if (!orders.length) return '';
+      const next = orders.find(o => protoOrderState(o) === 'overdue') || orders.find(o => protoOrderState(o) === 'planned');
+      if (next) return `手板 預計 ${trialShortDate(next.etaDate)}`;
+      const done = orders.filter(o => protoOrderState(o) === 'done' && o.receivedDate);
+      if (done.length) { const l = done[done.length - 1]; return `手板 ${trialShortDate(l.receivedDate)}`; }
+      return '';
+    }
+    return '';
   })();
 
   // 計算距離上次更新的天數
@@ -4518,11 +4623,19 @@ function ProjectRow({ project, onClick, onQuickTrial, draggable = false, isDragg
         因為 button 裡再放 button 與日期輸入框，有些瀏覽器會點不動 */}
     {quickTrial && (
       <div className="relative">
-        <QuickTrialPopover
-          runs={project.trialRuns || []}
-          onClose={() => setQuickTrial(false)}
-          onSave={(runs) => { onQuickTrial(runs); setQuickTrial(false); }}
-        />
+        {currentPhase === 'EVT' ? (
+          <QuickProtoPopover
+            orders={project.prototypeOrders || []}
+            onClose={() => setQuickTrial(false)}
+            onSave={(orders) => { onQuickProto(orders); setQuickTrial(false); }}
+          />
+        ) : (
+          <QuickTrialPopover
+            runs={project.trialRuns || []}
+            onClose={() => setQuickTrial(false)}
+            onSave={(runs) => { onQuickTrial(runs); setQuickTrial(false); }}
+          />
+        )}
       </div>
     )}
     </div>

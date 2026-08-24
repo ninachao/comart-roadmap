@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.63.0';
-const BUILD_ID = '20260824-1810';
+const APP_VERSION = 'v1.63.1';
+const BUILD_ID = '20260824-1900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.63.1',
+    date: '2026-08-24',
+    changes: [
+      '🛠 預定品在櫃位卡片裡就能完整編輯：改名稱、寫備註、換狀態、刪除，不必再捲到下面的清單',
+      '🖼 預定品可以放圖：點一下選檔、把圖拖進來、或直接 Ctrl+V 貼上截圖；圖片也會出現在配置圖的滑鼠提示裡',
+    ],
+  },
   {
     version: 'v1.63.0',
     date: '2026-08-24',
@@ -8362,6 +8370,94 @@ function listItemSampleUsage(it, samples = []) {
   return out;
 }
 
+// 展覽裡的「預定品」小卡：東西還沒做好、樣品庫查不到，所以照片、名稱、備註都直接在這裡填。
+// 圖片支援三種給法：點一下選檔、拖進來、或按 Ctrl+V 貼上（從 LINE／郵件截圖最常用）。
+function PlannedCard({ p, canEdit, onChange, onDelete }) {
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+  const imgs = p.images || [];
+
+  const addImages = async (fileList) => {
+    const files = Array.from(fileList || []).filter(f => (f.type || '').startsWith('image/'));
+    if (!files.length) return;
+    setBusy(true);
+    try {
+      const added = [];
+      for (const f of files) {
+        const r = await uploadFileToStorage(f, () => {});
+        added.push({ url: r.url, path: r.path, name: r.name });
+      }
+      await onChange({ images: [...imgs, ...added] });
+    } catch (e) {
+      alert(`圖片上傳失敗：${e.message}`);
+    } finally { setBusy(false); }
+  };
+
+  const removeImage = (i) => onChange({ images: imgs.filter((_, ii) => ii !== i) });
+
+  return (
+    <div className="w-40 rounded border border-dashed border-amber-300 bg-amber-50/60 p-1.5 flex flex-col gap-1">
+      <div
+        tabIndex={canEdit ? 0 : -1}
+        onPaste={canEdit ? (e) => { const f = e.clipboardData?.files; if (f?.length) { e.preventDefault(); addImages(f); } } : undefined}
+        onDragOver={canEdit ? (e) => e.preventDefault() : undefined}
+        onDrop={canEdit ? (e) => { e.preventDefault(); addImages(e.dataTransfer?.files); } : undefined}
+        onClick={canEdit && !imgs.length ? () => fileRef.current?.click() : undefined}
+        title={canEdit ? '點一下選圖、拖進來、或按 Ctrl+V 貼上' : ''}
+        className={`relative h-20 rounded bg-white border border-amber-200 flex items-center justify-center overflow-hidden outline-none focus:ring-2 focus:ring-amber-300 ${canEdit && !imgs.length ? 'cursor-pointer hover:bg-amber-50' : ''}`}>
+        {busy ? (
+          <span className="text-[10px] text-amber-600">上傳中…</span>
+        ) : imgs.length ? (
+          <>
+            <StorageImage src={imgs[0].url || ''} path={imgs[0].path} alt="" className="w-full h-full object-contain" />
+            {imgs.length > 1 && (
+              <span className="absolute bottom-0.5 right-0.5 text-[9px] px-1 rounded bg-slate-900/70 text-white">+{imgs.length - 1}</span>
+            )}
+            {canEdit && (
+              <button onClick={(e) => { e.stopPropagation(); removeImage(0); }}
+                className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-slate-900/60 text-white text-[10px] leading-none flex items-center justify-center hover:bg-rose-600"
+                title="移除這張圖">×</button>
+            )}
+          </>
+        ) : (
+          <span className="text-[9px] text-amber-500 text-center leading-tight px-1">🛠<br />點一下選圖<br />或 Ctrl+V 貼上</span>
+        )}
+        <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
+          onChange={(e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; addImages(fs); }} />
+      </div>
+
+      {canEdit ? (
+        <input defaultValue={p.name}
+          onBlur={e => { if (e.target.value !== p.name) onChange({ name: e.target.value }); }}
+          className="text-[11px] font-medium text-slate-800 bg-transparent border-b border-amber-200 focus:border-amber-500 focus:outline-none py-0.5" />
+      ) : <span className="text-[11px] font-medium text-slate-800 truncate">{p.name}</span>}
+
+      {canEdit ? (
+        <textarea defaultValue={p.note || ''} rows={1} placeholder="備註（例：9/1 確認）"
+          onBlur={e => { if (e.target.value !== (p.note || '')) onChange({ note: e.target.value }); }}
+          className="text-[10px] text-slate-500 bg-transparent border-b border-transparent hover:border-amber-200 focus:border-amber-400 focus:outline-none py-0.5 resize-none leading-snug" />
+      ) : (p.note && <span className="text-[10px] text-slate-500">{p.note}</span>)}
+
+      <div className="flex items-center gap-1">
+        {canEdit ? (
+          <select value={p.packStatus || '製作中'} onChange={e => onChange({ packStatus: e.target.value })}
+            className={`text-[10px] px-1 py-0.5 border rounded flex-1 ${
+              p.packStatus === '已到貨' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-amber-100 text-amber-800 border-amber-200'
+            }`}>
+            <option value="設計中">設計中</option>
+            <option value="製作中">製作中</option>
+            <option value="已到貨">已到貨</option>
+          </select>
+        ) : <span className="text-[10px] text-amber-700 flex-1">{p.packStatus || '製作中'}</span>}
+        {canEdit && (
+          <button onClick={onDelete} className="text-[10px] text-slate-300 hover:text-rose-600 px-1" title="移除預定品">刪除</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ===== 展覽：攤位配置 =====
 // 每場展的攤位都不一樣，所以先上傳這次的配置圖，再直接在圖上點出櫃位，
 // 樣品指派到櫃位後就能用「照片牆」預覽每一櫃會擺什麼——取代把實體樣品全部搬出來擺的做法
@@ -8454,6 +8550,14 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone, onAddPl
     } finally { setArtUploading(null); }
   };
 
+  // 預定品（樣品庫還沒有的東西）在櫃位卡片內就能直接改名、寫備註、貼圖、刪除
+  const updPlanned = (plannedId, patch) =>
+    onSave({ ...ex, items: items.map(it => it.plannedId === plannedId ? { ...it, ...patch } : it) });
+  const delPlanned = (p) => {
+    if (!window.confirm(`移除預定品「${p.name}」？`)) return;
+    return onSave({ ...ex, items: items.filter(it => it.plannedId !== p.plannedId) });
+  };
+
   const unassigned = zoneItems('');
   const cabinets = zones.filter(z => kindOf(z) === 'cabinet');
   const posters = zones.filter(z => kindOf(z) === 'poster');
@@ -8528,8 +8632,14 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone, onAddPl
                 )}
                 {/* 預定品沒有照片，改用文字列出來，報告時才不會漏講 */}
                 {k === 'cabinet' && zoneItems(z.id).filter(it => it.type === 'planned').map(p => (
-                  <span key={p.plannedId} className="block text-amber-300 whitespace-normal">
-                    🛠 {p.name}（{p.packStatus || '製作中'}）
+                  <span key={p.plannedId} className="block whitespace-normal mt-1">
+                    <span className="block text-amber-300">🛠 {p.name}（{p.packStatus || '製作中'}）</span>
+                    {(p.images || [])[0] && (
+                      <span className="block mt-0.5 rounded overflow-hidden bg-white" style={{ width: 90 }}>
+                        <StorageImage src={p.images[0].url || ''} path={p.images[0].path} alt=""
+                          className="w-full max-h-[90px] object-contain" />
+                      </span>
+                    )}
                   </span>
                 ))}
                 {z.note ? <span className="block text-slate-400 whitespace-normal border-t border-white/15 mt-1 pt-1">{z.note}</span> : null}
@@ -8673,19 +8783,16 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone, onAddPl
                       return <p className="text-[10px] text-slate-300">尚未指派樣品到這一櫃</p>;
                     }
                     return (
-                      <div className="flex gap-1 flex-wrap items-center">
+                      <div className="flex gap-1 flex-wrap items-start">
                         {thumbs.map((m, i) => (
                           <div key={i} className="w-12 h-12 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
                             <SampleMediaThumb media={m} className="w-full h-full object-contain" />
                           </div>
                         ))}
                         {planned.map(p => (
-                          <span key={p.plannedId}
-                            title={p.note || ''}
-                            className="h-12 px-2 rounded border border-dashed border-amber-300 bg-amber-50/60 text-[10px] text-amber-800 flex flex-col items-center justify-center leading-tight max-w-[7rem] text-center">
-                            <span className="truncate max-w-full">{p.name}</span>
-                            <span className="text-[9px] text-amber-600">{p.packStatus || '製作中'}</span>
-                          </span>
+                          <PlannedCard key={p.plannedId} p={p} canEdit={canEdit}
+                            onChange={patch => updPlanned(p.plannedId, patch)}
+                            onDelete={() => delPlanned(p)} />
                         ))}
                       </div>
                     );
@@ -12126,7 +12233,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                 if (it.type === 'planned') {
                                   return (
                                     <div key={it.plannedId || itIdx} className="flex gap-2 items-center bg-amber-50/40 border border-dashed border-amber-300 rounded-lg p-2">
-                                      <div className="flex-shrink-0 w-12 h-12 border border-dashed border-amber-300 rounded flex items-center justify-center text-amber-400 text-lg">🛠</div>
+                                      <div className="flex-shrink-0 w-12 h-12 border border-dashed border-amber-300 rounded flex items-center justify-center text-amber-400 text-lg overflow-hidden bg-white">
+                                        {(it.images || [])[0]
+                                          ? <StorageImage src={it.images[0].url || ''} path={it.images[0].path} alt="" className="w-full h-full object-contain" />
+                                          : '🛠'}
+                                      </div>
                                       <div className="flex-1 min-w-0">
                                         <div className="flex items-baseline gap-1.5 flex-wrap">
                                           {canEdit ? (

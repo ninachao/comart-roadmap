@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.59.1';
-const BUILD_ID = '20260821-1200';
+const APP_VERSION = 'v1.60.0';
+const BUILD_ID = '20260824-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.60.0',
+    date: '2026-08-24',
+    changes: [
+      '🔗 進度紀錄新增「關聯文件」：寫進度時可直接指向文件中心的某一版文件（例：MGMS0001_吸盤式多角度調整支架_3D_V8），不必再把 PDF／3D 當附件重複上傳',
+      '　· 挑選時可搜尋標題／類型／版本，且會把「這個產品」的文件排在最前面',
+      '　· 進度卡片上會顯示關聯文件的標籤（含類型與版本），點一下直接跳到文件中心的那份文件',
+      '📎 附件說明改為引導用途：建議只放截圖／照片，正式圖檔與 BOM 交給文件中心管理',
+    ],
+  },
   {
     version: 'v1.59.1',
     date: '2026-08-21',
@@ -3649,8 +3659,9 @@ export default function ProductRoadmap() {
           onWizardClose={() => setAutoOpenCodeWizard(false)}
           existingCodes={projects.filter(p => p.id !== selectedProject.id).map(p => p.code).filter(Boolean)}
           refFiles={refFiles}
-          onOpenRefLibrary={(p) => {
-            setRefLibraryInitialSearch(p?.name || p?.code || '');
+          onOpenRefLibrary={(p, searchOverride) => {
+            // 有指定文件標題就直接用它搜尋，可一步跳到那份文件
+            setRefLibraryInitialSearch(searchOverride || p?.name || p?.code || '');
             setSelectedProject(null);
             setShowRefLibrary(true);
           }}
@@ -5264,6 +5275,8 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                 )}
                 <UpdateForm
                   initial={followUpInitial || undefined}
+                  refFiles={refFiles}
+                  project={project}
                   onCancel={() => { setShowAddUpdate(false); setFollowUpInitial(null); }}
                   onSave={(u) => {
                     onAddUpdate(u);
@@ -5318,6 +5331,9 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     onAddUpdate={isViewer ? null : onAddUpdate}
                     onSetFollowUpDate={isViewer ? null : handleSetFollowUpDate}
                     currentUser={currentUser}
+                    refFiles={refFiles}
+                    project={project}
+                    onOpenDoc={(d) => onOpenRefLibrary && onOpenRefLibrary(project, d.title)}
                     />
                   </div>
                 )}
@@ -5348,6 +5364,9 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     onAddUpdate={isViewer ? null : onAddUpdate}
                     onSetFollowUpDate={isViewer ? null : handleSetFollowUpDate}
                     currentUser={currentUser}
+                    refFiles={refFiles}
+                    project={project}
+                    onOpenDoc={(d) => onOpenRefLibrary && onOpenRefLibrary(project, d.title)}
                     />
                   </div>
                 ))}
@@ -9565,7 +9584,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const [drillDragOver, setDrillDragOver] = useState(false);
   // 瀏覽軸：很多文件天生就不屬於任何產品（供應商、外購件、專利、合約…），
   // 所以不能只有「依產品」一種分組，否則它們全部被擠進「未關聯產品」
-  const [viewMode, setViewMode] = useState('project'); // 'project'|'natures'|'vendors'|'parts' 分組 | 'docs' 所有文件
+  const [viewMode, setViewMode] = useState(initialSearch ? 'docs' : 'project'); // 'project'|'natures'|'vendors'|'parts' 分組 | 'docs' 所有文件
   const [docLayout, setDocLayout] = useState('list'); // 文件呈現：'list' 檔案列表 | 'grid' 大圖
   const [drillPid, setDrillPid] = useState(null); // 點進某個產品後，看它集結的所有檔案
   const [formDragOver, setFormDragOver] = useState(false); // 編輯表單拖曳上傳
@@ -16653,7 +16672,7 @@ function RichEditor({ value, onChange, placeholder }) {
   );
 }
 
-function UpdateForm({ initial, onCancel, onSave, currentUser }) {
+function UpdateForm({ initial, onCancel, onSave, currentUser, refFiles = [], project = null }) {
   const [date, setDate] = useState(initial?.date || new Date().toISOString().split('T')[0]);
   const [dateEnd, setDateEnd] = useState(initial?.dateEnd || '');
   const [isRange, setIsRange] = useState(!!(initial?.dateEnd));
@@ -16662,15 +16681,20 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
   const [attachments, setAttachments] = useState(initial?.attachments || initial?.images?.map(img => ({ ...img, kind: 'upload' })) || []);
   const [followUpDate, setFollowUpDate] = useState(initial?.followUpDate || '');
   const [followedUp, setFollowedUp] = useState(initial?.followedUp || false);
+  // 關聯文件中心的文件（取代以前把 PDF／3D 直接當附件上傳的做法）
+  const [docRefs, setDocRefs] = useState(initial?.docRefs || []);
+  const [docPicking, setDocPicking] = useState(false);
+  const [docSearch, setDocSearch] = useState('');
 
   const submit = () => {
-    if (!text.trim() && attachments.length === 0) return;
+    if (!text.trim() && attachments.length === 0 && docRefs.length === 0) return;
     const images = attachments.filter(a => a.kind === 'upload' && isImageFile(a.name, a.type));
     onSave({
       date,
       dateEnd: isRange && dateEnd ? dateEnd : null,
       text: text.trim(),
       attachments,
+      docRefs,
       images,
       author: author.trim(),
       followUpDate: followUpDate || null,
@@ -16729,9 +16753,63 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
         className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 resize-none bg-white mb-2"
       />
 
+      {/* 關聯文件中心的文件：進度說明常常要指向某一版圖檔（例：..._3D_V8） */}
+      <div className="bg-white rounded border border-slate-200 px-2 pt-1 pb-2 mb-2">
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] text-slate-400">🔗 關聯文件（指向文件中心的圖檔／BOM，不必重複上傳）</p>
+          <button onClick={() => { setDocPicking(v => !v); setDocSearch(''); }}
+            className="text-[10px] text-violet-600 hover:underline">{docPicking ? '收合' : '＋ 選擇文件'}</button>
+        </div>
+        {docRefs.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {docRefs.map(id => {
+              const d = refFiles.find(x => x.id === id);
+              return (
+                <span key={id} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-100">
+                  {d ? d.title : '（文件已刪除）'}
+                  {d && (d.natures || [])[0] ? <span className="opacity-60">{(d.natures || [])[0]}</span> : null}
+                  {d && (d.versions || [])[0] ? <span className="opacity-60">{(d.versions || [])[0]}</span> : null}
+                  <button onClick={() => setDocRefs(v => v.filter(x => x !== id))}
+                    className="font-bold hover:opacity-60">×</button>
+                </span>
+              );
+            })}
+          </div>
+        )}
+        {docPicking && (
+          <div className="mt-1 p-1.5 rounded border border-violet-200 bg-violet-50/40">
+            <input value={docSearch} onChange={e => setDocSearch(e.target.value)} autoFocus
+              placeholder="搜尋文件標題／類型／版本..."
+              className="w-full px-2 py-1 text-[11px] border border-slate-200 rounded bg-white focus:outline-none focus:border-violet-400 mb-1" />
+            <div className="max-h-40 overflow-y-auto space-y-0.5">
+              {(() => {
+                const kw = docSearch.trim().toLowerCase();
+                const mine = (r) => project && (r.relatedProjectIds || []).some(pid => String(pid) === String(project.id));
+                const list = refFiles
+                  .filter(r => !docRefs.includes(r.id))
+                  .filter(r => !kw || [r.title, ...(r.natures || []), ...(r.versions || [])].join(' ').toLowerCase().includes(kw))
+                  // 這個產品的文件排前面
+                  .sort((a, b) => (mine(b) ? 1 : 0) - (mine(a) ? 1 : 0) || (b.createdAt || 0) - (a.createdAt || 0))
+                  .slice(0, 40);
+                if (!list.length) return <p className="text-[10px] text-slate-400 px-1 py-2 text-center">找不到文件</p>;
+                return list.map(r => (
+                  <button key={r.id} onClick={() => { setDocRefs(v => [...v, r.id]); setDocPicking(false); }}
+                    className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-white text-left">
+                    <span className="text-[11px] text-slate-700 truncate flex-1">{r.title}</span>
+                    {(r.natures || [])[0] && <span className="text-[9px] px-1 rounded bg-violet-100 text-violet-700 flex-shrink-0">{(r.natures || [])[0]}</span>}
+                    {(r.versions || [])[0] && <span className="text-[9px] px-1 rounded bg-emerald-100 text-emerald-700 flex-shrink-0">{(r.versions || [])[0]}</span>}
+                    {mine(r) && <span className="text-[9px] text-slate-400 flex-shrink-0">此產品</span>}
+                  </button>
+                ));
+              })()}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* 附件（圖片/影片/Excel/PDF/任意檔案 + 連結） */}
       <div className="bg-white rounded border border-slate-200 px-2 pt-1 pb-2 mb-2">
-        <p className="text-[10px] text-slate-400 mb-1">📎 附件（圖片、影片、Excel、PDF 等，或貼連結）</p>
+        <p className="text-[10px] text-slate-400 mb-1">📎 附件（建議只放截圖／照片；正式的圖檔、BOM 請放文件中心並用上方「關聯文件」指向）</p>
         <AttachmentList
           attachments={attachments}
           onChange={setAttachments}
@@ -16761,7 +16839,7 @@ function UpdateForm({ initial, onCancel, onSave, currentUser }) {
   );
 }
 
-function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete, onMarkFollowedUp, onAddUpdate, onSetFollowUpDate, currentUser }) {
+function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete, onMarkFollowedUp, onAddUpdate, onSetFollowUpDate, currentUser, refFiles = [], project = null, onOpenDoc }) {
   const [previewImg, setPreviewImg] = useState(null);
   const [inlineImgPreview, setInlineImgPreview] = useState(null);
   const [showFollowUpForm, setShowFollowUpForm] = useState(false);
@@ -16769,7 +16847,7 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
   const [nextDate, setNextDate] = useState('');
 
   if (isEditing) {
-    return <UpdateForm initial={update} onCancel={onCancelEdit} onSave={onSave} currentUser={currentUser} />;
+    return <UpdateForm initial={update} onCancel={onCancelEdit} onSave={onSave} currentUser={currentUser} refFiles={refFiles} project={project} />;
   }
 
   const today = new Date().toISOString().split('T')[0];
@@ -16891,6 +16969,28 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
             </p>
           )
         )}
+        {/* 關聯文件：指向文件中心的那一版圖檔／BOM */}
+        {(update.docRefs || []).length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {update.docRefs.map(id => {
+              const d = refFiles.find(x => x.id === id);
+              if (!d) return (
+                <span key={id} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-200">🔗 （文件已刪除）</span>
+              );
+              return (
+                <button key={id}
+                  onClick={() => onOpenDoc && onOpenDoc(d)}
+                  title="到文件中心查看這份文件"
+                  className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-100 hover:bg-violet-100">
+                  🔗 {d.title}
+                  {(d.natures || [])[0] && <span className="opacity-60">{(d.natures || [])[0]}</span>}
+                  {(d.versions || [])[0] && <span className="opacity-60">{(d.versions || [])[0]}</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* 附件：優先用新格式 attachments，舊格式 images 轉換相容 */}
         {(() => {
           const atts = update.attachments?.length > 0

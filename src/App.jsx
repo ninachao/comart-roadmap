@@ -49,10 +49,22 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.64.1';
-const BUILD_ID = '20260824-2020';
+const APP_VERSION = 'v1.65.0';
+const BUILD_ID = '20260824-2130';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.65.0',
+    date: '2026-08-24',
+    changes: [
+      '🔤 主頁卡片的階段不再只有代號：PVT 旁邊會直接顯示子進度（例「T2 預計 10/5」「模具下訂」），滑過階段徽章還會說明 PVT 是什麼',
+      '📅 試模 T1~T4 拆成「預計試模日」與「實際完成日」：只填預計＝尚未進行、預計日過了還沒完成＝逾期（轉紅）',
+      '🛤 新增 T1~T4 迷你軌道，同時出現在主頁卡片與產品詳情，一眼看出走到哪、下一關什麼時候',
+      '🔔 提醒面板新增「試模逾期」分頁，逾期的輪次會列出來並計入右上角鈴鐺數字',
+      '📂 階段是 PVT 時，「試模 T1~T4」區塊預設展開，不用再自己去翻折疊區',
+      '💡 若進度紀錄的文字裡已經寫過「T1 9/15」，區塊上方會建議一鍵登記（按了才寫入，否定句如「T1 還沒開」會自動略過）',
+    ],
+  },
   {
     version: 'v1.64.1',
     date: '2026-08-24',
@@ -3007,6 +3019,16 @@ export default function ProductRoadmap() {
     }).sort((a, b) => (b.days || 999) - (a.days || 999));
   }, [projects, trackingOverrides]);
 
+  // 試模預計日已過但還沒填完成日 —— 這種延誤最容易被忽略，因為沒人會主動回頭看
+  const overdueTrials = useMemo(() => {
+    const out = [];
+    projects.forEach(p => {
+      if (p.status === '取消' || p.status === '暫停') return;
+      overdueTrialRuns(p).forEach(r => out.push({ project: p, run: r }));
+    });
+    return out.sort((a, b) => String(a.run.plannedDate).localeCompare(String(b.run.plannedDate)));
+  }, [projects]);
+
   const overdueFollowUps = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     const result = [];
@@ -3451,14 +3473,14 @@ export default function ProductRoadmap() {
             {/* 🔔 提醒按鈕 + 計數徽章 */}
             <button
               onClick={() => setShowReminders(true)}
-              title="提醒：未更新產品 + 跟追到期"
+              title="提醒：未更新產品 + 跟追到期 + 試模逾期"
               className="relative p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700 rounded-lg inline-flex items-center gap-1"
             >
               <span>🔔</span>
               <span className="hidden sm:inline text-xs">提醒</span>
-              {overdueFollowUps.length > 0 && (
+              {(overdueFollowUps.length + overdueTrials.length) > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-[16px] h-4 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-0.5">
-                  {overdueFollowUps.length}
+                  {overdueFollowUps.length + overdueTrials.length}
                 </span>
               )}
             </button>
@@ -3778,6 +3800,7 @@ export default function ProductRoadmap() {
         <RemindersModal
           staleProjects={staleProjects}
           overdueFollowUps={overdueFollowUps}
+          overdueTrials={overdueTrials}
           projects={projects}
           trackingOverrides={trackingOverrides}
           onSetOverride={setTrackingOverride}
@@ -4057,6 +4080,65 @@ function computeAutoPhase(project) {
   return '規劃';
 }
 
+// 試模輪次：plannedDate = 預計試模日，date = 實際完成日。
+// 只填預計日 → 還沒跑；填了完成日 → 已完成；預計日過了還沒完成日 → 逾期。
+const TRIAL_TODAY = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+function trialRunState(r) {
+  if (r?.date) return 'done';
+  if (r?.plannedDate) {
+    const p = new Date(r.plannedDate); p.setHours(0, 0, 0, 0);
+    return p < TRIAL_TODAY() ? 'overdue' : 'planned';
+  }
+  return 'todo';
+}
+function trialShortDate(s) {
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${Number(m[2])}/${Number(m[3])}` : '';
+}
+// 這個產品所有已逾期的試模輪次
+function overdueTrialRuns(project) {
+  return (project.trialRuns || []).filter(r => trialRunState(r) === 'overdue');
+}
+
+// 從進度紀錄的文字裡撈出「T1 9/15」這類已經寫過的試模資訊。
+// 只做建議、不自動寫入 —— 文字裡的「T1」有時是「T1 還沒開」這種否定句，猜錯比不猜更糟。
+function suggestTrialRunsFromUpdates(project) {
+  const already = new Set((project.trialRuns || []).map(r => r.round));
+  const out = [];
+  const seen = new Set();
+  for (const u of (project.updates || [])) {
+    const text = String(u?.text || '');
+    if (!text) continue;
+    // 依標點斷句，讓「日期」和「輪次」必須出現在同一句，避免跨句亂配
+    for (const seg of text.split(/[\n。；;，,]/)) {
+      const rm = seg.match(/\bT([1-4])\b/i);
+      if (!rm) continue;
+      const round = `T${rm[1]}`;
+      if (already.has(round) || seen.has(round)) continue;
+      if (/還沒|尚未|未開|沒開|取消|不用|不做/.test(seg)) continue;   // 否定句直接跳過
+      let planned = '';
+      const iso = seg.match(/(20\d{2})[-/](\d{1,2})[-/](\d{1,2})/);
+      const md = seg.match(/(?:^|[^\d])(\d{1,2})[/月](\d{1,2})/);
+      if (iso) {
+        planned = `${iso[1]}-${String(iso[2]).padStart(2, '0')}-${String(iso[3]).padStart(2, '0')}`;
+      } else if (md) {
+        const m = Number(md[1]), d = Number(md[2]);
+        if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+          // 沒寫年份就沿用這則進度的年份；若明顯早於該則進度，視為隔年
+          const base = new Date(u.date || Date.now());
+          let y = base.getFullYear();
+          if (m < base.getMonth() + 1 - 6) y += 1;
+          planned = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        }
+      }
+      if (!planned) continue;   // 沒日期就沒有登記的價值
+      seen.add(round);
+      out.push({ round, plannedDate: planned, source: seg.trim().slice(0, 24) });
+    }
+  }
+  return out.sort((a, b) => TRIAL_ROUNDS.indexOf(a.round) - TRIAL_ROUNDS.indexOf(b.round));
+}
+
 // 取得實際階段（手動覆蓋優先）
 function getCurrentPhase(project) {
   if (project.phaseOverride) return project.phaseOverride;
@@ -4092,8 +4174,22 @@ function getPhaseDetail(project) {
   if (phase === 'PVT') {
     const trials = project.trialRuns || [];
     if (trials.length > 0) {
-      const last = trials[trials.length - 1];
-      return `${last.round} 完成`;
+      // 先講「接下來要發生什麼」，其次才是「已經完成什麼」——別人最想知道的是下一個節點
+      const next = trials.find(r => trialRunState(r) === 'overdue')
+        || trials.find(r => trialRunState(r) === 'planned');
+      if (next) {
+        const d = trialShortDate(next.plannedDate);
+        return trialRunState(next) === 'overdue'
+          ? `${next.round} 逾期${d ? ` ${d}` : ''}`
+          : `${next.round} 預計${d ? ` ${d}` : ''}`;
+      }
+      const doneList = trials.filter(r => trialRunState(r) === 'done');
+      if (doneList.length) {
+        const last = doneList[doneList.length - 1];
+        const d = trialShortDate(last.date);
+        return `${last.round} 完成${d ? ` ${d}` : ''}`;
+      }
+      return `${trials[trials.length - 1].round} 待安排`;
     }
     if ((project.mouldOrders || []).length > 0) return '模具下訂';
     if (project.materialCodeStatus === '申請中') return '料號申請中';
@@ -4103,6 +4199,39 @@ function getPhaseDetail(project) {
   if (phase === 'MP') return '已量產';
 
   return '';
+}
+
+// T1~T4 迷你軌道：完成打勾＋日期、預計顯示沙漏、逾期轉紅。
+// 一眼看得出「走到哪」與「下一關什麼時候」，不必點進去讀進度紀錄。
+function TrialTrack({ runs = [], className = '' }) {
+  const byRound = {};
+  runs.forEach(r => { if (r?.round) byRound[r.round] = r; });
+  return (
+    <span className={`inline-flex items-center gap-1 flex-wrap ${className}`}>
+      {TRIAL_ROUNDS.map((round, i) => {
+        const r = byRound[round];
+        const st = r ? trialRunState(r) : 'none';
+        const d = st === 'done' ? trialShortDate(r.date) : trialShortDate(r?.plannedDate);
+        const style = {
+          done:    'bg-emerald-50 text-emerald-700 border-emerald-200',
+          planned: 'bg-amber-50 text-amber-700 border-amber-200',
+          overdue: 'bg-rose-50 text-rose-700 border-rose-300',
+          todo:    'bg-slate-50 text-slate-500 border-slate-200',
+          none:    'bg-white text-slate-300 border-slate-100',
+        }[st];
+        const mark = { done: '✓', planned: '⏳', overdue: '⚠', todo: '', none: '' }[st];
+        return (
+          <React.Fragment key={round}>
+            {i > 0 && <span className="text-slate-200 text-[9px]">›</span>}
+            <span className={`text-[10px] px-1.5 py-0.5 rounded border tabular-nums ${style}`}
+              title={r?.issues || ''}>
+              {round}{mark ? ` ${mark}` : ''}{d ? ` ${d}` : ''}
+            </span>
+          </React.Fragment>
+        );
+      })}
+    </span>
+  );
 }
 
 function ProjectRow({ project, onClick, draggable = false, isDragging = false, isDropTarget = false, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd }) {
@@ -4222,11 +4351,23 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
                 目前階段
                 {isOverridden && <span className="text-[9px] text-amber-600" title="已手動覆蓋">●</span>}
               </p>
-              <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border font-medium ${phaseColor.bg} ${phaseColor.text} ${phaseColor.border}`}>
+              <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border font-medium ${phaseColor.bg} ${phaseColor.text} ${phaseColor.border}`}
+                title={(() => { const d = PHASE_DEFINITIONS.find(p => p.key === currentPhase); return d ? `${d.subtitle}：${d.desc}` : ''; })()}>
                 {currentPhase}
               </span>
+              {/* 只印代號別人看不懂，把已經算好的子進度一起顯示 */}
+              {phaseDetail && (
+                <p className="text-[11px] text-slate-500 mt-0.5 whitespace-nowrap">{phaseDetail}</p>
+              )}
             </div>
           </div>
+
+          {(project.trialRuns || []).length > 0 && (
+            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] text-slate-400">試模</span>
+              <TrialTrack runs={project.trialRuns} />
+            </div>
+          )}
 
           {latest && (
             <div className="mt-3 pt-3 border-t border-slate-100">
@@ -5476,6 +5617,13 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           <div id="pd-trial"><TrialSection
             trialRuns={project.trialRuns || []}
             trialNotes={project.trialNotes || ''}
+            defaultOpen={getCurrentPhase(project) === 'PVT'}
+            suggestions={isViewer ? [] : suggestTrialRunsFromUpdates(project)}
+            onApplySuggestion={(sg) => {
+              const list = [...(project.trialRuns || []), { round: sg.round, plannedDate: sg.plannedDate, date: '', issues: '' }];
+              list.sort((a, b) => TRIAL_ROUNDS.indexOf(a.round) - TRIAL_ROUNDS.indexOf(b.round));
+              onUpdateField('trialRuns', list);
+            }}
             onChangeRuns={(r) => onUpdateField('trialRuns', r)}
             onChangeNotes={(v) => onUpdateField('trialNotes', v)}
           /></div>
@@ -15086,7 +15234,7 @@ function WithdrawalModal({ sample, currentUser, onSave, onClose }) {
 }
 
 // ============= 提醒頁面 Modal =============
-function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOverrides, onSetOverride, onJumpToProject, onMarkFollowedUp, onDismissFollowUps, onClose, isAdmin }) {
+function RemindersModal({ staleProjects, overdueFollowUps, overdueTrials = [], projects, trackingOverrides, onSetOverride, onJumpToProject, onMarkFollowedUp, onDismissFollowUps, onClose, isAdmin }) {
   const [activeTab, setActiveTab] = useState('followup'); // 'followup' | 'stale' | 'calendar'
   const [followUpTarget, setFollowUpTarget] = useState(null);
 
@@ -15219,6 +15367,7 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
           {[
             { key: 'followup', label: '待跟追', count: urgentCount, urgentColor: urgentCount > 0 },
             { key: 'stale',    label: '久未更新', count: staleProjects.length, urgentColor: false },
+            { key: 'trial',    label: '試模逾期', count: overdueTrials.length, urgentColor: overdueTrials.length > 0 },
             { key: 'calendar', label: '日曆', count: 0, urgentColor: false },
           ].map(tab => (
             <button key={tab.key}
@@ -15350,6 +15499,46 @@ function RemindersModal({ staleProjects, overdueFollowUps, projects, trackingOve
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Tab：試模逾期 ── */}
+          {activeTab === 'trial' && (
+            <div>
+              {overdueTrials.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-48 text-center">
+                  <div className="w-14 h-14 rounded-full bg-slate-50 flex items-center justify-center mb-3">
+                    <span className="text-2xl">🛠</span>
+                  </div>
+                  <p className="text-[15px] text-slate-500">沒有逾期的試模</p>
+                  <p className="text-[13px] text-slate-300 mt-1">預計試模日過了還沒填完成日，才會出現在這裡</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[12px] text-slate-400 pb-1">預計試模日已過，但還沒登記完成日</p>
+                  {overdueTrials.map(({ project: p, run }, i) => {
+                    const days = Math.floor((Date.now() - new Date(run.plannedDate).getTime()) / 86400000);
+                    return (
+                      <button key={i} onClick={() => { onJumpToProject(p); onClose(); }}
+                        className="w-full text-left rounded-2xl px-4 py-3 bg-slate-50 hover:bg-white border border-transparent hover:border-slate-200 transition">
+                        <div className="flex items-center gap-3">
+                          <span className="text-[12px] font-semibold px-2 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 flex-shrink-0">
+                            {run.round}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[14px] text-slate-800 truncate">{p.name}</span>
+                            <span className="block text-[12px] text-slate-400">
+                              {p.code || '無編碼'} · 預計 {run.plannedDate}
+                              {run.issues ? ` · ${String(run.issues).slice(0, 20)}` : ''}
+                            </span>
+                          </span>
+                          <span className="text-[12px] font-semibold text-rose-600 flex-shrink-0">逾期 {days} 天</span>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -16545,7 +16734,7 @@ function OrderForm({ kind, data, onChange, onCancel, onSave, showStorage, showRe
   );
 }
 
-function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes }) {
+function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes, defaultOpen = false, suggestions = [], onApplySuggestion }) {
   const [editing, setEditing] = useState(null);
   const [editingNotes, setEditingNotes] = useState(false);
   const [tempNotes, setTempNotes] = useState(trialNotes);
@@ -16553,12 +16742,20 @@ function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes }) {
   const usedRounds = trialRuns.map(r => r.round);
   const availableRounds = TRIAL_ROUNDS.filter(r => !usedRounds.includes(r));
   const latestRound = trialRuns.length > 0 ? trialRuns[trialRuns.length - 1].round : null;
+  const overdueRuns = trialRuns.filter(r => trialRunState(r) === 'overdue');
+  const nextRun = trialRuns.find(r => trialRunState(r) === 'overdue') || trialRuns.find(r => trialRunState(r) === 'planned');
+  const badgeText = overdueRuns.length
+    ? `${overdueRuns[0].round} 逾期`
+    : nextRun
+      ? `${nextRun.round} 預計 ${trialShortDate(nextRun.plannedDate)}`
+      : latestRound ? `已到 ${latestRound}` : '未開始';
 
   const handleAdd = () => {
     const nextRound = availableRounds[0] || 'T1';
     setEditing({
       idx: -1,
-      data: { round: nextRound, date: new Date().toISOString().split('T')[0], issues: '' },
+      // 新增時只預填「預計日」——剛登記的輪次通常還沒跑完
+      data: { round: nextRound, plannedDate: new Date().toISOString().split('T')[0], date: '', issues: '' },
     });
   };
   const handleEdit = (idx) => setEditing({ idx, data: { ...trialRuns[idx] } });
@@ -16576,28 +16773,31 @@ function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes }) {
   return (
     <CollapsibleSection
       title="試模 T1~T4"
-      badge={latestRound ? `已到 ${latestRound}` : '未開始'}
-      defaultOpen={false}
+      badge={badgeText}
+      defaultOpen={defaultOpen}
       accent="emerald"
     >
       <div className="mt-2 space-y-2">
-        <div className="flex gap-1.5 flex-wrap mb-2">
-          {TRIAL_ROUNDS.map(r => {
-            const done = usedRounds.includes(r);
-            return (
-              <span
-                key={r}
-                className={`text-xs px-2 py-1 rounded border ${
-                  done
-                    ? 'bg-emerald-100 text-emerald-700 border-emerald-300 font-medium'
-                    : 'bg-white text-slate-400 border-slate-200'
-                }`}
-              >
-                {done ? '✓ ' : ''}{r}
-              </span>
-            );
-          })}
-        </div>
+        <div className="mb-2"><TrialTrack runs={trialRuns} /></div>
+
+        {/* 進度紀錄裡已經寫過的 T1/T2… 撈出來，按一下才登記，絕不自動寫入 */}
+        {suggestions.length > 0 && (
+          <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50/60 p-2 space-y-1">
+            <p className="text-[11px] text-amber-800">進度紀錄裡提到這些試模，要登記進來嗎？</p>
+            {suggestions.map((sg, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-[11px] text-slate-700 flex-1 min-w-0 truncate" title={sg.source}>
+                  <b>{sg.round}</b>{sg.plannedDate ? ` · 預計 ${trialShortDate(sg.plannedDate)}` : ''}
+                  <span className="text-slate-400"> · 出自「{sg.source}」</span>
+                </span>
+                <button onClick={() => onApplySuggestion?.(sg)}
+                  className="text-[11px] px-2 py-0.5 rounded border border-amber-300 bg-white text-amber-700 hover:bg-amber-50 flex-shrink-0">
+                  登記 {sg.round}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {trialRuns.length === 0 ? (
           <p className="text-xs text-slate-400 py-1">尚未開始試模</p>
@@ -16606,9 +16806,21 @@ function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes }) {
             {trialRuns.map((r, i) => (
               <div key={i} className="bg-emerald-50/50 border border-emerald-200 rounded-lg p-2.5 group">
                 <div className="flex items-start justify-between gap-2 mb-1">
-                  <div className="flex items-baseline gap-2">
+                  <div className="flex items-baseline gap-2 flex-wrap">
                     <span className="text-sm font-medium text-emerald-700">{r.round}</span>
-                    <span className="text-xs text-slate-500 tabular-nums">{r.date}</span>
+                    {r.plannedDate && (
+                      <span className="text-xs text-slate-500 tabular-nums">預計 {r.plannedDate}</span>
+                    )}
+                    {r.date && (
+                      <span className="text-xs text-emerald-700 tabular-nums">完成 {r.date}</span>
+                    )}
+                    {(() => {
+                      const st = trialRunState(r);
+                      if (st === 'overdue') return <span className="text-[10px] px-1.5 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-300">逾期未完成</span>;
+                      if (st === 'planned') return <span className="text-[10px] px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">尚未進行</span>;
+                      if (st === 'todo') return <span className="text-[10px] px-1.5 py-0.5 rounded border bg-slate-50 text-slate-500 border-slate-200">未排日期</span>;
+                      return null;
+                    })()}
                   </div>
                   <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition">
                     <button onClick={() => handleEdit(i)} className="p-1 text-slate-400 hover:text-slate-700"><Edit2 className="w-3 h-3" /></button>
@@ -16701,14 +16913,25 @@ function TrialRunForm({ data, availableRounds, onChange, onCancel, onSave }) {
               </select>
             </div>
             <div>
-              <label className="block text-xs text-slate-600 mb-1">試模日期</label>
+              <label className="block text-xs text-slate-600 mb-1">預計試模日</label>
               <input
                 type="date"
-                value={data.date}
-                onChange={(e) => onChange({ ...data, date: e.target.value })}
+                value={data.plannedDate || ''}
+                onChange={(e) => onChange({ ...data, plannedDate: e.target.value })}
                 className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
               />
             </div>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">
+              實際完成日 <span className="text-slate-400">（還沒跑就留空，過了預計日會標成逾期）</span>
+            </label>
+            <input
+              type="date"
+              value={data.date || ''}
+              onChange={(e) => onChange({ ...data, date: e.target.value })}
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded"
+            />
           </div>
           <div>
             <label className="block text-xs text-slate-600 mb-1">遇到的問題 / 需要修正的地方</label>

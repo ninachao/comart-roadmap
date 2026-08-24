@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.64.0';
-const BUILD_ID = '20260824-1940';
+const APP_VERSION = 'v1.64.1';
+const BUILD_ID = '20260824-2020';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.64.1',
+    date: '2026-08-24',
+    changes: [
+      '🐛 修正預定品的產品照破圖：部分產品照是內嵌圖（base64），原本的顯示方式讀不到',
+      '　· 改為不複製圖片、直接借看來源產品的照片（左下角標「產品照」），既不會破圖也不會把大圖塞進展覽資料',
+      '　· 想換成自己的圖，照樣點一下或 Ctrl+V 貼上即可覆蓋',
+    ],
+  },
   {
     version: 'v1.64.0',
     date: '2026-08-24',
@@ -8402,11 +8411,9 @@ function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose }) {
   const submit = () => {
     const n = name.trim();
     if (!n) { alert('請填名稱'); return; }
-    onConfirm({
-      name: n,
-      projectId: picked?.id || '',
-      images: (picked?.productImages || []).slice(0, 1),
-    });
+    // 只帶 projectId，不複製圖片：產品照可能是 base64（dataUrl），
+    // 整包塞進展覽文件會撐爆 Firestore 單筆 1MB 上限。卡片改成直接讀產品的照片。
+    onConfirm({ name: n, projectId: picked?.id || '' });
   };
 
   return (
@@ -8438,7 +8445,7 @@ function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose }) {
                   on ? 'border-amber-400 bg-amber-50' : 'border-slate-100 hover:bg-slate-50'
                 }`}>
                 <span className="w-9 h-9 rounded border border-slate-200 bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
-                  {img ? <StorageImage src={img.url || ''} path={img.path} alt="" className="w-full h-full object-contain" />
+                  {img ? <SampleMediaThumb media={img} className="w-full h-full object-contain" />
                        : <span className="text-slate-300 text-xs">—</span>}
                 </span>
                 <span className="min-w-0 flex-1">
@@ -8474,10 +8481,13 @@ function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose }) {
 
 // 展覽裡的「預定品」小卡：東西還沒做好、樣品庫查不到，所以照片、名稱、備註都直接在這裡填。
 // 圖片支援三種給法：點一下選檔、拖進來、或按 Ctrl+V 貼上（從 LINE／郵件截圖最常用）。
-function PlannedCard({ p, canEdit, onChange, onDelete }) {
+function PlannedCard({ p, canEdit, onChange, onDelete, fallbackMedia }) {
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
   const imgs = p.images || [];
+  // 自己貼的圖優先；沒貼就借用來源產品的照片（借看不複製，省空間也不會走味）
+  const shown = imgs[0] || fallbackMedia || null;
+  const usingFallback = !imgs.length && !!fallbackMedia;
 
   const addImages = async (fileList) => {
     const files = Array.from(fileList || []).filter(f => (f.type || '').startsWith('image/'));
@@ -8505,17 +8515,21 @@ function PlannedCard({ p, canEdit, onChange, onDelete }) {
         onDragOver={canEdit ? (e) => e.preventDefault() : undefined}
         onDrop={canEdit ? (e) => { e.preventDefault(); addImages(e.dataTransfer?.files); } : undefined}
         onClick={canEdit && !imgs.length ? () => fileRef.current?.click() : undefined}
+        /* 借用產品照時整塊仍可點，代表「換成自己的圖」 */
         title={canEdit ? '點一下選圖、拖進來、或按 Ctrl+V 貼上' : ''}
         className={`relative h-20 rounded bg-white border border-amber-200 flex items-center justify-center overflow-hidden outline-none focus:ring-2 focus:ring-amber-300 ${canEdit && !imgs.length ? 'cursor-pointer hover:bg-amber-50' : ''}`}>
         {busy ? (
           <span className="text-[10px] text-amber-600">上傳中…</span>
-        ) : imgs.length ? (
+        ) : shown ? (
           <>
-            <StorageImage src={imgs[0].url || ''} path={imgs[0].path} alt="" className="w-full h-full object-contain" />
+            <SampleMediaThumb media={shown} className="w-full h-full object-contain" />
             {imgs.length > 1 && (
               <span className="absolute bottom-0.5 right-0.5 text-[9px] px-1 rounded bg-slate-900/70 text-white">+{imgs.length - 1}</span>
             )}
-            {canEdit && (
+            {usingFallback && (
+              <span className="absolute bottom-0.5 left-0.5 text-[9px] px-1 rounded bg-slate-900/60 text-white">產品照</span>
+            )}
+            {canEdit && !usingFallback && (
               <button onClick={(e) => { e.stopPropagation(); removeImage(0); }}
                 className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-slate-900/60 text-white text-[10px] leading-none flex items-center justify-center hover:bg-rose-600"
                 title="移除這張圖">×</button>
@@ -8563,7 +8577,7 @@ function PlannedCard({ p, canEdit, onChange, onDelete }) {
 // ===== 展覽：攤位配置 =====
 // 每場展的攤位都不一樣，所以先上傳這次的配置圖，再直接在圖上點出櫃位，
 // 樣品指派到櫃位後就能用「照片牆」預覽每一櫃會擺什麼——取代把實體樣品全部搬出來擺的做法
-function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone, onAddPlanned }) {
+function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAddToZone, onAddPlanned }) {
   const [uploading, setUploading] = useState(false);
   const [placingKind, setPlacingKind] = useState(null); // 'cabinet' | 'poster' | null
   const [dragZone, setDragZone] = useState(null);       // 正在拖曳的標記
@@ -8655,6 +8669,12 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone, onAddPl
   // 預定品（樣品庫還沒有的東西）在櫃位卡片內就能直接改名、寫備註、貼圖、刪除
   const updPlanned = (plannedId, patch) =>
     onSave({ ...ex, items: items.map(it => it.plannedId === plannedId ? { ...it, ...patch } : it) });
+  // 預定品若是從既有產品挑的，沒自己貼圖時就顯示該產品的照片
+  const plannedFallback = (p) => {
+    if (!p.projectId) return null;
+    const proj = projects.find(x => x.id === p.projectId);
+    return (proj?.productImages || [])[0] || null;
+  };
   const delPlanned = (p) => {
     if (!window.confirm(`移除預定品「${p.name}」？`)) return;
     return onSave({ ...ex, items: items.filter(it => it.plannedId !== p.plannedId) });
@@ -8736,12 +8756,15 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone, onAddPl
                 {k === 'cabinet' && zoneItems(z.id).filter(it => it.type === 'planned').map(p => (
                   <span key={p.plannedId} className="block whitespace-normal mt-1">
                     <span className="block text-amber-300">🛠 {p.name}（{p.packStatus || '製作中'}）</span>
-                    {(p.images || [])[0] && (
-                      <span className="block mt-0.5 rounded overflow-hidden bg-white" style={{ width: 90 }}>
-                        <StorageImage src={p.images[0].url || ''} path={p.images[0].path} alt=""
-                          className="w-full max-h-[90px] object-contain" />
-                      </span>
-                    )}
+                    {(() => {
+                      const m = (p.images || [])[0] || plannedFallback(p);
+                      if (!m) return null;
+                      return (
+                        <span className="block mt-0.5 rounded overflow-hidden bg-white" style={{ width: 90 }}>
+                          <SampleMediaThumb media={m} className="w-full max-h-[90px] object-contain" />
+                        </span>
+                      );
+                    })()}
                   </span>
                 ))}
                 {z.note ? <span className="block text-slate-400 whitespace-normal border-t border-white/15 mt-1 pt-1">{z.note}</span> : null}
@@ -8892,7 +8915,7 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone, onAddPl
                           </div>
                         ))}
                         {planned.map(p => (
-                          <PlannedCard key={p.plannedId} p={p} canEdit={canEdit}
+                          <PlannedCard key={p.plannedId} p={p} canEdit={canEdit} fallbackMedia={plannedFallback(p)}
                             onChange={patch => updPlanned(p.plannedId, patch)}
                             onDelete={() => delPlanned(p)} />
                         ))}
@@ -12325,6 +12348,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                           <BoothLayoutSection
                             ex={ex}
                             samples={samplesWithRemaining}
+                            projects={projects}
                             canEdit={canEdit}
                             onSave={handleSaveExhibition}
                             onAddToZone={(zoneId) => { setAddingToZoneId(zoneId); setAddingSamplesToExId(ex.id); }}
@@ -12340,9 +12364,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   return (
                                     <div key={it.plannedId || itIdx} className="flex gap-2 items-center bg-amber-50/40 border border-dashed border-amber-300 rounded-lg p-2">
                                       <div className="flex-shrink-0 w-12 h-12 border border-dashed border-amber-300 rounded flex items-center justify-center text-amber-400 text-lg overflow-hidden bg-white">
-                                        {(it.images || [])[0]
-                                          ? <StorageImage src={it.images[0].url || ''} path={it.images[0].path} alt="" className="w-full h-full object-contain" />
-                                          : '🛠'}
+                                        {(() => {
+                                          const m = (it.images || [])[0]
+                                            || ((projects.find(x => x.id === it.projectId)?.productImages || [])[0]);
+                                          return m ? <SampleMediaThumb media={m} className="w-full h-full object-contain" /> : '🛠';
+                                        })()}
                                       </div>
                                       <div className="flex-1 min-w-0">
                                         <div className="flex items-baseline gap-1.5 flex-wrap">

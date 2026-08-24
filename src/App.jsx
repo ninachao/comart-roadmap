@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.60.1';
-const BUILD_ID = '20260824-1200';
+const APP_VERSION = 'v1.61.0';
+const BUILD_ID = '20260824-1500';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.61.0',
+    date: '2026-08-24',
+    changes: [
+      '⊞ 產品分頁新增「依版本對照」檢視：同一版的 ID／3D／BOM 排在同一列，一眼看出哪個 BOM 配哪個 3D，缺的會標「— 缺」',
+      '　· 版本以數字歸群，所以 V6 和 V6-非模組化 視為同一版',
+      '　· 沒有版本標籤的文件會另外提示筆數，提醒補上才能納入對照',
+      '🧠 版本建議改為「迭代」概念：版本代表同一次設計迭代，3D 與它對應的 BOM 應同版。若此類型還沒跟上最新迭代，按鈕會變成「⚡ 沿用 V6（配同一版）」，不再一味叫你往上加到 V7',
+    ],
+  },
   {
     version: 'v1.60.1',
     date: '2026-08-24',
@@ -9590,6 +9600,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   const [dlProgress, setDlProgress] = useState(null);  // 批次下載進度
   const [showFilters, setShowFilters] = useState(false); // 篩選區預設收合（版本值可能有數十個，會把列表擠掉）
   const [expandedDims, setExpandedDims] = useState({});  // 各維度是否展開完整值
+  const [drillView, setDrillView] = useState('list');          // 產品分頁：'list' 清單 | 'matrix' 依版本對照
   const [drillUploading, setDrillUploading] = useState(null); // 產品分頁內直接上傳的進度
   const [drillDragOver, setDrillDragOver] = useState(false);
   // 瀏覽軸：很多文件天生就不屬於任何產品（供應商、外購件、專利、合約…），
@@ -10044,23 +10055,40 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     );
   }, [editing, items]);
 
-  // 算出某個文件類型的目前最高版與下一版；同時回報版號是從哪一份文件來的，方便你發現抓錯基準
+  // 算出某個文件類型的版本建議。
+  // 重點：版本代表「同一次設計迭代」，3D 與它對應的 BOM 應該是同一版。
+  // 所以如果這個類型還沒跟上最新那一版，要建議「沿用」而不是「往上加一版」。
   const computeVerInfo = (type) => {
-    if (!versionSiblings.length) return { max: null, next: 'V1', used: [], maxFrom: '' };
+    if (!versionSiblings.length) return { max: null, next: 'V1', used: [], maxFrom: '', mode: 'new' };
+    const numOf = (v) => { const m = String(v).match(/^\s*V\s*(\d+)/i); return m ? Number(m[1]) : null; };
     const scoped = type
       ? versionSiblings.filter(it => (refDimVals(it, 'natures')[0] || '') === type)
       : versionSiblings;
     const used = scoped.flatMap(it => refDimVals(it, 'versions'));
     let max = null, maxFrom = '';
-    scoped.forEach(it => {
-      refDimVals(it, 'versions').forEach(v => {
-        const m = String(v).match(/^\s*V\s*(\d+)/i);
-        if (!m) return;
-        const n = Number(m[1]);
-        if (max == null || n > max) { max = n; maxFrom = it.title || ''; }
-      });
-    });
-    return { max, next: max == null ? 'V1' : `V${max + 1}`, used: [...new Set(used)], maxFrom };
+    scoped.forEach(it => refDimVals(it, 'versions').forEach(v => {
+      const n = numOf(v);
+      if (n == null) return;
+      if (max == null || n > max) { max = n; maxFrom = it.title || ''; }
+    }));
+    // 這個產品（不分類型）目前走到第幾版
+    let prodMax = null, prodFrom = '';
+    versionSiblings.forEach(it => refDimVals(it, 'versions').forEach(v => {
+      const n = numOf(v);
+      if (n == null) return;
+      if (prodMax == null || n > prodMax) { prodMax = n; prodFrom = it.title || ''; }
+    }));
+    // 此類型落後最新迭代 → 建議沿用該版（例：3D 已有 V6，要補這一版的 BOM）
+    if (prodMax != null && (max == null || max < prodMax)) {
+      return {
+        max, next: `V${prodMax}`, used: [...new Set(used)], maxFrom,
+        mode: 'reuse', prodMax, prodFrom,
+      };
+    }
+    return {
+      max, next: max == null ? 'V1' : `V${max + 1}`, used: [...new Set(used)], maxFrom,
+      mode: max == null ? 'new' : 'bump', prodMax, prodFrom,
+    };
   };
 
   const verInfo = useMemo(
@@ -10410,7 +10438,99 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                   </div>
                 )
               )}
-              {docLayout === 'list' ? (
+              {/* 依版本對照：同一版的 3D／BOM／ID 排在同一列，一眼看出配對與缺件 */}
+              {drillPid !== '__none__' && (
+                <div className="flex items-center gap-1 mb-2">
+                  {[['list', '☰ 清單'], ['matrix', '⊞ 依版本對照']].map(([m, label]) => (
+                    <button key={m} onClick={() => setDrillView(m)}
+                      className="px-2.5 py-1 text-[11px] rounded-full border transition"
+                      style={drillView === m
+                        ? { background: '#1e293b', color: '#fff', borderColor: '#1e293b' }
+                        : { background: '#fff', color: '#64748b', borderColor: '#e2e8f0' }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {drillView === 'matrix' && drillPid !== '__none__' ? (
+                (() => {
+                  const docs = drillGroup?.docs || [];
+                  // 版本以「數字」歸群：V6 和 V6-非模組化 視為同一版
+                  const verNumOf = (v) => { const m = String(v || '').match(/^\s*V\s*(\d+)/i); return m ? Number(m[1]) : null; };
+                  const groups = new Map(); // 版號 → { labels:Set, byType: {type: [docs]} }
+                  const noVer = [];
+                  docs.forEach(d => {
+                    const label = (d.versions || [])[0] || '';
+                    const num = verNumOf(label);
+                    if (num == null) { noVer.push(d); return; }
+                    if (!groups.has(num)) groups.set(num, { num, labels: new Set(), byType: {} });
+                    const g = groups.get(num);
+                    if (label) g.labels.add(label);
+                    const t = (d.natures || [])[0] || '未分類';
+                    (g.byType[t] = g.byType[t] || []).push(d);
+                  });
+                  // 欄位順序：ID → 3D → BOM → 其他
+                  const ORDER = ['ID', '3D', 'BOM'];
+                  const types = [...new Set(docs.map(d => (d.natures || [])[0] || '未分類'))]
+                    .sort((a, b) => {
+                      const ia = ORDER.indexOf(a), ib = ORDER.indexOf(b);
+                      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+                    });
+                  const rows = [...groups.values()].sort((a, b) => b.num - a.num);
+                  if (!rows.length) {
+                    return <p className="text-[11px] text-slate-400 text-center py-6">這個產品的文件還沒有設定版本標籤，無法做版本對照</p>;
+                  }
+                  return (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[11px] border border-slate-200 rounded-lg overflow-hidden">
+                        <thead>
+                          <tr className="bg-slate-50">
+                            <th className="text-left px-2 py-1.5 font-medium text-slate-600 whitespace-nowrap">版本</th>
+                            {types.map(t => (
+                              <th key={t} className="text-left px-2 py-1.5 font-medium text-slate-600 whitespace-nowrap">{t}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((g, ri) => (
+                            <tr key={g.num} className={ri === 0 ? 'bg-rose-50/40' : ''}>
+                              <td className="px-2 py-1.5 align-top whitespace-nowrap border-t border-slate-100">
+                                <span className="font-medium text-slate-800">V{g.num}</span>
+                                {ri === 0 && <span className="ml-1 text-[9px] px-1 rounded-full text-white" style={{ background: '#f43f5e' }}>最新</span>}
+                                {[...g.labels].filter(l => l !== `V${g.num}`).map(l => (
+                                  <span key={l} className="block text-[9px] text-slate-400">{l}</span>
+                                ))}
+                              </td>
+                              {types.map(t => {
+                                const list = g.byType[t] || [];
+                                return (
+                                  <td key={t} className="px-2 py-1.5 align-top border-t border-slate-100">
+                                    {list.length === 0 ? (
+                                      <span className="text-slate-300">— 缺</span>
+                                    ) : list.map(d => (
+                                      <button key={d.id} onClick={() => setPreviewDoc(d)}
+                                        title={d.title}
+                                        className="block text-left text-violet-700 hover:underline max-w-[180px] truncate">
+                                        {(d.images || []).length} 檔 · {d.title.split('_').pop()}
+                                      </button>
+                                    ))}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {noVer.length > 0 && (
+                        <p className="text-[10px] text-amber-600 mt-1.5">
+                          ⚠ 另有 {noVer.length} 份文件沒有版本標籤，未列入對照（可在該文件的「版本」欄補上）
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()
+              ) : docLayout === 'list' ? (
                 <div className="border border-slate-100 rounded-lg divide-y divide-slate-50">
                   {(drillGroup?.docs || []).map(renderDocRow)}
                 </div>
@@ -10695,14 +10815,22 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                     } else {
                       priorityOptions = verInfo.used;
                       const curType = (editing.natures || [])[0];
-                      hint = verInfo.max != null
-                        ? `（${curType ? `${curType} ` : ''}目前最新 V${verInfo.max}${verInfo.maxFrom ? ` · 來自「${verInfo.maxFrom}」` : ''}）`
-                        : `（${curType ? `此產品的 ${curType} ` : '此產品'}尚無版本）`;
+                      if (verInfo.mode === 'reuse') {
+                        hint = `（此產品已走到 V${verInfo.prodMax}，但${curType ? `「${curType}」` : '這個類型'}還沒有這一版）`;
+                      } else {
+                        hint = verInfo.max != null
+                          ? `（${curType ? `${curType} ` : ''}目前最新 V${verInfo.max}${verInfo.maxFrom ? ` · 來自「${verInfo.maxFrom}」` : ''}）`
+                          : `（${curType ? `此產品的 ${curType} ` : '此產品'}尚無版本）`;
+                      }
                       if (verInfo.next && !(editing.versions || []).includes(verInfo.next)) {
                         action = (
                           <button onClick={() => setEditing(v => ({ ...v, versions: [...(v.versions || []), verInfo.next] }))}
-                            title={`加入 ${verInfo.next}`}
-                            className="text-[11px] text-emerald-600 hover:underline">⚡ 下一版 {verInfo.next}</button>
+                            title={verInfo.mode === 'reuse'
+                              ? `沿用 ${verInfo.next}，和「${verInfo.prodFrom}」配成同一版`
+                              : `加入 ${verInfo.next}`}
+                            className="text-[11px] text-emerald-600 hover:underline">
+                            {verInfo.mode === 'reuse' ? `⚡ 沿用 ${verInfo.next}（配同一版）` : `⚡ 下一版 ${verInfo.next}`}
+                          </button>
                         );
                       }
                     }

@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.62.0';
-const BUILD_ID = '20260824-1720';
+const APP_VERSION = 'v1.63.0';
+const BUILD_ID = '20260824-1810';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.63.0',
+    date: '2026-08-24',
+    changes: [
+      '🚫 ID 不再出現「待更新」：ID 是設計源頭，3D／BOM 才需要追著它跑。現在只有 3D 與 BOM 會被標成待更新',
+      '🛠 展覽新增「預定品」：還在請工程做、樣品庫還沒有的東西，可以直接打字加到攤位或某一櫃佔位',
+      '　· 可填數量、備註與狀態（設計中／製作中／已到貨），會出現在櫃位卡片、配置圖的滑鼠提示與 PDF 清單裡',
+      '　· 預定品不會寫進樣品庫，所以不會影響任何庫存數字；實品到貨後正式登錄成樣品，再把預定品刪掉即可',
+    ],
+  },
   {
     version: 'v1.62.0',
     date: '2026-08-24',
@@ -8355,7 +8365,7 @@ function listItemSampleUsage(it, samples = []) {
 // ===== 展覽：攤位配置 =====
 // 每場展的攤位都不一樣，所以先上傳這次的配置圖，再直接在圖上點出櫃位，
 // 樣品指派到櫃位後就能用「照片牆」預覽每一櫃會擺什麼——取代把實體樣品全部搬出來擺的做法
-function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
+function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone, onAddPlanned }) {
   const [uploading, setUploading] = useState(false);
   const [placingKind, setPlacingKind] = useState(null); // 'cabinet' | 'poster' | null
   const [dragZone, setDragZone] = useState(null);       // 正在拖曳的標記
@@ -8516,6 +8526,12 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
                     {n > 6 && <span className="text-[10px] text-slate-400 self-end">+{n - 6}</span>}
                   </span>
                 )}
+                {/* 預定品沒有照片，改用文字列出來，報告時才不會漏講 */}
+                {k === 'cabinet' && zoneItems(z.id).filter(it => it.type === 'planned').map(p => (
+                  <span key={p.plannedId} className="block text-amber-300 whitespace-normal">
+                    🛠 {p.name}（{p.packStatus || '製作中'}）
+                  </span>
+                ))}
                 {z.note ? <span className="block text-slate-400 whitespace-normal border-t border-white/15 mt-1 pt-1">{z.note}</span> : null}
               </span>
             </span>
@@ -8634,6 +8650,13 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
                             ＋ 加入樣品到這一櫃
                           </button>
                         )}
+                        {onAddPlanned && (
+                          <button onClick={() => onAddPlanned(z.id)}
+                            title="還在請工程做、樣品庫還沒有的東西，先在這裡佔位"
+                            className="text-[10px] px-2 py-0.5 rounded border border-dashed border-amber-300 text-amber-700 bg-white hover:bg-amber-50">
+                            ＋ 預定品（還沒做好）
+                          </button>
+                        )}
                         <button onClick={() => delZone(z)} className="text-[10px] text-slate-300 hover:text-rose-500">刪除</button>
                       </span>
                     )}
@@ -8644,17 +8667,29 @@ function BoothLayoutSection({ ex, samples, canEdit, onSave, onAddToZone }) {
                       onBlur={e => { if (e.target.value !== (z.note || '')) updZone(z.id, { note: e.target.value }); }}
                       className="w-full text-[11px] text-slate-500 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5 resize-none leading-snug mb-1.5" />
                   ) : (z.note && <p className="text-[11px] text-slate-500 mb-1.5 whitespace-pre-line">{z.note}</p>)}
-                  {thumbs.length > 0 ? (
-                    <div className="flex gap-1 flex-wrap">
-                      {thumbs.map((m, i) => (
-                        <div key={i} className="w-12 h-12 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
-                          <SampleMediaThumb media={m} className="w-full h-full object-contain" />
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-[10px] text-slate-300">尚未指派樣品到這一櫃</p>
-                  )}
+                  {(() => {
+                    const planned = list.filter(it => it.type === 'planned');
+                    if (!thumbs.length && !planned.length) {
+                      return <p className="text-[10px] text-slate-300">尚未指派樣品到這一櫃</p>;
+                    }
+                    return (
+                      <div className="flex gap-1 flex-wrap items-center">
+                        {thumbs.map((m, i) => (
+                          <div key={i} className="w-12 h-12 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
+                            <SampleMediaThumb media={m} className="w-full h-full object-contain" />
+                          </div>
+                        ))}
+                        {planned.map(p => (
+                          <span key={p.plannedId}
+                            title={p.note || ''}
+                            className="h-12 px-2 rounded border border-dashed border-amber-300 bg-amber-50/60 text-[10px] text-amber-800 flex flex-col items-center justify-center leading-tight max-w-[7rem] text-center">
+                            <span className="truncate max-w-full">{p.name}</span>
+                            <span className="text-[9px] text-amber-600">{p.packStatus || '製作中'}</span>
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -9210,6 +9245,9 @@ function guessDocType(name = '') {
 // 一次上傳多個檔案時，看「整批」決定類型，而不是取第一個猜到的
 // 優先序：3D > BOM > ID —— 例如 STP＋PDF 一起丟通常是 3D 釋出（PDF 是隨附圖面），應判為 3D
 const DOCTYPE_PRIORITY = ['3D', 'BOM', 'ID'];
+// 會「跟著別人走」的文件類型：ID 定案後才畫 3D、出 BOM，所以只有這兩種會落後。
+// ID 本身是源頭，不該被標成「待更新」。
+const VERSION_FOLLOWER_NATURES = ['3D', 'BOM'];
 function guessDocTypeFromFiles(files = []) {
   const found = new Set(Array.from(files).map(f => guessDocType(f.name)).filter(Boolean));
   if (!found.size) return '';
@@ -9707,7 +9745,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     });
     const out = {};
     Object.entries(byGroup).forEach(([k, list]) => {
-      const pid = k.split('|')[0];
+      const [pid, nat] = k.split('|');
       const pinned = list.find(x => x.it.isCurrent);
       // 領頭者：先比版號，版號相同或缺漏再比日期
       const head = pinned || [...list].sort((a, b) =>
@@ -9718,7 +9756,9 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
         let state;
         if (it.id !== head.it.id) state = 'old';
         else if (pinned) state = 'current';                                  // 人工指定優先
-        else if (pmax != null && n != null && n < pmax) state = 'stale';      // 該類型最新，但落後產品版本
+        // 只有「跟隨型」文件（3D／BOM 要配合 ID 的設計）才會被標成待更新。
+        // ID 是設計源頭，它不需要追著別人跑，所以永遠不掛「待更新」。
+        else if (VERSION_FOLLOWER_NATURES.includes(nat) && pmax != null && n != null && n < pmax) state = 'stale';
         else state = 'current';
         out[it.id] = { state, productMax: pmax, myNum: n, count: list.length, pinned: !!pinned };
       });
@@ -11583,6 +11623,47 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
   };
 
+  // 「預定品」：還在請工程做、還沒進樣品庫的東西。
+  // 刻意不寫進 samples 集合 —— 它還不存在實體，若先建成樣品會讓庫存數字失真。
+  // 等實品到貨、正式登錄成樣品後，把這筆預定品刪掉換成真樣品即可。
+  const handleAddPlannedToExhibition = async (exId, zoneId = '') => {
+    const ex = exhibitions.find(e => e.id === exId);
+    if (!ex) return;
+    const name = window.prompt('這個還沒做好的東西叫什麼？（例：T1 手板、新底座、A 款轉軸）');
+    if (!name || !name.trim()) return;
+    const planned = {
+      type: 'planned',
+      plannedId: `pl_${Date.now()}`,
+      name: name.trim(),
+      qty: 1,
+      note: '',
+      packStatus: '製作中',
+      zoneId: zoneId || '',
+    };
+    const updated = { ...ex, items: [...(ex.items || []), planned] };
+    const cleaned = {};
+    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
+    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
+  };
+
+  const handleUpdatePlanned = async (exId, plannedId, patch) => {
+    const ex = exhibitions.find(e => e.id === exId);
+    if (!ex) return;
+    const updated = { ...ex, items: (ex.items || []).map(it => it.plannedId === plannedId ? { ...it, ...patch } : it) };
+    const cleaned = {};
+    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
+    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
+  };
+
+  const handleRemovePlanned = async (exId, plannedId) => {
+    const ex = exhibitions.find(e => e.id === exId);
+    if (!ex) return;
+    const updated = { ...ex, items: (ex.items || []).filter(it => it.plannedId !== plannedId) };
+    const cleaned = {};
+    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
+    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
+  };
+
   // 更新組合品打包狀態
   const handleUpdateBundle = async (exId, bundleId, patch) => {
     const ex = exhibitions.find(e => e.id === exId);
@@ -12034,12 +12115,64 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                             canEdit={canEdit}
                             onSave={handleSaveExhibition}
                             onAddToZone={(zoneId) => { setAddingToZoneId(zoneId); setAddingSamplesToExId(ex.id); }}
+                            onAddPlanned={(zoneId) => handleAddPlannedToExhibition(ex.id, zoneId)}
                           />
                           {items.length === 0 ? (
                             <p className="text-xs text-slate-400 py-3 text-center">尚未加入樣品或組合品</p>
                           ) : (
                             <div className="space-y-2 mb-2">
                               {items.map((it, itIdx) => {
+                                // === 預定品（樣品庫還沒有的東西）===
+                                if (it.type === 'planned') {
+                                  return (
+                                    <div key={it.plannedId || itIdx} className="flex gap-2 items-center bg-amber-50/40 border border-dashed border-amber-300 rounded-lg p-2">
+                                      <div className="flex-shrink-0 w-12 h-12 border border-dashed border-amber-300 rounded flex items-center justify-center text-amber-400 text-lg">🛠</div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-baseline gap-1.5 flex-wrap">
+                                          {canEdit ? (
+                                            <input defaultValue={it.name}
+                                              onBlur={e => { if (e.target.value !== it.name) handleUpdatePlanned(ex.id, it.plannedId, { name: e.target.value }); }}
+                                              className="text-xs font-medium text-slate-900 bg-transparent border-b border-transparent hover:border-amber-200 focus:border-amber-400 focus:outline-none py-0.5 w-40" />
+                                          ) : <span className="text-xs font-medium text-slate-900 truncate">{it.name}</span>}
+                                          <span className="text-[9px] px-1 py-0.5 rounded border bg-amber-100 text-amber-800 border-amber-200">預定品</span>
+                                        </div>
+                                        {canEdit ? (
+                                          <input defaultValue={it.note || ''} placeholder="備註（例：9/1 確認、素亦做、含底座）"
+                                            onBlur={e => { if (e.target.value !== (it.note || '')) handleUpdatePlanned(ex.id, it.plannedId, { note: e.target.value }); }}
+                                            className="w-full text-[10px] text-slate-500 bg-transparent border-b border-transparent hover:border-amber-200 focus:border-amber-400 focus:outline-none py-0.5" />
+                                        ) : (it.note && <p className="text-[10px] text-slate-500">{it.note}</p>)}
+                                      </div>
+                                      {(ex.zones || []).length > 0 && (
+                                        <select value={it.zoneId || ''} disabled={!canEdit}
+                                          onChange={(e) => handleUpdatePlanned(ex.id, it.plannedId, { zoneId: e.target.value })}
+                                          title="要擺在哪一櫃"
+                                          className="text-[10px] border border-slate-200 rounded px-1 py-1 bg-white flex-shrink-0 max-w-[110px]">
+                                          <option value="">未指派櫃位</option>
+                                          {(ex.zones || []).map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
+                                        </select>
+                                      )}
+                                      <input type="number" min="1" value={it.qty || 1} disabled={!canEdit}
+                                        onChange={(e) => handleUpdatePlanned(ex.id, it.plannedId, { qty: Number(e.target.value) })}
+                                        className="w-12 px-1 py-1 text-xs border border-slate-200 rounded text-center flex-shrink-0" title="要帶的數量" />
+                                      <select value={it.packStatus || '製作中'} disabled={!canEdit}
+                                        onChange={(e) => handleUpdatePlanned(ex.id, it.plannedId, { packStatus: e.target.value })}
+                                        className={`text-[11px] px-1.5 py-1 border rounded flex-shrink-0 ${
+                                          it.packStatus === '已到貨' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                                        }`}>
+                                        <option value="設計中">設計中</option>
+                                        <option value="製作中">製作中</option>
+                                        <option value="已到貨">已到貨</option>
+                                      </select>
+                                      {canEdit && (
+                                        <button onClick={() => handleRemovePlanned(ex.id, it.plannedId)} className="flex-shrink-0 p-1 text-slate-300 hover:text-rose-600" title="移除預定品">
+                                          <X className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                }
+
                                 // === 組合品 ===
                                 if (it.type === 'bundle') {
                                   const bundleImages = (it.bundleItems || [])
@@ -12207,6 +12340,13 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                 className="flex-1 py-1.5 text-xs text-purple-600 hover:bg-purple-50 border border-dashed border-purple-200 rounded flex items-center justify-center gap-1"
                               >
                                 <Plus className="w-3 h-3" />建立組合品
+                              </button>
+                              <button
+                                onClick={() => handleAddPlannedToExhibition(ex.id, '')}
+                                title="樣品庫還沒有、還在請工程做的東西，先打字佔位"
+                                className="flex-1 py-1.5 text-xs text-amber-700 hover:bg-amber-50 border border-dashed border-amber-300 rounded flex items-center justify-center gap-1"
+                              >
+                                <Plus className="w-3 h-3" />預定品（還沒做好）
                               </button>
                             </div>
                           )}
@@ -13617,7 +13757,7 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
   const items = exhibition.items || [];
   const today = new Date().toLocaleDateString('zh-TW');
   const bundleCount = items.filter(function(it){ return it.type === 'bundle'; }).length;
-  const singleCount = items.filter(function(it){ return it.type !== 'bundle'; }).length;
+  const singleCount = items.filter(function(it){ return it.type !== 'bundle' && it.type !== 'planned'; }).length;
 
   function packLabel(status) {
     if (status === '已打包') return '✅ 已打包';
@@ -13661,6 +13801,14 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
           rows += '<td style="font-weight:600;text-align:center;">× ' + (bi.qty || 1) + '</td>';
           rows += '<td>—</td></tr>';
         });
+      } else if (it.type === 'planned') {
+        // 預定品：樣品庫還沒有的東西，用虛線列表示，讓清單上看得到它也要進攤位
+        rows += '<tr style="background:#fffbeb;">';
+        rows += '<td><span style="background:#f59e0b;color:white;font-size:10px;padding:1px 6px;border-radius:10px;margin-right:6px;">預定品</span>' + (it.name || '未命名') + (it.note ? '<span style="color:#92400e;font-size:11px;"> · ' + it.note + '</span>' : '') + '</td>';
+        rows += '<td>—</td>';
+        rows += '<td style="font-size:11px;color:#64748b;">未入庫</td>';
+        rows += '<td style="font-weight:600;text-align:center;">× ' + (it.qty || 1) + '</td>';
+        rows += '<td style="font-size:12px;color:#92400e;">' + (it.packStatus || '製作中') + '</td></tr>';
       } else {
         var s = allSamples.find(function(s){ return s.id === it.sampleId; });
         if (!s) return;

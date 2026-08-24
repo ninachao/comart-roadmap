@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.65.0';
-const BUILD_ID = '20260824-2130';
+const APP_VERSION = 'v1.66.0';
+const BUILD_ID = '20260824-2230';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.66.0',
+    date: '2026-08-24',
+    changes: [
+      '⚡ 主頁卡片點一下 PVT 徽章，就能直接選 T1~T4 與日期（可選「預計」或「已完成」），不必進產品頁',
+      '🏷 階段徽章直接顯示輪次與日期（例「PVT · T2 10/5」），別人一看就知道現在在哪一關',
+      '🧹 移除卡片上的子進度文字（模具下訂／手板已收到），改由徽章上的輪次資訊取代',
+    ],
+  },
   {
     version: 'v1.65.0',
     date: '2026-08-24',
@@ -3707,6 +3716,7 @@ export default function ProductRoadmap() {
                           key={p.id}
                           project={p}
                           onClick={() => setSelectedProject(p)}
+                          onQuickTrial={isAdmin ? (runs) => handleUpdateProjectField(p.id, 'trialRuns', runs) : null}
                           draggable={isAdmin && groupMode === 'none'}
                           isDragging={dragProjectId === p.id}
                           isDropTarget={dropTargetId === p.id && dragProjectId !== p.id}
@@ -4201,6 +4211,89 @@ function getPhaseDetail(project) {
   return '';
 }
 
+// 在主頁卡片上直接登記試模：選輪次、填日期，不必進產品頁翻折疊區。
+// 一次只處理一輪，因為現場的動作通常就是「T2 排在 10/5」這麼一句話。
+function QuickTrialPopover({ runs, onSave, onClose }) {
+  const existing = (round) => runs.find(r => r.round === round);
+  // 預設選「下一個還沒完成的輪次」
+  const initial = TRIAL_ROUNDS.find(r => { const e = existing(r); return !e || !e.date; }) || 'T4';
+  const [round, setRound] = useState(initial);
+  const cur = existing(round);
+  const [kind, setKind] = useState(cur?.date ? 'done' : 'planned');
+  const [date, setDate] = useState(cur?.date || cur?.plannedDate || new Date().toISOString().split('T')[0]);
+
+  // 切換輪次時，把該輪已有的資料帶出來
+  const pickRound = (r) => {
+    setRound(r);
+    const e = existing(r);
+    setKind(e?.date ? 'done' : 'planned');
+    setDate(e?.date || e?.plannedDate || new Date().toISOString().split('T')[0]);
+  };
+
+  const save = () => {
+    const patch = kind === 'done' ? { date, plannedDate: cur?.plannedDate || '' } : { plannedDate: date, date: '' };
+    const list = existing(round)
+      ? runs.map(r => r.round === round ? { ...r, ...patch } : r)
+      : [...runs, { round, issues: '', ...patch }];
+    list.sort((a, b) => TRIAL_ROUNDS.indexOf(a.round) - TRIAL_ROUNDS.indexOf(b.round));
+    onSave(list);
+  };
+
+  const clear = () => onSave(runs.filter(r => r.round !== round));
+
+  return (
+    <div onClick={(e) => e.stopPropagation()}
+      className="absolute right-0 -top-1 z-30 w-60 rounded-xl border border-slate-200 bg-white shadow-xl p-2.5 text-left">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[11px] font-medium text-slate-600">登記試模</span>
+        <button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-xs leading-none">✕</button>
+      </div>
+
+      <div className="flex gap-1 mb-2">
+        {TRIAL_ROUNDS.map(r => {
+          const e = existing(r);
+          const on = round === r;
+          return (
+            <button key={r} onClick={() => pickRound(r)}
+              className={`flex-1 text-[11px] py-1 rounded border ${
+                on ? 'bg-slate-900 text-white border-slate-900'
+                   : e ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                       : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+              }`}>
+              {r}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex gap-1 mb-1.5">
+        {[['planned', '預計'], ['done', '已完成']].map(([k, label]) => (
+          <button key={k} onClick={() => setKind(k)}
+            className={`flex-1 text-[11px] py-1 rounded border ${
+              kind === k ? 'bg-slate-100 text-slate-800 border-slate-300 font-medium'
+                         : 'bg-white text-slate-400 border-slate-200'
+            }`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <input type="date" value={date} onChange={e => setDate(e.target.value)}
+        className="w-full px-2 py-1 text-xs border border-slate-200 rounded mb-2" />
+
+      <div className="flex gap-1.5">
+        <button onClick={save}
+          className="flex-1 text-[11px] py-1.5 rounded bg-slate-900 text-white hover:bg-slate-800">儲存</button>
+        {existing(round) && (
+          <button onClick={clear}
+            className="text-[11px] py-1.5 px-2 rounded border border-slate-200 text-slate-400 hover:text-rose-600"
+            title={`刪除 ${round} 的紀錄`}>清除</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // T1~T4 迷你軌道：完成打勾＋日期、預計顯示沙漏、逾期轉紅。
 // 一眼看得出「走到哪」與「下一關什麼時候」，不必點進去讀進度紀錄。
 function TrialTrack({ runs = [], className = '' }) {
@@ -4234,15 +4327,27 @@ function TrialTrack({ runs = [], className = '' }) {
   );
 }
 
-function ProjectRow({ project, onClick, draggable = false, isDragging = false, isDropTarget = false, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd }) {
+function ProjectRow({ project, onClick, onQuickTrial, draggable = false, isDragging = false, isDropTarget = false, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd }) {
   const latest = project.updates?.[0];
   const cfg = STATUS_COLORS[project.status];
 
   const mainImage = project.productImages?.[0];
   const currentPhase = getCurrentPhase(project);
-  const phaseDetail = getPhaseDetail(project);
   const phaseColor = PHASE_COLORS[currentPhase];
   const isOverridden = !!project.phaseOverride;
+  const [quickTrial, setQuickTrial] = useState(false);
+  const canQuickTrial = !!onQuickTrial;
+
+  // 徽章上要顯示的試模輪次：優先講「接下來哪一次、什麼時候」，沒有待辦才講最後完成的
+  const trialBadge = (() => {
+    const runs = project.trialRuns || [];
+    if (!runs.length) return '';
+    const next = runs.find(r => trialRunState(r) === 'overdue') || runs.find(r => trialRunState(r) === 'planned');
+    if (next) return `${next.round} ${trialShortDate(next.plannedDate)}`.trim();
+    const done = runs.filter(r => trialRunState(r) === 'done');
+    if (done.length) { const l = done[done.length - 1]; return `${l.round} ${trialShortDate(l.date)}`.trim(); }
+    return runs[runs.length - 1].round;
+  })();
 
   // 計算距離上次更新的天數
   const daysSinceUpdate = (() => {
@@ -4293,7 +4398,7 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
       onDragEnd={() => {
         if (onDragEnd) onDragEnd();
       }}
-      className={`transition ${isDragging ? 'opacity-30' : ''} ${isDropTarget ? 'ring-2 ring-blue-400 ring-offset-1 rounded-xl' : ''}`}
+      className={`relative transition ${isDragging ? 'opacity-30' : ''} ${isDropTarget ? 'ring-2 ring-blue-400 ring-offset-1 rounded-xl' : ''}`}
     >
     <button
       onClick={onClick}
@@ -4351,14 +4456,16 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
                 目前階段
                 {isOverridden && <span className="text-[9px] text-amber-600" title="已手動覆蓋">●</span>}
               </p>
-              <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border font-medium ${phaseColor.bg} ${phaseColor.text} ${phaseColor.border}`}
-                title={(() => { const d = PHASE_DEFINITIONS.find(p => p.key === currentPhase); return d ? `${d.subtitle}：${d.desc}` : ''; })()}>
-                {currentPhase}
+              {/* PVT 的徽章直接把「現在在第幾次試模、什麼時候」寫進去，點一下就能改 */}
+              <span className="relative inline-block">
+                <span
+                  onClick={canQuickTrial ? (e) => { e.stopPropagation(); setQuickTrial(v => !v); } : undefined}
+                  title={canQuickTrial ? '點一下登記 T1~T4 與日期' : ''}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border font-medium ${phaseColor.bg} ${phaseColor.text} ${phaseColor.border} ${canQuickTrial ? 'cursor-pointer hover:brightness-95' : ''}`}>
+                  {currentPhase}
+                  {trialBadge && <span className="tabular-nums">· {trialBadge}</span>}
+                </span>
               </span>
-              {/* 只印代號別人看不懂，把已經算好的子進度一起顯示 */}
-              {phaseDetail && (
-                <p className="text-[11px] text-slate-500 mt-0.5 whitespace-nowrap">{phaseDetail}</p>
-              )}
             </div>
           </div>
 
@@ -4398,6 +4505,17 @@ function ProjectRow({ project, onClick, draggable = false, isDragging = false, i
         </div>
       </div>
     </button>
+    {/* 快速登記試模的小面板：刻意放在卡片按鈕「外面」，
+        因為 button 裡再放 button 與日期輸入框，有些瀏覽器會點不動 */}
+    {quickTrial && (
+      <div className="relative">
+        <QuickTrialPopover
+          runs={project.trialRuns || []}
+          onClose={() => setQuickTrial(false)}
+          onSave={(runs) => { onQuickTrial(runs); setQuickTrial(false); }}
+        />
+      </div>
+    )}
     </div>
   );
 }

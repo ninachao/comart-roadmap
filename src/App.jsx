@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.63.1';
-const BUILD_ID = '20260824-1900';
+const APP_VERSION = 'v1.64.0';
+const BUILD_ID = '20260824-1940';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.64.0',
+    date: '2026-08-24',
+    changes: [
+      '🔎 新增預定品改用挑選視窗：可搜尋既有產品，選了就自動帶入名稱與產品照片，再改名即可，不必每次重打',
+      '　· 沒有對應產品的東西（例：小立牌）仍可直接打字新增',
+    ],
+  },
   {
     version: 'v1.63.1',
     date: '2026-08-24',
@@ -8370,6 +8378,100 @@ function listItemSampleUsage(it, samples = []) {
   return out;
 }
 
+// 新增預定品：先從既有產品挑一個當底（名稱、照片自動帶入），再改名；
+// 完全新的東西（例如小立牌）也可以直接打字，不必先建產品。
+function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose }) {
+  const [q, setQ] = useState('');
+  const [picked, setPicked] = useState(null);   // 選中的產品
+  const [name, setName] = useState('');
+
+  const list = useMemo(() => {
+    const kw = q.trim().toLowerCase();
+    const all = (projects || []).filter(p => p && (p.name || p.code));
+    if (!kw) return all.slice(0, 60);
+    return all.filter(p =>
+      `${p.code || ''} ${p.name || ''} ${p.customer || ''}`.toLowerCase().includes(kw)
+    ).slice(0, 60);
+  }, [projects, q]);
+
+  const pick = (p) => {
+    setPicked(p);
+    setName(p.name || p.code || '');
+  };
+
+  const submit = () => {
+    const n = name.trim();
+    if (!n) { alert('請填名稱'); return; }
+    onConfirm({
+      name: n,
+      projectId: picked?.id || '',
+      images: (picked?.productImages || []).slice(0, 1),
+    });
+  };
+
+  return (
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-3">
+      <div className="bg-white rounded-xl w-full max-w-md flex flex-col max-h-[85vh]">
+        <div className="p-4 border-b border-slate-100">
+          <h3 className="text-sm font-medium text-slate-800">
+            新增預定品{targetZoneName ? ` → ${targetZoneName}` : ''}
+          </h3>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            還在請工程做、樣品庫還沒有的東西。從既有產品挑一個當底最快，名稱之後還能改。
+          </p>
+        </div>
+
+        <div className="p-4 pb-2">
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)}
+            placeholder="搜尋產品編碼或名稱…"
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400" />
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 space-y-1">
+          {list.length === 0 && <p className="text-xs text-slate-400 py-4 text-center">找不到符合的產品</p>}
+          {list.map(p => {
+            const img = (p.productImages || [])[0];
+            const on = picked?.id === p.id;
+            return (
+              <button key={p.id} onClick={() => pick(p)}
+                className={`w-full flex items-center gap-2 p-1.5 rounded-lg border text-left ${
+                  on ? 'border-amber-400 bg-amber-50' : 'border-slate-100 hover:bg-slate-50'
+                }`}>
+                <span className="w-9 h-9 rounded border border-slate-200 bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
+                  {img ? <StorageImage src={img.url || ''} path={img.path} alt="" className="w-full h-full object-contain" />
+                       : <span className="text-slate-300 text-xs">—</span>}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs text-slate-800 truncate">{p.name || '(未命名)'}</span>
+                  <span className="block text-[10px] text-slate-400">{p.code || '無編碼'}</span>
+                </span>
+                {on && <span className="text-amber-600 text-xs flex-shrink-0">✓</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="p-4 border-t border-slate-100 space-y-2">
+          <label className="block text-[11px] text-slate-500">
+            名稱（可直接改，例：吸盤支架 T1 手板）
+          </label>
+          <input value={name} onChange={e => setName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+            placeholder="沒有對應產品就直接打字，例：小立牌"
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400" />
+          <div className="flex gap-2 justify-end pt-1">
+            <button onClick={onClose} className="px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100 rounded-lg">取消</button>
+            <button onClick={submit}
+              className="px-3 py-1.5 text-xs text-white bg-amber-600 hover:bg-amber-700 rounded-lg">
+              加入
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // 展覽裡的「預定品」小卡：東西還沒做好、樣品庫查不到，所以照片、名稱、備註都直接在這裡填。
 // 圖片支援三種給法：點一下選檔、拖進來、或按 Ctrl+V 貼上（從 LINE／郵件截圖最常用）。
 function PlannedCard({ p, canEdit, onChange, onDelete }) {
@@ -11537,6 +11639,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [openExhibitionId, setOpenExhibitionId] = useState(null);    // 展開的展覽
   const [addingSamplesToExId, setAddingSamplesToExId] = useState(null); // 正在加散件的展覽
   const [addingToZoneId, setAddingToZoneId] = useState('');            // 要直接加到哪個櫃位（空=不指定）
+  const [plannedPicker, setPlannedPicker] = useState(null);            // 新增預定品：{ exId, zoneId }
   const [addingBundleToExId, setAddingBundleToExId] = useState(null);   // 正在建組合品的展覽
 
   const locationOptions = useMemo(() => [...new Set(samples.map(s => s.location).filter(Boolean))], [samples]);
@@ -11733,24 +11836,27 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   // 「預定品」：還在請工程做、還沒進樣品庫的東西。
   // 刻意不寫進 samples 集合 —— 它還不存在實體，若先建成樣品會讓庫存數字失真。
   // 等實品到貨、正式登錄成樣品後，把這筆預定品刪掉換成真樣品即可。
-  const handleAddPlannedToExhibition = async (exId, zoneId = '') => {
+  const handleAddPlannedToExhibition = async (exId, zoneId = '', seed = {}) => {
     const ex = exhibitions.find(e => e.id === exId);
     if (!ex) return;
-    const name = window.prompt('這個還沒做好的東西叫什麼？（例：T1 手板、新底座、A 款轉軸）');
-    if (!name || !name.trim()) return;
+    const name = (seed.name || '').trim();
+    if (!name) return;
     const planned = {
       type: 'planned',
       plannedId: `pl_${Date.now()}`,
-      name: name.trim(),
+      name,
       qty: 1,
       note: '',
       packStatus: '製作中',
       zoneId: zoneId || '',
+      projectId: seed.projectId || '',
+      images: seed.images || [],
     };
     const updated = { ...ex, items: [...(ex.items || []), planned] };
     const cleaned = {};
     Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
     await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
+    setPlannedPicker(null);
   };
 
   const handleUpdatePlanned = async (exId, plannedId, patch) => {
@@ -12222,7 +12328,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                             canEdit={canEdit}
                             onSave={handleSaveExhibition}
                             onAddToZone={(zoneId) => { setAddingToZoneId(zoneId); setAddingSamplesToExId(ex.id); }}
-                            onAddPlanned={(zoneId) => handleAddPlannedToExhibition(ex.id, zoneId)}
+                            onAddPlanned={(zoneId) => setPlannedPicker({ exId: ex.id, zoneId })}
                           />
                           {items.length === 0 ? (
                             <p className="text-xs text-slate-400 py-3 text-center">尚未加入樣品或組合品</p>
@@ -12453,7 +12559,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                 <Plus className="w-3 h-3" />建立組合品
                               </button>
                               <button
-                                onClick={() => handleAddPlannedToExhibition(ex.id, '')}
+                                onClick={() => setPlannedPicker({ exId: ex.id, zoneId: '' })}
                                 title="樣品庫還沒有、還在請工程做的東西，先打字佔位"
                                 className="flex-1 py-1.5 text-xs text-amber-700 hover:bg-amber-50 border border-dashed border-amber-300 rounded flex items-center justify-center gap-1"
                               >
@@ -13613,6 +13719,19 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             exhibition={editingExhibition}
             onSave={handleSaveExhibition}
             onClose={() => setEditingExhibition(null)}
+          />
+        )}
+
+        {plannedPicker && (
+          <AddPlannedModal
+            projects={projects}
+            targetZoneName={(() => {
+              const ex = exhibitions.find(e => e.id === plannedPicker.exId);
+              const z = (ex?.zones || []).find(z => z.id === plannedPicker.zoneId);
+              return z ? z.name : '';
+            })()}
+            onConfirm={(seed) => handleAddPlannedToExhibition(plannedPicker.exId, plannedPicker.zoneId, seed)}
+            onClose={() => setPlannedPicker(null)}
           />
         )}
 

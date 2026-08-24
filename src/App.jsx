@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.61.0';
-const BUILD_ID = '20260824-1500';
+const APP_VERSION = 'v1.62.0';
+const BUILD_ID = '20260824-1720';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.62.0',
+    date: '2026-08-24',
+    changes: [
+      '📝 文件類型與版本改為「直接讀標題」：標題寫 ..._3D_V2，系統就知道這是 3D 的 V2，下一版理所當然是 V3。標籤沒填也完全沒關係',
+      '　· 最新版／舊版／待更新的判斷、版本對照表、下一版建議，全部以標題為準；標籤仍保留供搜尋與篩選',
+      '🧹 移除「標題與標籤不符」的警示與修正按鈕 — 既然以標題為準，就不需要再對帳',
+    ],
+  },
   {
     version: 'v1.61.0',
     date: '2026-08-24',
@@ -9217,30 +9226,27 @@ const REF_DIMS = [
   { key: 'tags', label: '關鍵字', color: '#64748b', bg: '#f1f5f9', ph: '例：黑色、折疊、供 2025 展會' },
 ];
 
-// 檢查「標題寫的」和「標籤設定的」有沒有打架
-// 版本徽章是依標籤計算的，但人是看標題判斷；兩邊不一致就會出現「明明是 V8 卻顯示最新版在 V7」這種困惑
-function titleTagMismatch(it, natures = []) {
-  const title = String(it.title || '');
-  const typeTag = (it.natures || [])[0] || '';
-  const verTag = (it.versions || [])[0] || '';
-  const issues = [];
-  const typeInTitle = title.split('_').map(x => x.trim()).find(x => natures.includes(x));
-  if (typeInTitle && typeTag && typeInTitle !== typeTag) {
-    issues.push(`標題寫「${typeInTitle}」，但文件類型標籤是「${typeTag}」`);
-  }
-  const mT = title.match(/V\s*(\d+)/i);
-  const mG = String(verTag).match(/V\s*(\d+)/i);
-  if (mT && mG && mT[1] !== mG[1]) {
-    issues.push(`標題寫「V${mT[1]}」，但版本標籤是「${verTag}」`);
-  }
-  if (mT && !verTag) {
-    issues.push(`標題寫「V${mT[1]}」，但沒有設定版本標籤`);
-  }
-  return issues;
+// 讀取某維度的值。
+// 「文件類型」與「版本」以標題為優先來源：檔名本來就有規則（編碼_產品名_類型_版本），
+// 標籤不一定每次都填，所以用標題解析出來的值當主判斷，標籤只作為補充。
+function refTitleType(it) {
+  const segs = String(it?.title || '').split('_').map(x => x.trim());
+  return segs.find(x => REF_DIM_PRESETS.natures.includes(x)) || '';
 }
-
-// 讀取某維度的值（相容舊資料）
-function refDimVals(it, key) { return it[key] || []; }
+function refTitleVersion(it) {
+  const segs = String(it?.title || '').split('_').map(x => x.trim());
+  return segs.find(x => /^V\s*\d+/i.test(x)) || '';
+}
+function refDimVals(it, key) {
+  const tags = it?.[key] || [];
+  if (key === 'natures' || key === 'versions') {
+    const fromTitle = key === 'natures' ? refTitleType(it) : refTitleVersion(it);
+    if (!fromTitle) return tags;
+    // 標題的值排第一（判斷最新版／分組都取第一個），其餘標籤保留供搜尋與篩選
+    return [fromTitle, ...tags.filter(t => t !== fromTitle)];
+  }
+  return tags;
+}
 
 // 讀取文件關聯的產品 id 清單（新欄位 relatedProjectIds 陣列；相容舊的單一 relatedProjectId）
 function refLinkedProjIds(it) {
@@ -9824,26 +9830,6 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
     await deleteDoc(doc(db, REFERENCE_COL, it.id));
   };
 
-  // 標題與標籤不一致時，以標題為準把標籤補正（類型、版本同一件事不該叫人維護兩次）
-  const fixTagsFromTitle = async (it) => {
-    const segs = String(it.title || '').split('_').map(x => x.trim());
-    const typeInTitle = segs.find(x => REF_DIM_PRESETS.natures.includes(x));
-    const verInTitle = segs.find(x => /^V\s*\d+/i.test(x));
-    const patch = {};
-    const lines = [];
-    if (typeInTitle && (it.natures || [])[0] !== typeInTitle) {
-      patch.natures = [typeInTitle];
-      lines.push(`文件類型：${(it.natures || [])[0] || '（空白）'} → ${typeInTitle}`);
-    }
-    if (verInTitle && (it.versions || [])[0] !== verInTitle) {
-      patch.versions = [verInTitle];
-      lines.push(`版本：${(it.versions || [])[0] || '（空白）'} → ${verInTitle}`);
-    }
-    if (!lines.length) { alert('標題裡沒有可用來修正的類型或版本'); return; }
-    if (!window.confirm(`要依標題「${it.title}」修正標籤嗎？\n\n${lines.join('\n')}\n\n（只改標籤，標題與檔案都不動）`)) return;
-    await setDoc(doc(db, REFERENCE_COL, it.id), patch, { merge: true });
-  };
-
   const addEditingImage = async (file) => {
     const dataUrl = await reqImageToDataUrl(file);
     setEditing(v => ({ ...v, images: [...(v.images || []), { dataUrl, name: file.name }] }));
@@ -9953,25 +9939,12 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
               }`}
               title={it.title}>{it.title}</button>
             {/* 讓不熟狀況的人一眼知道該用哪一份 */}
-            {/* 標題與標籤打架時明確警告：徽章是依標籤算的，不一致就會看起來矛盾 */}
-            {(() => {
-              const issues = titleTagMismatch(it, REF_DIM_PRESETS.natures);
-              if (!issues.length) return null;
-              return (
-                <button onClick={() => fixTagsFromTitle(it)}
-                  title={`${issues.join('\n')}\n\n版本／最新版是依「標籤」判斷，不是看標題文字。\n點此可依標題自動修正標籤（也可按鉛筆自行編輯）`}
-                  className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 inline-flex items-center gap-1"
-                  style={{ background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>
-                  ⚠ 標題與標籤不符 · 點此修正
-                </button>
-              );
-            })()}
             {vs?.state === 'current' && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 inline-flex items-center gap-1"
                 style={{ background: '#fff1f2', color: '#e11d48', border: '1px solid #fecdd3' }}
                 title={vs.pinned
                   ? '已手動指定為最新版'
-                  : `在「${(it.natures || [])[0] || '未分類'}」這個文件類型裡最新，且已跟上產品版本（依標籤判斷，不是看標題文字）`}>
+                  : `在「${(it.natures || [])[0] || '未分類'}」這個文件類型裡最新，且已跟上產品版本（依標題解析的類型與版本判斷）`}>
                 <span className="blink-dot inline-block w-1.5 h-1.5 rounded-full" style={{ background: '#f43f5e' }} />
                 最新版{vs.pinned ? '·已指定' : ''}
               </span>
@@ -9979,7 +9952,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
             {vs?.state === 'stale' && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 inline-flex items-center gap-1"
                 style={{ background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' }}
-                title={`這是「${(it.natures || [])[0] || '未分類'}」類型最新的一份，但產品已進到 V${vs.productMax}，這份還在 V${vs.myNum}，尚未跟上（依標籤判斷）`}>
+                title={`這是「${(it.natures || [])[0] || '未分類'}」類型最新的一份，但產品已進到 V${vs.productMax}，這份還在 V${vs.myNum}，尚未跟上（依標題解析的版本判斷）`}>
                 待更新
                 {vs.productMax != null && vs.myNum != null && (
                   <span className="opacity-55 tabular-nums">V{vs.myNum}→V{vs.productMax}</span>
@@ -9988,7 +9961,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
             )}
             {vs?.state === 'old' && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0"
-                title={`「${(it.natures || [])[0] || '未分類'}」類型裡已有更新的版本（依標籤判斷）`}
+                title={`「${(it.natures || [])[0] || '未分類'}」類型裡已有更新的版本（依標題解析的版本判斷）`}
                 style={{ background: '#f8fafc', color: '#94a3b8', border: '1px solid #f1f5f9' }}>舊版</span>
             )}
           </div>
@@ -10765,40 +10738,9 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                     placeholder="例：HDRH0001_鎖定式平板支架-拉伸版_ID" autoFocus
                     className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-violet-400" />
                   <p className="text-[10px] text-slate-400 mt-0.5">
-                    建議格式：編碼_產品名稱_文件類型。跨多個產品時會自動改成「編碼A+編碼B_類型」；
-                    若檔名本身已說明清楚，可直接按「📄 用檔名」。
+                    建議格式：編碼_產品名稱_文件類型_版本。系統會直接讀標題判斷類型與版本
+                    （例：..._3D_V2 的下一版就是 V3），所以標籤沒填也沒關係。
                   </p>
-                  {/* 標題改了但標籤沒跟著改，最新版判斷就會錯（判斷看的是標籤）*/}
-                  {(() => {
-                    const segs = String(editing.title || '').split('_').map(x => x.trim());
-                    const typeInTitle = segs.find(x => REF_DIM_PRESETS.natures.includes(x));
-                    const verInTitle = segs.find(x => /^V\s*\d+/i.test(x));
-                    const curType = (editing.natures || [])[0] || '';
-                    const curVer = (editing.versions || [])[0] || '';
-                    const bad = (typeInTitle && curType && typeInTitle !== curType)
-                      || (verInTitle && verInTitle !== curVer);
-                    if (!bad) return null;
-                    return (
-                      <div className="mt-1 p-1.5 rounded text-[10px] flex items-start gap-2"
-                        style={{ background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' }}>
-                        <span className="flex-1">
-                          標題寫的和下方標籤不一致
-                          {typeInTitle && curType && typeInTitle !== curType ? `（類型：標題 ${typeInTitle} ／ 標籤 ${curType}）` : ''}
-                          {verInTitle && verInTitle !== curVer ? `（版本：標題 ${verInTitle} ／ 標籤 ${curVer || '空白'}）` : ''}
-                          。最新版是依標籤判斷的。
-                        </span>
-                        <button
-                          onClick={() => setEditing(v => ({
-                            ...v,
-                            ...(typeInTitle ? { natures: [typeInTitle] } : {}),
-                            ...(verInTitle ? { versions: [verInTitle] } : {}),
-                          }))}
-                          className="flex-shrink-0 px-1.5 py-0.5 rounded bg-amber-600 text-white hover:bg-amber-700">
-                          依標題修正
-                        </button>
-                      </div>
-                    );
-                  })()}
                 </div>
                 <div>
                   <label className="block text-xs text-slate-600 mb-1">日期</label>

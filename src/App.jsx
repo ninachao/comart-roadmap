@@ -49,10 +49,17 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.66.0';
-const BUILD_ID = '20260824-2230';
+const APP_VERSION = 'v1.66.1';
+const BUILD_ID = '20260824-2300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.66.1',
+    date: '2026-08-24',
+    changes: [
+      '🐛 修正：只有階段是 PVT（試產）的卡片才能點徽章登記 T1~T4，規劃／EVT／DVT／MP 不再跳出面板',
+    ],
+  },
   {
     version: 'v1.66.0',
     date: '2026-08-24',
@@ -4336,10 +4343,12 @@ function ProjectRow({ project, onClick, onQuickTrial, draggable = false, isDragg
   const phaseColor = PHASE_COLORS[currentPhase];
   const isOverridden = !!project.phaseOverride;
   const [quickTrial, setQuickTrial] = useState(false);
-  const canQuickTrial = !!onQuickTrial;
+  // T1~T4 只存在於試產階段，其他階段（規劃／EVT／DVT／MP）點徽章不該跳出登記面板
+  const canQuickTrial = !!onQuickTrial && currentPhase === 'PVT';
 
   // 徽章上要顯示的試模輪次：優先講「接下來哪一次、什麼時候」，沒有待辦才講最後完成的
   const trialBadge = (() => {
+    if (currentPhase !== 'PVT') return '';
     const runs = project.trialRuns || [];
     if (!runs.length) return '';
     const next = runs.find(r => trialRunState(r) === 'overdue') || runs.find(r => trialRunState(r) === 'planned');

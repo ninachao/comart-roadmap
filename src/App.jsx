@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.68.1';
-const BUILD_ID = '20260825-0140';
+const APP_VERSION = 'v1.69.0';
+const BUILD_ID = '20260825-0220';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.69.0',
+    date: '2026-08-25',
+    changes: [
+      '📊 領用紀錄改成真正的表格：加上欄位標題（領用人／樣品／用途／數量／日期／狀態／操作），每列等高單行',
+      '🏷 狀態欄只留一個徽章，不再出現兩個徽章疊成兩行導致列高不一',
+      '🟣 「客戶樣品」改用樣品名前的紫色小點標示，滑過去看說明',
+      '　· 用途獨立成一欄（視窗較窄時自動隱藏），中間不再留一大片空白',
+    ],
+  },
   {
     version: 'v1.68.1',
     date: '2026-08-25',
@@ -12536,22 +12546,38 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                 return <p className="text-center text-sm text-slate-400 py-8">找不到符合的領用紀錄</p>;
               }
               return (
-              <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg bg-white">
+              <div className="border border-slate-200 rounded-lg bg-white overflow-hidden">
+                {/* 欄位標題：有了表頭，下面的數字與徽章才有歸屬，不會像散落的貼紙 */}
+                <div className="flex items-center gap-3 px-3 py-1.5 bg-slate-50 border-b border-slate-200 text-[10px] font-medium text-slate-400 tracking-wide">
+                  <span className="flex-shrink-0 w-8" />
+                  <span className="flex-shrink-0 w-20">領用人</span>
+                  <span className="flex-1 min-w-0">樣品</span>
+                  <span className="flex-shrink-0 w-40 hidden lg:block">用途</span>
+                  <span className="flex-shrink-0 w-10 text-right">數量</span>
+                  <span className="flex-shrink-0 w-20 text-right">日期</span>
+                  <span className="flex-shrink-0 w-24">狀態</span>
+                  {canEdit && <span className="flex-shrink-0 w-28 text-right">操作</span>}
+                </div>
+                <div className="divide-y divide-slate-100">
                 {filteredW.map(w => {
                   const linkedSample = sampleMap[w.sampleId];
                   const sampleImg = (linkedSample?.images || [])[0];
                   const isOut = !w.returned && !w.noReturn; // 在外未歸還
+                  // 狀態只留「一個」徽章：兩個疊起來會讓每列高度不一致，表格就散了
+                  const status = w.returned
+                    ? { label: '已歸還', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+                    : w.noReturn
+                      ? { label: w.noReturnReason || '客戶未歸還', cls: 'bg-rose-50 text-rose-700 border-rose-200' }
+                      : { label: '在外', cls: 'bg-amber-50 text-amber-700 border-amber-200' };
                   return (
                   <div key={w.id} className="group">
-                    {/* 固定欄寬的一列：縮圖｜領用人｜樣品＋用途｜數量／日期｜狀態｜操作
-                        每一欄都給死寬度，眼睛才有一條可以往下掃的直線 */}
-                    <div className={`flex items-center gap-3 px-3 py-2 ${w.returned ? 'opacity-55' : ''}`}>
+                    <div className={`flex items-center gap-3 px-3 h-12 hover:bg-slate-50/70 ${w.returned ? 'opacity-55' : ''}`}>
                       {/* 縮圖：點一下放大 */}
                       <button
                         onClick={(e) => { e.stopPropagation(); if (sampleImg) setZoomImg({ media: sampleImg, name: w.sampleName }); }}
                         disabled={!sampleImg}
                         title={sampleImg ? '點一下放大' : ''}
-                        className={`flex-shrink-0 w-10 h-10 rounded bg-slate-50 border border-slate-200 overflow-hidden flex items-center justify-center ${sampleImg ? 'cursor-zoom-in hover:border-slate-400' : ''}`}>
+                        className={`flex-shrink-0 w-8 h-8 rounded bg-slate-50 border border-slate-200 overflow-hidden flex items-center justify-center ${sampleImg ? 'cursor-zoom-in hover:border-slate-400' : ''}`}>
                         {sampleImg ? (
                           <StorageImage src={sampleImg.url || sampleImg.dataUrl} path={sampleImg.path} alt={w.sampleName}
                             className="w-full h-full object-contain" />
@@ -12560,38 +12586,35 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                         )}
                       </button>
 
-                      {/* 領用人：獨立一欄並用細線分隔，不再和產品名黏在一起 */}
-                      <div className="flex-shrink-0 w-20 pr-3 border-r border-slate-100">
-                        <span className="block text-[13px] font-medium text-slate-900 truncate" title={w.personName}>
-                          {w.personName}
-                        </span>
-                      </div>
+                      <span className="flex-shrink-0 w-20 text-[13px] font-medium text-slate-900 truncate" title={w.personName}>
+                        {w.personName}
+                      </span>
 
-                      {/* 樣品名稱（用途降到第二行，避免同一行擠三種資訊） */}
-                      <div className="flex-1 min-w-0">
-                        <span className="block text-[13px] text-slate-700 truncate" title={w.sampleName}>{w.sampleName}</span>
-                        {w.purpose && (
-                          <span className="block text-[11px] text-slate-400 truncate" title={w.purpose}>{w.purpose}</span>
+                      <span className="flex-1 min-w-0 flex items-center gap-1.5">
+                        {/* 客戶樣品用一個小點標記，不再多佔一個徽章 */}
+                        {w.fromListItemId && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-violet-500 flex-shrink-0" title="客戶樣品" />
                         )}
-                      </div>
+                        <span className="text-[13px] text-slate-800 truncate" title={w.sampleName}>{w.sampleName}</span>
+                      </span>
 
-                      {/* 數量與日期：靠右對齊的數字欄 */}
-                      <div className="flex-shrink-0 w-24 text-right">
-                        <span className="block text-xs text-slate-600 tabular-nums">×{w.quantity}</span>
-                        <span className="block text-[11px] text-slate-400 tabular-nums">{w.date}</span>
-                      </div>
+                      <span className="flex-shrink-0 w-40 hidden lg:block text-[11px] text-slate-400 truncate" title={w.purpose || ''}>
+                        {w.purpose || '—'}
+                      </span>
 
-                      {/* 狀態：固定寬度，徽章一律靠左起排，上下才會對齊 */}
-                      <div className="flex-shrink-0 w-28 flex items-center gap-1 flex-wrap">
-                        {w.returned && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded whitespace-nowrap">已歸還</span>}
-                        {w.fromListItemId && <span className="text-[10px] px-1.5 py-0.5 bg-violet-50 text-violet-700 border border-violet-200 rounded whitespace-nowrap">客戶樣品</span>}
-                        {w.noReturn && <span className="text-[10px] px-1.5 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded whitespace-nowrap" title={w.noReturnReason}>{w.noReturnReason || '客戶未歸還'}</span>}
-                        {isOut && <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded whitespace-nowrap">在外</span>}
-                      </div>
+                      <span className="flex-shrink-0 w-10 text-right text-xs text-slate-600 tabular-nums">×{w.quantity}</span>
+                      <span className="flex-shrink-0 w-20 text-right text-[11px] text-slate-400 tabular-nums">{w.date}</span>
+
+                      <span className="flex-shrink-0 w-24">
+                        <span className={`inline-block max-w-full truncate text-[10px] px-1.5 py-0.5 rounded border ${status.cls}`}
+                          title={w.noReturnReason || status.label}>
+                          {status.label}
+                        </span>
+                      </span>
 
                       {/* 操作：位置永遠保留，hover 才顯示，滑過去時列不會跳動 */}
                       {canEdit && (
-                        <div className="flex-shrink-0 w-[7.5rem] flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                        <span className="flex-shrink-0 w-28 flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition">
                           {!w.noReturn && (
                             <button
                               onClick={() => handleToggleReturn(w)}
@@ -12631,7 +12654,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
-                        </div>
+                        </span>
                       )}
                     </div>
                     {/* 行內展開：不歸還原因（取代瀏覽器 prompt） */}
@@ -12670,6 +12693,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                   </div>
                   );
                 })}
+                </div>
               </div>
               );
             })()}

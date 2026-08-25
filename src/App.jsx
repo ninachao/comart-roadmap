@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.68.0';
-const BUILD_ID = '20260825-0100';
+const APP_VERSION = 'v1.68.1';
+const BUILD_ID = '20260825-0140';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.68.1',
+    date: '2026-08-25',
+    changes: [
+      '📐 領用紀錄改為固定欄寬：縮圖｜領用人｜樣品＋用途｜數量／日期｜狀態｜操作，上下對齊不再參差',
+      '👤 領用人獨立成一欄並以細線分隔，不再和樣品名稱黏在一起',
+      '🔍 領用紀錄的縮圖可以點一下放大檢視',
+      '　· 操作按鈕的位置固定保留，滑鼠移過去時整列不會再跳動',
+    ],
+  },
   {
     version: 'v1.68.0',
     date: '2026-08-25',
@@ -12042,6 +12052,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [addingSamplesToExId, setAddingSamplesToExId] = useState(null); // 正在加散件的展覽
   const [addingToZoneId, setAddingToZoneId] = useState('');            // 要直接加到哪個櫃位（空=不指定）
   const [plannedPicker, setPlannedPicker] = useState(null);            // 新增預定品：{ exId, zoneId }
+  const [zoomImg, setZoomImg] = useState(null);                        // 放大檢視圖片：{ media, name }
   const [addingBundleToExId, setAddingBundleToExId] = useState(null);   // 正在建組合品的展覽
 
   const locationOptions = useMemo(() => [...new Set(samples.map(s => s.location).filter(Boolean))], [samples]);
@@ -12532,35 +12543,55 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                   const isOut = !w.returned && !w.noReturn; // 在外未歸還
                   return (
                   <div key={w.id} className="group">
-                    {/* 單行緊湊列 */}
-                    <div className={`flex items-center gap-2.5 px-2.5 py-1.5 ${w.returned ? 'opacity-55' : ''}`}>
-                      {/* 縮圖 */}
-                      <div className="flex-shrink-0 w-8 h-8 rounded bg-slate-50 border border-slate-100 overflow-hidden flex items-center justify-center">
+                    {/* 固定欄寬的一列：縮圖｜領用人｜樣品＋用途｜數量／日期｜狀態｜操作
+                        每一欄都給死寬度，眼睛才有一條可以往下掃的直線 */}
+                    <div className={`flex items-center gap-3 px-3 py-2 ${w.returned ? 'opacity-55' : ''}`}>
+                      {/* 縮圖：點一下放大 */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); if (sampleImg) setZoomImg({ media: sampleImg, name: w.sampleName }); }}
+                        disabled={!sampleImg}
+                        title={sampleImg ? '點一下放大' : ''}
+                        className={`flex-shrink-0 w-10 h-10 rounded bg-slate-50 border border-slate-200 overflow-hidden flex items-center justify-center ${sampleImg ? 'cursor-zoom-in hover:border-slate-400' : ''}`}>
                         {sampleImg ? (
                           <StorageImage src={sampleImg.url || sampleImg.dataUrl} path={sampleImg.path} alt={w.sampleName}
                             className="w-full h-full object-contain" />
                         ) : (
-                          <ImageIcon className="w-3.5 h-3.5 text-slate-300" />
+                          <ImageIcon className="w-4 h-4 text-slate-300" />
                         )}
+                      </button>
+
+                      {/* 領用人：獨立一欄並用細線分隔，不再和產品名黏在一起 */}
+                      <div className="flex-shrink-0 w-20 pr-3 border-r border-slate-100">
+                        <span className="block text-[13px] font-medium text-slate-900 truncate" title={w.personName}>
+                          {w.personName}
+                        </span>
                       </div>
-                      {/* 主資訊：一行搞定，過長截斷 */}
-                      <div className="flex-1 min-w-0 flex items-baseline gap-x-2 flex-wrap">
-                        <span className="text-sm font-medium text-slate-900 whitespace-nowrap">{w.personName}</span>
-                        <span className="text-xs text-slate-700 truncate max-w-[16rem]" title={w.sampleName}>{w.sampleName}</span>
-                        <span className="text-xs text-slate-500 whitespace-nowrap">×{w.quantity}</span>
-                        <span className="text-[11px] text-slate-400 whitespace-nowrap">{w.date}</span>
+
+                      {/* 樣品名稱（用途降到第二行，避免同一行擠三種資訊） */}
+                      <div className="flex-1 min-w-0">
+                        <span className="block text-[13px] text-slate-700 truncate" title={w.sampleName}>{w.sampleName}</span>
                         {w.purpose && (
-                          <span className="text-[11px] text-slate-400 truncate max-w-[14rem]" title={w.purpose}>{w.purpose}</span>
+                          <span className="block text-[11px] text-slate-400 truncate" title={w.purpose}>{w.purpose}</span>
                         )}
                       </div>
-                      {/* 狀態徽章 */}
-                      {w.returned && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded whitespace-nowrap">已歸還</span>}
-                      {w.fromListItemId && <span className="text-[10px] px-1.5 py-0.5 bg-violet-50 text-violet-700 border border-violet-200 rounded whitespace-nowrap">客戶樣品</span>}
-                      {w.noReturn && <span className="text-[10px] px-1.5 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded whitespace-nowrap" title={w.noReturnReason}>{w.noReturnReason || '客戶未歸還'}</span>}
-                      {isOut && <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded whitespace-nowrap">在外</span>}
-                      {/* 操作（hover 才浮現，減少視覺噪音） */}
+
+                      {/* 數量與日期：靠右對齊的數字欄 */}
+                      <div className="flex-shrink-0 w-24 text-right">
+                        <span className="block text-xs text-slate-600 tabular-nums">×{w.quantity}</span>
+                        <span className="block text-[11px] text-slate-400 tabular-nums">{w.date}</span>
+                      </div>
+
+                      {/* 狀態：固定寬度，徽章一律靠左起排，上下才會對齊 */}
+                      <div className="flex-shrink-0 w-28 flex items-center gap-1 flex-wrap">
+                        {w.returned && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded whitespace-nowrap">已歸還</span>}
+                        {w.fromListItemId && <span className="text-[10px] px-1.5 py-0.5 bg-violet-50 text-violet-700 border border-violet-200 rounded whitespace-nowrap">客戶樣品</span>}
+                        {w.noReturn && <span className="text-[10px] px-1.5 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded whitespace-nowrap" title={w.noReturnReason}>{w.noReturnReason || '客戶未歸還'}</span>}
+                        {isOut && <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded whitespace-nowrap">在外</span>}
+                      </div>
+
+                      {/* 操作：位置永遠保留，hover 才顯示，滑過去時列不會跳動 */}
                       {canEdit && (
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                        <div className="flex-shrink-0 w-[7.5rem] flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition">
                           {!w.noReturn && (
                             <button
                               onClick={() => handleToggleReturn(w)}
@@ -12605,7 +12636,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                     </div>
                     {/* 行內展開：不歸還原因（取代瀏覽器 prompt） */}
                     {noReturnEditId === w.id && (
-                      <div className="flex items-center gap-2 px-2.5 pb-2 pl-[3.25rem]">
+                      <div className="flex items-center gap-2 px-3 pb-2 pl-[3.25rem]">
                         <input
                           value={noReturnReasonDraft}
                           onChange={e => setNoReturnReasonDraft(e.target.value)}
@@ -14125,6 +14156,18 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             onSave={handleSaveExhibition}
             onClose={() => setEditingExhibition(null)}
           />
+        )}
+
+        {zoomImg && (
+          <div onClick={() => setZoomImg(null)}
+            className="modal-anim fixed inset-0 bg-slate-900/80 z-[60] flex items-center justify-center p-6 cursor-zoom-out">
+            <div className="max-w-3xl max-h-full flex flex-col items-center gap-2" onClick={e => e.stopPropagation()}>
+              <SampleMediaThumb media={zoomImg.media} className="max-w-full max-h-[80vh] object-contain rounded-lg bg-white" />
+              <p className="text-xs text-white/80 text-center">{zoomImg.name}</p>
+              <button onClick={() => setZoomImg(null)}
+                className="text-xs px-3 py-1 rounded-full bg-white/15 text-white hover:bg-white/25">關閉</button>
+            </div>
+          </div>
         )}
 
         {plannedPicker && (

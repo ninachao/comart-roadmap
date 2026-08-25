@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Search, Plus, X, Edit2, Trash2, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Image as ImageIcon, Calendar, Tag, AlertCircle, Filter, MessageSquare, Info, LogOut, Lock, Eye, EyeOff, FileText, Loader } from 'lucide-react';
+import { Search, Plus, X, Edit2, Trash2, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Image as ImageIcon, Calendar, Tag, AlertCircle, Filter, MessageSquare, Info, LogOut, Lock, Eye, EyeOff, FileText, Loader, Check, RotateCcw, Ban } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.69.0';
-const BUILD_ID = '20260825-0220';
+const APP_VERSION = 'v1.69.1';
+const BUILD_ID = '20260825-0300';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.69.1',
+    date: '2026-08-25',
+    changes: [
+      '🔧 領用紀錄操作欄改成常駐小圖示（✓ 歸還／⃠ 不歸還／🗑 刪除），寬度從 7rem 縮到 4rem，不再需要滑過去才出現',
+      '↔️ 樣品與用途改成彈性欄寬（3:2），視窗越寬字顯示越多；日期與數量欄縮窄，把空間讓給名稱',
+      '🧹 移除樣品名前的紫色小點',
+    ],
+  },
   {
     version: 'v1.69.0',
     date: '2026-08-25',
@@ -12551,12 +12560,12 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                 <div className="flex items-center gap-3 px-3 py-1.5 bg-slate-50 border-b border-slate-200 text-[10px] font-medium text-slate-400 tracking-wide">
                   <span className="flex-shrink-0 w-8" />
                   <span className="flex-shrink-0 w-20">領用人</span>
-                  <span className="flex-1 min-w-0">樣品</span>
-                  <span className="flex-shrink-0 w-40 hidden lg:block">用途</span>
-                  <span className="flex-shrink-0 w-10 text-right">數量</span>
-                  <span className="flex-shrink-0 w-20 text-right">日期</span>
+                  <span className="flex-[3] min-w-0">樣品</span>
+                  <span className="flex-[2] min-w-0 hidden lg:block">用途</span>
+                  <span className="flex-shrink-0 w-9 text-right">數量</span>
+                  <span className="flex-shrink-0 w-[4.5rem] text-right">日期</span>
                   <span className="flex-shrink-0 w-24">狀態</span>
-                  {canEdit && <span className="flex-shrink-0 w-28 text-right">操作</span>}
+                  {canEdit && <span className="flex-shrink-0 w-16 text-right">操作</span>}
                 </div>
                 <div className="divide-y divide-slate-100">
                 {filteredW.map(w => {
@@ -12590,20 +12599,16 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                         {w.personName}
                       </span>
 
-                      <span className="flex-1 min-w-0 flex items-center gap-1.5">
-                        {/* 客戶樣品用一個小點標記，不再多佔一個徽章 */}
-                        {w.fromListItemId && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-violet-500 flex-shrink-0" title="客戶樣品" />
-                        )}
-                        <span className="text-[13px] text-slate-800 truncate" title={w.sampleName}>{w.sampleName}</span>
+                      <span className="flex-[3] min-w-0 text-[13px] text-slate-800 truncate" title={w.sampleName}>
+                        {w.sampleName}
                       </span>
 
-                      <span className="flex-shrink-0 w-40 hidden lg:block text-[11px] text-slate-400 truncate" title={w.purpose || ''}>
+                      <span className="flex-[2] min-w-0 hidden lg:block text-[11px] text-slate-400 truncate" title={w.purpose || ''}>
                         {w.purpose || '—'}
                       </span>
 
-                      <span className="flex-shrink-0 w-10 text-right text-xs text-slate-600 tabular-nums">×{w.quantity}</span>
-                      <span className="flex-shrink-0 w-20 text-right text-[11px] text-slate-400 tabular-nums">{w.date}</span>
+                      <span className="flex-shrink-0 w-9 text-right text-xs text-slate-600 tabular-nums">×{w.quantity}</span>
+                      <span className="flex-shrink-0 w-[4.5rem] text-right text-[11px] text-slate-400 tabular-nums">{w.date}</span>
 
                       <span className="flex-shrink-0 w-24">
                         <span className={`inline-block max-w-full truncate text-[10px] px-1.5 py-0.5 rounded border ${status.cls}`}
@@ -12612,23 +12617,25 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                         </span>
                       </span>
 
-                      {/* 操作：位置永遠保留，hover 才顯示，滑過去時列不會跳動 */}
+                      {/* 操作：常駐的小圖示。淡灰色不搶注意力，滑到才上色 */}
                       {canEdit && (
-                        <span className="flex-shrink-0 w-28 flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                        <span className="flex-shrink-0 w-16 flex items-center justify-end gap-0.5">
                           {!w.noReturn && (
                             <button
                               onClick={() => handleToggleReturn(w)}
-                              className={`text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap ${w.returned ? 'text-slate-500 hover:bg-slate-100' : 'text-emerald-700 hover:bg-emerald-50'}`}
-                            >
-                              {w.returned ? '取消歸還' : '✓ 歸還'}
+                              title={w.returned ? '取消歸還' : '標記為已歸還'}
+                              className={`p-1 rounded transition ${w.returned
+                                ? 'text-slate-300 hover:text-slate-700 hover:bg-slate-100'
+                                : 'text-slate-300 hover:text-emerald-600 hover:bg-emerald-50'}`}>
+                              {w.returned ? <RotateCcw className="w-3.5 h-3.5" /> : <Check className="w-4 h-4" />}
                             </button>
                           )}
                           {isOut && (
                             <button
                               onClick={() => { setNoReturnEditId(noReturnEditId === w.id ? null : w.id); setNoReturnReasonDraft(''); }}
-                              className="text-[11px] px-1.5 py-0.5 text-blue-700 hover:bg-blue-50 rounded whitespace-nowrap"
-                            >
-                              不歸還
+                              title="標記為不歸還（送客戶／展覽留存／損壞）"
+                              className="p-1 rounded text-slate-300 hover:text-blue-600 hover:bg-blue-50 transition">
+                              <Ban className="w-3.5 h-3.5" />
                             </button>
                           )}
                           {w.noReturn && (
@@ -12639,9 +12646,9 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                 Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && k !== '_docId') cleaned[k] = updated[k]; });
                                 setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
                               }}
-                              className="text-[11px] px-1.5 py-0.5 text-slate-500 hover:bg-slate-100 rounded whitespace-nowrap"
-                            >
-                              取消不歸還
+                              title="取消不歸還"
+                              className="p-1 rounded text-slate-300 hover:text-slate-700 hover:bg-slate-100 transition">
+                              <RotateCcw className="w-3.5 h-3.5" />
                             </button>
                           )}
                           <button
@@ -12649,7 +12656,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                               if (!confirm(`確定刪除這筆領用紀錄嗎？（${w.personName} 領 ${w.quantity} 個）`)) return;
                               await deleteDoc(doc(db, WITHDRAWALS_COL, w.id));
                             }}
-                            className="p-1 text-slate-300 hover:text-rose-600 transition"
+                            className="p-1 rounded text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition"
                             title="刪除此筆紀錄"
                           >
                             <Trash2 className="w-3.5 h-3.5" />

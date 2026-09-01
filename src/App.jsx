@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.69.1';
-const BUILD_ID = '20260825-0300';
+const APP_VERSION = 'v1.70.0';
+const BUILD_ID = '20260825-0400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.70.0',
+    date: '2026-08-25',
+    changes: [
+      '📋 文件中心支援 Ctrl+V 貼上檔案：在 Outlook／Teams 直接複製附件，回到系統貼上即可，不必先下載到桌面',
+      '　· 在產品分頁貼上 → 直接成為該產品的文件；在新增／編輯視窗貼上 → 加入該筆文件',
+    ],
+  },
   {
     version: 'v1.69.1',
     date: '2026-08-25',
@@ -10806,7 +10814,16 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
   };
 
   return (
-    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-40 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto"
+      onPaste={canEdit ? (e) => {
+        // 從 Outlook／Teams 直接複製附件後 Ctrl+V，省掉「下載→存桌面→再上傳」三步
+        const files = Array.from(e.clipboardData?.files || []);
+        if (!files.length) return;          // 純文字貼上不攔截
+        e.preventDefault();
+        if (editing) { addEditingFiles(files); return; }
+        if (drillGroup?.project) { uploadToDrilledProject(files); return; }
+        alert('請先點進某個產品，或先按「新增文件」，再貼上檔案');
+      } : undefined}>
       <div className="bg-white rounded-xl max-w-5xl w-full p-4 sm:p-5 my-auto max-h-[95vh] flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -11087,7 +11104,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                     className={`mb-2 py-2 text-center text-[11px] rounded-lg border border-dashed transition ${
                       drillDragOver ? 'border-violet-400 bg-violet-50 text-violet-600' : 'border-slate-200 text-slate-400'
                     }`}>
-                    {drillDragOver ? '↓ 放開即上傳到此產品' : `把檔案拖到這裡，直接新增為「${drillGroup.project.name}」的文件`}
+                    {drillDragOver ? '↓ 放開即上傳到此產品' : `把檔案拖到這裡，或直接 Ctrl+V 貼上，就會成為「${drillGroup.project.name}」的文件`}
                   </div>
                 )
               )}
@@ -11487,7 +11504,7 @@ function ReferenceLibraryModal({ items, projects, currentUser, canEdit, onClose,
                   <label className="block text-xs text-slate-600 mb-1">
                     圖片／檔案
                     <span className="text-slate-400 ml-1">
-                      {formDragOver ? '· ↓ 放開以加入' : '· 可直接把檔案拖進來'}
+                      {formDragOver ? '· ↓ 放開以加入' : '· 可直接拖進來或 Ctrl+V 貼上'}
                     </span>
                   </label>
                   <div className="flex gap-1.5 flex-wrap items-center">

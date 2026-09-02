@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.71.0';
-const BUILD_ID = '20260825-0600';
+const APP_VERSION = 'v1.71.1';
+const BUILD_ID = '20260825-0700';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.71.1',
+    date: '2026-08-25',
+    changes: [
+      '🗂 存放位置下拉改為排序並依櫃子分群：同一個櫃子的層數排在一起（第一層→第十層），沒有分層的位置排在最後',
+      '　· 樣品篩選、樣品編輯、手板列表與位置選項管理都套用同一套排序',
+    ],
+  },
   {
     version: 'v1.71.0',
     date: '2026-08-25',
@@ -9510,6 +9518,45 @@ function computeReservedMap(customerLists, samples = []) {
   return bySample;
 }
 
+// 存放位置排序：先照櫃子名稱，再照層數。
+// 「第十層」要排在「第二層」後面，所以中文數字得換成真的數字，不能照字面排。
+const CJK_NUM = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+function parseLocation(loc) {
+  const str = String(loc || '');
+  const m = str.match(/^(.*?)[-－—\s]*第?\s*([0-9一二三四五六七八九十]+)\s*層\s*$/);
+  if (!m) return { group: str, layer: null };
+  const raw = m[2];
+  const layer = /^\d+$/.test(raw)
+    ? Number(raw)
+    : raw === '十' ? 10
+      : raw.length === 2 && raw[0] === '十' ? 10 + (CJK_NUM[raw[1]] || 0)
+        : raw.length === 2 && raw[1] === '十' ? (CJK_NUM[raw[0]] || 0) * 10
+          : (CJK_NUM[raw] || null);
+  return { group: m[1].trim(), layer };
+}
+function sortLocations(list) {
+  return [...list].sort((a, b) => {
+    const pa = parseLocation(a), pb = parseLocation(b);
+    // 有分層的櫃子排前面，單獨的位置名（例如某人的名字）排最後
+    if ((pa.layer == null) !== (pb.layer == null)) return pa.layer == null ? 1 : -1;
+    const g = pa.group.localeCompare(pb.group, 'zh-Hant');
+    if (g !== 0) return g;
+    return (pa.layer ?? 0) - (pb.layer ?? 0);
+  });
+}
+// 依櫃子分群，讓下拉選單可以用 optgroup 呈現
+function groupLocations(list) {
+  const out = [];
+  sortLocations(list).forEach(loc => {
+    const { group, layer } = parseLocation(loc);
+    const key = layer == null ? '其他位置' : group;
+    const last = out[out.length - 1];
+    if (last && last.key === key) last.items.push(loc);
+    else out.push({ key, items: [loc] });
+  });
+  return out;
+}
+
 function computeRemaining(sample, withdrawalsList, reservedQty = 0) {
   // 還沒到貨的樣品不能算進可用庫存，否則會虛報（狀態空白視為已收到，相容舊資料）
   const st = sample.status || '已收到';
@@ -12181,7 +12228,8 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [zoomImg, setZoomImg] = useState(null);                        // 放大檢視圖片：{ media, name }
   const [addingBundleToExId, setAddingBundleToExId] = useState(null);   // 正在建組合品的展覽
 
-  const locationOptions = useMemo(() => [...new Set(samples.map(s => s.location).filter(Boolean))], [samples]);
+  const locationOptions = useMemo(() => sortLocations([...new Set(samples.map(s => s.location).filter(Boolean))]), [samples]);
+  const locationGroups = useMemo(() => groupLocations(locationOptions), [locationOptions]);
   // 動態類型選項：固定選項 + 樣品裡出現的自訂類型
   const typeOptions = useMemo(() => {
     const custom = samples.map(s => s.type).filter(t => t && !SAMPLE_TYPES.includes(t));
@@ -12516,7 +12564,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
               </select>
               <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} className="px-2 py-1.5 text-sm border border-slate-200 rounded bg-white">
                 <option value="全部">全部位置</option>
-                {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
+                {locationGroups.map(g => (
+                  <optgroup key={g.key} label={g.key}>
+                    {g.items.map(l => <option key={l} value={l}>{l}</option>)}
+                  </optgroup>
+                ))}
               </select>
               {/* 最近新增排序 */}
               <button
@@ -15193,7 +15245,11 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                 {data.location && !locationOptionList.includes(data.location) && (
                   <option value={data.location}>{data.location}</option>
                 )}
-                {locationOptionList.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                {groupLocations(locationOptionList).map(g => (
+                  <optgroup key={g.key} label={g.key}>
+                    {g.items.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                  </optgroup>
+                ))}
               </select>
             </div>
           </div>
@@ -15202,7 +15258,9 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
           {editingLocations && (
             <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/50 space-y-1.5">
               <p className="text-[10px] text-slate-500">位置選項是全公司共用的，改了大家都會看到（改名不影響已填在樣品上的舊位置文字）</p>
-              {locationOptionList.map((loc, i) => (
+              {sortLocations(locationOptionList).map((loc) => {
+                const i = locationOptionList.indexOf(loc);
+                return (
                 <div key={i} className="flex items-center gap-1.5">
                   <input defaultValue={loc}
                     onBlur={e => {
@@ -15214,7 +15272,8 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                     onClick={() => { if (confirm(`刪除位置選項「${loc}」？`)) saveLocationOptions(locationOptionList.filter((_, j) => j !== i)); }}
                     className="p-1 text-slate-300 hover:text-rose-500"><X className="w-3.5 h-3.5" /></button>
                 </div>
-              ))}
+                );
+              })}
               <div className="flex items-center gap-1.5">
                 <input value={newLocationName} onChange={e => setNewLocationName(e.target.value)}
                   placeholder="新增位置，例：樣品櫃1"
@@ -16347,7 +16406,7 @@ function PrototypeOverviewModal({ projects, onClose, onJumpToProject }) {
 
   // 取出唯一的篩選選項
   const statusOptions = useMemo(() => [...new Set(allPrototypes.map(o => o.status).filter(Boolean))], [allPrototypes]);
-  const locationOptions = useMemo(() => [...new Set(allPrototypes.map(o => o.storageLocation).filter(Boolean))], [allPrototypes]);
+  const locationOptions = useMemo(() => sortLocations([...new Set(allPrototypes.map(o => o.storageLocation).filter(Boolean))]), [allPrototypes]);
   const supplierOptions = useMemo(() => [...new Set(allPrototypes.map(o => o.supplier).filter(Boolean))], [allPrototypes]);
 
   // 套用篩選

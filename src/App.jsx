@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.70.1';
-const BUILD_ID = '20260825-0500';
+const APP_VERSION = 'v1.71.0';
+const BUILD_ID = '20260825-0600';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.71.0',
+    date: '2026-08-25',
+    changes: [
+      '🔗 樣品列表點「剩餘/總數」即可就地展開該項樣品的領用紀錄，直接看出數量為何變少，不必跑去領用紀錄分頁翻找',
+      '　· 展開後上方有一行算式：原始數量 − 已送出 − 在外 − 清單預留 → 目前可用',
+      '　· 可直接在這裡標記歸還或取消不歸還，數量立刻回補',
+    ],
+  },
   {
     version: 'v1.70.1',
     date: '2026-08-25',
@@ -9533,7 +9542,10 @@ function computeRemaining(sample, withdrawalsList, reservedQty = 0) {
 }
 
 // 樣品列表元件（可獨立使用，供分組和不分組共用）
-function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, onViewGallery, compact = false }) {
+function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, onViewGallery, compact = false,
+  withdrawals = [], onToggleReturn, onUnsetNoReturn }) {
+  // 「為什麼剩 0」的答案就在領用紀錄裡，所以讓數量欄可以就地展開，不必跑去別的分頁翻
+  const [openWid, setOpenWid] = useState(null);
   if (!samples || samples.length === 0) return null;
   return (
     <div className={compact ? '' : 'border border-slate-200 rounded-lg overflow-hidden'}>
@@ -9603,7 +9615,9 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
                 {s.notes && <p className="text-[11px] text-slate-400 truncate mt-0.5" title={s.notes}>📝 {s.notes}</p>}
               </div>
               <span className={`text-[10px] px-1.5 py-0.5 rounded border text-center ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
-              <span className="text-sm font-semibold tabular-nums">
+              <span className="text-sm font-semibold tabular-nums cursor-pointer hover:underline decoration-dotted"
+                onClick={() => setOpenWid(openWid === s.id ? null : s.id)}
+                title="點一下看這項樣品的領用紀錄">
                 <span className={isOut ? 'text-rose-600' : remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}>{remaining}</span>
                 <span className="text-slate-400 text-xs font-normal"> / {s._effectiveTotal ?? s.initialQuantity ?? 0}</span>
                 {/* 只給 0/0 會讓人以為是系統算錯，要說明是「送出去了」還是「還沒到貨」 */}
@@ -9623,6 +9637,63 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
               <span className="text-xs text-slate-600 truncate">{s.material || <span className="text-slate-300">—</span>}</span>
               {actionBtns}
             </div>
+
+            {/* 展開：這項樣品的領用紀錄 */}
+            {openWid === s.id && (() => {
+              const list = withdrawals
+                .filter(w => w.sampleId === s.id)
+                .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+              return (
+                <div className="px-3 pb-2.5 pt-0.5 bg-slate-50/70 border-t border-slate-100">
+                  <p className="text-[10px] text-slate-400 mb-1.5">
+                    原始數量 {s.initialQuantity || 0}
+                    {(s._gone || 0) > 0 && <> · 已送出 <b className="text-rose-500">{s._gone}</b></>}
+                    {list.filter(w => !w.returned && !w.noReturn).length > 0 && <> · 在外 <b className="text-amber-600">{list.filter(w => !w.returned && !w.noReturn).reduce((n, w) => n + Number(w.quantity || 0), 0)}</b></>}
+                    {(s._reserved || 0) > 0 && <> · 清單預留 <b className="text-blue-500">{s._reserved}</b></>}
+                    {' '}→ 目前可用 <b className="text-slate-700">{s._remaining}</b>
+                  </p>
+                  {list.length === 0 ? (
+                    <p className="text-[11px] text-slate-400">沒有領用紀錄</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {list.map(w => (
+                        <div key={w.id} className="flex items-center gap-2 text-[11px] bg-white border border-slate-200 rounded px-2 py-1">
+                          <span className="text-slate-400 tabular-nums flex-shrink-0 w-[4.5rem]">{w.date}</span>
+                          <span className="font-medium text-slate-700 flex-shrink-0 w-14 truncate">{w.personName}</span>
+                          <span className="text-slate-500 tabular-nums flex-shrink-0">×{w.quantity}</span>
+                          <span className="text-slate-400 flex-1 min-w-0 truncate" title={w.purpose || ''}>{w.purpose || '—'}</span>
+                          {w.returned ? (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded border bg-emerald-50 text-emerald-700 border-emerald-200 flex-shrink-0">已歸還</span>
+                          ) : w.noReturn ? (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-200 flex-shrink-0" title={w.noReturnReason}>{w.noReturnReason || '不歸還'}</span>
+                          ) : (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200 flex-shrink-0">在外</span>
+                          )}
+                          {canEdit && (
+                            <span className="flex-shrink-0 flex items-center gap-0.5">
+                              {!w.noReturn && onToggleReturn && (
+                                <button onClick={() => onToggleReturn(w)}
+                                  title={w.returned ? '取消歸還' : '標記為已歸還'}
+                                  className={`p-0.5 rounded ${w.returned ? 'text-slate-300 hover:text-slate-700' : 'text-slate-300 hover:text-emerald-600'}`}>
+                                  {w.returned ? <RotateCcw className="w-3 h-3" /> : <Check className="w-3.5 h-3.5" />}
+                                </button>
+                              )}
+                              {w.noReturn && onUnsetNoReturn && (
+                                <button onClick={() => onUnsetNoReturn(w)} title="取消不歸還（數量會加回來）"
+                                  className="p-0.5 rounded text-slate-300 hover:text-slate-700">
+                                  <RotateCcw className="w-3 h-3" />
+                                </button>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* 手機卡片式 */}
             <div className="sm:hidden flex gap-2.5 p-3 items-start">
               {thumbEl}
@@ -12220,6 +12291,13 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     await setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
   };
 
+  const handleUnsetNoReturn = async (w) => {
+    const updated = { ...w, noReturn: false, noReturnReason: '' };
+    const cleaned = {};
+    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && k !== '_docId') cleaned[k] = updated[k]; });
+    await setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
+  };
+
   // === 展覽 handlers ===
   // 儲存展覽（新增或編輯基本資料）
   const handleSaveExhibition = async (ex) => {
@@ -12479,6 +12557,9 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                   onDelete={handleDeleteSample}
                   onJump={onJumpToProject}
                   onViewGallery={setViewingGallery}
+                  withdrawals={withdrawals}
+                  onToggleReturn={handleToggleReturn}
+                  onUnsetNoReturn={handleUnsetNoReturn}
                 />
               ) : (
                 // 依產品分組
@@ -12534,6 +12615,9 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                             onDelete={handleDeleteSample}
                             onJump={onJumpToProject}
                             onViewGallery={setViewingGallery}
+                            withdrawals={withdrawals}
+                            onToggleReturn={handleToggleReturn}
+                            onUnsetNoReturn={handleUnsetNoReturn}
                             compact
                           />
                         </div>

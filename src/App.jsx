@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.70.0';
-const BUILD_ID = '20260825-0400';
+const APP_VERSION = 'v1.70.1';
+const BUILD_ID = '20260825-0500';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.70.1',
+    date: '2026-08-25',
+    changes: [
+      '💡 樣品列表會說明數量為何歸零：標記過「不歸還」的顯示「已送出 N」，還沒到貨的顯示「在途 N」，不再只是一個看不懂的 0/0',
+      '🐛 修正儲存樣品時，會把畫面暫存欄位（剩餘、在途等）一併寫進資料庫的問題 —— 那些是每次即時算的，存起來只會變成過期資料',
+    ],
+  },
   {
     version: 'v1.70.0',
     date: '2026-08-25',
@@ -8479,8 +8487,8 @@ function RelatedSamplesSection({ project, samples, withdrawals, readOnly, custom
     const reservedMap = computeReservedMap(customerLists, samples);
     return samples.filter(s => s.relatedProjectId === project.id)
       .map(s => {
-        const { remaining, effectiveTotal, reserved, inTransit, notReceived } = computeRemaining(s, withdrawals, reservedMap.get(s.id) || 0);
-        return { ...s, _remaining: remaining, _effectiveTotal: effectiveTotal, _reserved: reserved, _inTransit: inTransit, _notReceived: notReceived };
+        const { remaining, effectiveTotal, reserved, inTransit, notReceived, gone } = computeRemaining(s, withdrawals, reservedMap.get(s.id) || 0);
+        return { ...s, _remaining: remaining, _effectiveTotal: effectiveTotal, _reserved: reserved, _inTransit: inTransit, _notReceived: notReceived, _gone: gone };
       })
       .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   }, [samples, withdrawals, project.id, customerLists]);
@@ -9497,11 +9505,11 @@ function computeRemaining(sample, withdrawalsList, reservedQty = 0) {
   // 還沒到貨的樣品不能算進可用庫存，否則會虛報（狀態空白視為已收到，相容舊資料）
   const st = sample.status || '已收到';
   if (st === '已取消') {
-    return { remaining: 0, effectiveTotal: 0, reserved: 0, inTransit: 0, notReceived: true };
+    return { remaining: 0, effectiveTotal: 0, reserved: 0, inTransit: 0, notReceived: true, gone: 0 };
   }
   if (st === '已下單' || st === '生產中') {
     return {
-      remaining: 0, effectiveTotal: 0, reserved: 0,
+      remaining: 0, effectiveTotal: 0, reserved: 0, gone: 0,
       inTransit: Number(sample.initialQuantity || 0), notReceived: true,
     };
   }
@@ -9521,7 +9529,7 @@ function computeRemaining(sample, withdrawalsList, reservedQty = 0) {
   // 剩餘 = 總數 − 在外未歸還 − 客戶清單預留
   const remaining = Math.max(0, effectiveTotal - outQty - (Number(reservedQty) || 0));
 
-  return { remaining, effectiveTotal, reserved: Number(reservedQty) || 0, inTransit: 0, notReceived: false };
+  return { remaining, effectiveTotal, reserved: Number(reservedQty) || 0, inTransit: 0, notReceived: false, gone: noReturnQty };
 }
 
 // 樣品列表元件（可獨立使用，供分組和不分組共用）
@@ -9598,6 +9606,17 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
               <span className="text-sm font-semibold tabular-nums">
                 <span className={isOut ? 'text-rose-600' : remaining < 3 ? 'text-amber-600' : 'text-emerald-700'}>{remaining}</span>
                 <span className="text-slate-400 text-xs font-normal"> / {s._effectiveTotal ?? s.initialQuantity ?? 0}</span>
+                {/* 只給 0/0 會讓人以為是系統算錯，要說明是「送出去了」還是「還沒到貨」 */}
+                {s._notReceived ? (
+                  <span className="block text-[9px] text-blue-500 font-normal" title="已下單但還沒收到，暫不計入庫存">
+                    在途 {s._inTransit || s.initialQuantity || 0}
+                  </span>
+                ) : (s._gone || 0) > 0 && (
+                  <span className="block text-[9px] text-rose-400 font-normal"
+                    title={`原有 ${s.initialQuantity || 0} 個，其中 ${s._gone} 個已標記為不歸還（送客戶／展覽留存／損壞），所以不計入總數`}>
+                    已送出 {s._gone}
+                  </span>
+                )}
                 {(s._reserved || 0) > 0 && <span className="block text-[9px] text-blue-400 font-normal" title="被客戶樣品預留的數量">清單排 {s._reserved}</span>}
               </span>
               <span className="text-xs text-emerald-700 truncate">{s.location ? `📍 ${s.location}` : <span className="text-slate-300">—</span>}</span>
@@ -12105,7 +12124,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       const relatedProj = s.relatedProjectId
         ? projects.find(p => String(p.id) === String(s.relatedProjectId))
         : null;
-      const { remaining, effectiveTotal, reserved, inTransit, notReceived } = computeRemaining(s, withdrawals, reservedMap.get(s.id) || 0);
+      const { remaining, effectiveTotal, reserved, inTransit, notReceived, gone } = computeRemaining(s, withdrawals, reservedMap.get(s.id) || 0);
       return {
         ...s,
         _remaining: remaining,
@@ -12113,6 +12132,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
         _reserved: reserved,
         _inTransit: inTransit,
         _notReceived: notReceived,
+        _gone: gone,
         // 優先用樣品自己填的名稱；沒填或和產品名一樣才用產品名
         _displayName: (s.name && s.name.trim()) ? s.name : (relatedProj ? relatedProj.name : s.name),
         _displayCode: relatedProj ? (relatedProj.code || '') : (s.relatedProjectCode || ''),
@@ -12159,7 +12179,8 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     }
 
     const cleaned = {};
-    Object.keys(sample).forEach(k => { if (sample[k] !== undefined && k !== '_docId' && k !== '_remaining') cleaned[k] = sample[k]; });
+    // 以底線開頭的都是畫面即時算出來的暫存欄位，不該寫進資料庫（寫進去會變成過期的假資料）
+    Object.keys(sample).forEach(k => { if (sample[k] !== undefined && !k.startsWith('_')) cleaned[k] = sample[k]; });
     cleaned.id = sampleId;
     if (!cleaned.createdAt) cleaned.createdAt = Date.now();
     await setDoc(doc(db, SAMPLES_COL, sampleId), cleaned);

@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.72.0';
-const BUILD_ID = '20260825-0800';
+const APP_VERSION = 'v1.72.1';
+const BUILD_ID = '20260825-0900';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.72.1',
+    date: '2026-08-25',
+    changes: [
+      '🐛 修正登記 T2 之後徽章沒有變化的問題：原本規則是「優先顯示逾期輪次」，T1 逾期未補完成日時會一直蓋掉新排的 T2',
+      '　· 改為顯示「目前走到最前面的那一輪」，例：T1 逾期 8/25、T2 預計 9/12 → 顯示 PVT · T2 9/12',
+      '　· 逾期的輪次會標明「逾期」二字，仍會留在提醒面板的試模逾期清單，提醒你補登完成日',
+    ],
+  },
   {
     version: 'v1.72.0',
     date: '2026-08-25',
@@ -3797,6 +3806,22 @@ function trialShortDate(s) {
   const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${Number(m[2])}/${Number(m[3])}` : '';
 }
+// 目前走到哪一輪：有填日期的輪次裡編號最大的那個。
+// 不用「最早的逾期輪次」，否則 T1 逾期未補完成日時，會一直蓋掉你新排的 T2。
+function latestTrialRun(runs = []) {
+  const withDate = runs.filter(r => r?.date || r?.plannedDate);
+  if (!withDate.length) return null;
+  return withDate.reduce((a, b) =>
+    TRIAL_ROUNDS.indexOf(b.round) > TRIAL_ROUNDS.indexOf(a.round) ? b : a);
+}
+function trialRunBrief(r) {
+  if (!r) return '';
+  const st = trialRunState(r);
+  if (st === 'done') return `${r.round} ${trialDateText(r.date)}`.trim();
+  if (st === 'overdue') return `${r.round} 逾期 ${trialShortDate(r.plannedDate)}`.trim();
+  return `${r.round} ${trialDateText(r.plannedDate)}`.trim();
+}
+
 // 這個產品所有已逾期的試模輪次
 function overdueTrialRuns(project) {
   return (project.trialRuns || []).filter(r => trialRunState(r) === 'overdue');
@@ -3876,23 +3901,14 @@ function getPhaseDetail(project) {
   if (phase === 'PVT') {
     const trials = project.trialRuns || [];
     if (trials.length > 0) {
-      // 先講「接下來要發生什麼」，其次才是「已經完成什麼」——別人最想知道的是下一個節點
-      const next = trials.find(r => trialRunState(r) === 'overdue')
-        || trials.find(r => trialRunState(r) === 'planned');
-      if (next) {
-        if (next.plannedDate === DATE_TBD) return `${next.round} 時間待確認`;
-        const d = trialShortDate(next.plannedDate);
-        return trialRunState(next) === 'overdue'
-          ? `${next.round} 逾期${d ? ` ${d}` : ''}`
-          : `${next.round} 預計${d ? ` ${d}` : ''}`;
-      }
-      const doneList = trials.filter(r => trialRunState(r) === 'done');
-      if (doneList.length) {
-        const last = doneList[doneList.length - 1];
-        const d = trialShortDate(last.date);
-        return `${last.round} 完成${d ? ` ${d}` : ''}`;
-      }
-      return `${trials[trials.length - 1].round} 待安排`;
+      // 講「目前走到哪一輪」，而不是「最早那個還沒結案的輪次」
+      const cur = latestTrialRun(trials);
+      if (!cur) return `${trials[trials.length - 1].round} 待安排`;
+      if (cur.plannedDate === DATE_TBD && !cur.date) return `${cur.round} 時間待確認`;
+      const st = trialRunState(cur);
+      if (st === 'done') return `${cur.round} 完成 ${trialShortDate(cur.date)}`.trim();
+      if (st === 'overdue') return `${cur.round} 逾期 ${trialShortDate(cur.plannedDate)}`.trim();
+      return `${cur.round} 預計 ${trialShortDate(cur.plannedDate)}`.trim();
     }
     if ((project.mouldOrders || []).length > 0) return '模具下訂';
     if (project.materialCodeStatus === '申請中') return '料號申請中';
@@ -4092,11 +4108,7 @@ function ProjectRow({ project, onClick, onQuickTrial, onQuickProto, draggable = 
     if (currentPhase === 'PVT') {
       const runs = project.trialRuns || [];
       if (!runs.length) return '';
-      const next = runs.find(r => trialRunState(r) === 'overdue') || runs.find(r => trialRunState(r) === 'planned');
-      if (next) return `${next.round} ${trialDateText(next.plannedDate)}`.trim();
-      const done = runs.filter(r => trialRunState(r) === 'done');
-      if (done.length) { const l = done[done.length - 1]; return `${l.round} ${trialDateText(l.date)}`.trim(); }
-      return runs[runs.length - 1].round;
+      return trialRunBrief(latestTrialRun(runs)) || runs[runs.length - 1].round;
     }
     if (currentPhase === 'EVT') {
       return project.nextProtoDate ? `手板 ${trialDateText(project.nextProtoDate)}` : '';
@@ -16816,13 +16828,10 @@ function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes, defa
   const usedRounds = trialRuns.map(r => r.round);
   const availableRounds = TRIAL_ROUNDS.filter(r => !usedRounds.includes(r));
   const latestRound = trialRuns.length > 0 ? trialRuns[trialRuns.length - 1].round : null;
-  const overdueRuns = trialRuns.filter(r => trialRunState(r) === 'overdue');
-  const nextRun = trialRuns.find(r => trialRunState(r) === 'overdue') || trialRuns.find(r => trialRunState(r) === 'planned');
-  const badgeText = overdueRuns.length
-    ? `${overdueRuns[0].round} 逾期`
-    : nextRun
-      ? `${nextRun.round} ${nextRun.plannedDate === DATE_TBD ? '時間待確認' : `預計 ${trialShortDate(nextRun.plannedDate)}`}`
-      : latestRound ? `已到 ${latestRound}` : '未開始';
+  const curRun = latestTrialRun(trialRuns);
+  const badgeText = curRun
+    ? (curRun.plannedDate === DATE_TBD && !curRun.date ? `${curRun.round} 時間待確認` : trialRunBrief(curRun))
+    : latestRound ? `已到 ${latestRound}` : '未開始';
 
   const handleAdd = () => {
     const nextRound = availableRounds[0] || 'T1';

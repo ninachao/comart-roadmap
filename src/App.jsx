@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.73.0';
-const BUILD_ID = '20260909-1000';
+const APP_VERSION = 'v1.73.1';
+const BUILD_ID = '20260909-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.73.1',
+    date: '2026-09-09',
+    changes: [
+      '🖼 貼上請購單的「關聯產品」改為帶縮圖的挑選視窗，可搜尋，不再是只有文字的下拉選單',
+      '➕ 每一列品項都能單獨指定產品：同一張請購單常常分屬不同產品（球頭／背包夾），不必事後一筆筆重綁',
+    ],
+  },
   {
     version: 'v1.73.0',
     date: '2026-09-09',
@@ -16325,6 +16333,58 @@ function PrototypeSection({ orders, onChange, defaultSupplier, readOnly, designs
 //   品項數量:
 //   BC03260200*1pc/ 双排磁吸底座+底座盖片【模具费: RMB 31500*1.2*1800=VND 143640000未税】
 //   WM26080001*1pc/ 双排磁吸底座铁片-五金大货模【模具费: VND 21600000未税】
+// 帶縮圖的產品挑選視窗：原生 <select> 放不了圖片，光看編碼與名稱常常認不出是哪個東西
+function ProductPickerModal({ projects = [], value = '', onPick, onClose }) {
+  const [q, setQ] = useState('');
+  const list = useMemo(() => {
+    const kw = q.trim().toLowerCase();
+    const all = (projects || []).filter(p => p && (p.name || p.code));
+    if (!kw) return all;
+    return all.filter(p => `${p.code || ''} ${p.name || ''} ${p.customer || ''}`.toLowerCase().includes(kw));
+  }, [projects, q]);
+
+  return (
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/60 z-[70] flex items-center justify-center p-3"
+      onClick={onClose}>
+      <div className="bg-white rounded-xl w-full max-w-md flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
+        <div className="p-3 border-b border-slate-100">
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)}
+            placeholder="搜尋產品編碼或名稱…"
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400" />
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <button onClick={() => { onPick(''); onClose(); }}
+            className={`w-full flex items-center gap-2 p-1.5 rounded-lg border text-left ${
+              !value ? 'border-slate-400 bg-slate-50' : 'border-slate-100 hover:bg-slate-50'}`}>
+            <span className="w-9 h-9 rounded border border-dashed border-slate-200 flex items-center justify-center text-slate-300 text-xs flex-shrink-0">—</span>
+            <span className="text-xs text-slate-500">不指定產品</span>
+          </button>
+          {list.map(p => {
+            const img = (p.productImages || [])[0];
+            const on = String(value) === String(p.id);
+            return (
+              <button key={p.id} onClick={() => { onPick(String(p.id)); onClose(); }}
+                className={`w-full flex items-center gap-2 p-1.5 rounded-lg border text-left ${
+                  on ? 'border-slate-400 bg-slate-50' : 'border-slate-100 hover:bg-slate-50'}`}>
+                <span className="w-9 h-9 rounded border border-slate-200 bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
+                  {img ? <SampleMediaThumb media={img} className="w-full h-full object-contain" />
+                       : <ImageIcon className="w-4 h-4 text-slate-300" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs text-slate-800 truncate">{p.name || '(未命名)'}</span>
+                  <span className="block text-[10px] text-slate-400 font-mono">{p.code || '無編碼'}</span>
+                </span>
+                {on && <span className="text-slate-600 text-xs flex-shrink-0">✓</span>}
+              </button>
+            );
+          })}
+          {list.length === 0 && <p className="text-xs text-slate-400 text-center py-6">找不到符合的產品</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // 解析「請購單」郵件內容 → 多筆樣品。
 // 針對實際往來的信件格式：交期用群組標題（底下的品項共用），單價寫在品項的下一行。
 function parseSampleRequestPaste(text, nowMs) {
@@ -16393,8 +16453,10 @@ function SampleRequestPasteModal({ projects = [], onCreate, onClose }) {
   const [rows, setRows] = useState([]);
   const [type, setType] = useState('手板');
   const [status, setStatus] = useState('已下單');
-  const [projectId, setProjectId] = useState('');
+  const [projectId, setProjectId] = useState('');   // 全部套用的產品
+  const [pickerFor, setPickerFor] = useState(null); // 'all' | 列索引 | null
   const [saving, setSaving] = useState(false);
+  const projOf = (id) => projects.find(p => String(p.id) === String(id));
 
   const doParse = (t) => {
     const r = parseSampleRequestPaste(t, Date.now());
@@ -16420,7 +16482,8 @@ function SampleRequestPasteModal({ projects = [], onCreate, onClose }) {
         orderNo: parsed?.orderNo || '',
         supplier: parsed?.supplier || '',
         etaDate: r.etaDate || '',
-        relatedProjectId: projectId ? Number(projectId) : undefined,
+        relatedProjectId: (r.projectId || projectId) ? Number(r.projectId || projectId) : undefined,
+        relatedProjectCode: projOf(r.projectId || projectId)?.code || '',
       })));
       onClose();
     } finally { setSaving(false); }
@@ -16478,11 +16541,15 @@ function SampleRequestPasteModal({ projects = [], onCreate, onClose }) {
                 </div>
                 <div>
                   <label className="block text-[10px] text-slate-500 mb-0.5">關聯產品（選填，全部套用）</label>
-                  <select value={projectId} onChange={e => setProjectId(e.target.value)}
-                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-white">
-                    <option value="">不指定</option>
-                    {projects.map(p => <option key={p.id} value={p.id}>{p.code ? `${p.code} ` : ''}{p.name}</option>)}
-                  </select>
+                  <button onClick={() => setPickerFor('all')}
+                    className="w-full px-1.5 py-1 text-xs border border-slate-200 rounded bg-white hover:bg-slate-50 flex items-center gap-1.5 text-left">
+                    <span className="w-6 h-6 rounded border border-slate-200 bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
+                      {(projOf(projectId)?.productImages || [])[0]
+                        ? <SampleMediaThumb media={projOf(projectId).productImages[0]} className="w-full h-full object-contain" />
+                        : <ImageIcon className="w-3 h-3 text-slate-300" />}
+                    </span>
+                    <span className="truncate flex-1 min-w-0">{projOf(projectId)?.name || '不指定'}</span>
+                  </button>
                 </div>
               </div>
               <p className="text-[10px] text-slate-400 -mt-1">
@@ -16499,6 +16566,7 @@ function SampleRequestPasteModal({ projects = [], onCreate, onClose }) {
                     <span className="w-20 text-right">單價</span>
                     <span className="w-12">幣別</span>
                     <span className="w-24">交期</span>
+                    <span className="w-16">產品</span>
                   </div>
                   <div className="divide-y divide-slate-100 max-h-64 overflow-y-auto">
                     {rows.map((r, i) => (
@@ -16516,6 +16584,17 @@ function SampleRequestPasteModal({ projects = [], onCreate, onClose }) {
                           className="w-12 px-1 py-0.5 text-[11px] border border-transparent hover:border-slate-200 focus:border-slate-400 rounded focus:outline-none" />
                         <input type="date" value={r.etaDate || ''} onChange={e => upd(i, { etaDate: e.target.value })}
                           className="w-24 px-1 py-0.5 text-[10px] border border-transparent hover:border-slate-200 focus:border-slate-400 rounded focus:outline-none" />
+                        {/* 同一張請購單常常分屬不同產品，所以每一列都能單獨指定 */}
+                        <button onClick={() => setPickerFor(i)}
+                          title={projOf(r.projectId || projectId)?.name || '指定這一筆的產品'}
+                          className="w-16 flex items-center gap-1 px-1 py-0.5 rounded border border-transparent hover:border-slate-200 hover:bg-slate-50">
+                          <span className="w-5 h-5 rounded border border-slate-200 bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
+                            {(projOf(r.projectId || projectId)?.productImages || [])[0]
+                              ? <SampleMediaThumb media={projOf(r.projectId || projectId).productImages[0]} className="w-full h-full object-contain" />
+                              : <span className="text-[9px] text-slate-300">＋</span>}
+                          </span>
+                          <span className="text-[9px] text-slate-400 truncate">{projOf(r.projectId || projectId)?.code || ''}</span>
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -16524,6 +16603,15 @@ function SampleRequestPasteModal({ projects = [], onCreate, onClose }) {
             </>
           )}
         </div>
+
+        {pickerFor !== null && (
+          <ProductPickerModal
+            projects={projects}
+            value={pickerFor === 'all' ? projectId : (rows[pickerFor]?.projectId || '')}
+            onPick={(id) => { if (pickerFor === 'all') setProjectId(id); else upd(pickerFor, { projectId: id }); }}
+            onClose={() => setPickerFor(null)}
+          />
+        )}
 
         <div className="p-4 border-t border-slate-100 flex items-center justify-end gap-2">
           <button onClick={onClose} className="px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100 rounded-lg">取消</button>

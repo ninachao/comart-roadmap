@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.73.1';
-const BUILD_ID = '20260909-1100';
+const APP_VERSION = 'v1.74.0';
+const BUILD_ID = '20260909-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.74.0',
+    date: '2026-09-09',
+    changes: [
+      '✅ 未到貨的樣品在列表上直接出現「✓ 到貨」按鈕，按一下就計入庫存並記下收到日期',
+      '🔧 樣品編輯視窗補上「到貨狀態」與「實際收到日」欄位 —— 原本貼請購單建立的「已下單」樣品沒有任何地方可以改成已收到',
+    ],
+  },
   {
     version: 'v1.73.1',
     date: '2026-09-09',
@@ -9208,7 +9216,7 @@ function computeRemaining(sample, withdrawalsList, reservedQty = 0) {
 
 // 樣品列表元件（可獨立使用，供分組和不分組共用）
 function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, onViewGallery, compact = false,
-  withdrawals = [], onToggleReturn, onUnsetNoReturn }) {
+  withdrawals = [], onToggleReturn, onUnsetNoReturn, onMarkArrived }) {
   // 「為什麼剩 0」的答案就在領用紀錄裡，所以讓數量欄可以就地展開，不必跑去別的分頁翻
   const [openWid, setOpenWid] = useState(null);
   if (!samples || samples.length === 0) return null;
@@ -9242,6 +9250,13 @@ function SampleTable({ samples, canEdit, onEdit, onWithdraw, onDelete, onJump, o
 
         const actionBtns = (
           <div className="flex gap-1 items-center">
+            {canEdit && s._notReceived && onMarkArrived && (
+              <button onClick={() => onMarkArrived(s)}
+                title="標記為已收到，數量會計入庫存"
+                className="text-[11px] px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 whitespace-nowrap">
+                ✓ 到貨
+              </button>
+            )}
             {canEdit && remaining > 0 && (
               <button onClick={() => onWithdraw(s)} className="text-[11px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 whitespace-nowrap">領用</button>
             )}
@@ -11936,6 +11951,15 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     }
   };
 
+  // 一鍵到貨：從列表就能改，不必打開編輯視窗
+  const handleMarkArrived = async (sample) => {
+    const today = new Date().toISOString().split('T')[0];
+    const updated = { ...sample, status: '已收到', receivedDate: sample.receivedDate || today };
+    const cleaned = {};
+    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && !k.startsWith('_')) cleaned[k] = updated[k]; });
+    await setDoc(doc(db, SAMPLES_COL, sample.id), cleaned);
+  };
+
   const handleDeleteSample = async (sample) => {
     const msg = sample.autoSynced
       ? `「${sample.name}」是由手板訂單自動同步的樣品。\n確定要刪除嗎？（手板訂單本身不受影響）`
@@ -12251,6 +12275,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                   withdrawals={withdrawals}
                   onToggleReturn={handleToggleReturn}
                   onUnsetNoReturn={handleUnsetNoReturn}
+                  onMarkArrived={handleMarkArrived}
                 />
               ) : (
                 // 依產品分組
@@ -12309,6 +12334,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                             withdrawals={withdrawals}
                             onToggleReturn={handleToggleReturn}
                             onUnsetNoReturn={handleUnsetNoReturn}
+                            onMarkArrived={handleMarkArrived}
                             compact
                           />
                         </div>
@@ -15034,6 +15060,43 @@ function SampleEditModal({ sample, projects, lockProject = false, onSave, onClos
                   />
                 </div>
               </div>
+              {/* 到貨狀態：沒有這一欄，貼請購單建立的「已下單」樣品就永遠沒有出口可以改成已收到 */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">到貨狀態</label>
+                  <select
+                    value={data.status || '已收到'}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setData(prev => ({
+                        ...prev,
+                        status: v,
+                        // 改成已收到時順手補上今天，方便日後回溯
+                        receivedDate: v === '已收到' ? (prev.receivedDate || new Date().toISOString().split('T')[0]) : '',
+                      }));
+                    }}
+                    className={`w-full px-2 py-1 text-xs border rounded ${
+                      (data.status || '已收到') === '已收到'
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                        : 'bg-amber-50 border-amber-200 text-amber-700'
+                    }`}
+                  >
+                    {ORDER_STATUS.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">實際收到日</label>
+                  <input
+                    type="date"
+                    value={data.receivedDate || ''}
+                    onChange={(e) => setData(prev => ({ ...prev, receivedDate: e.target.value }))}
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded"
+                  />
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-400 -mt-1">
+                「已下單／生產中」代表還沒到貨，庫存顯示為「在途」且不計入可用數量；改成「已收到」才會進庫存。
+              </p>
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="block text-[10px] text-slate-500 mb-0.5">單價</label>

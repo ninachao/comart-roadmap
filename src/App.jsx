@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.72.1';
-const BUILD_ID = '20260825-0900';
+const APP_VERSION = 'v1.73.0';
+const BUILD_ID = '20260909-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.73.0',
+    date: '2026-09-09',
+    changes: [
+      '📋 樣品庫新增「貼上請購單」：把請購單郵件整段貼上，自動拆成多筆樣品並填好料號、品名、數量、單價、幣別、交期與單號',
+      '　· 交期用群組標題（交期: 9/11 底下的品項共用），單價寫在下一行也讀得到，會取等號後的最終金額，不會誤抓 1.2、1.13 這類係數',
+      '　· 供應商可從「需向恒群採購」這種句子直接判讀，不必有欄位標籤',
+      '　· 建立前可逐列勾選與修改，並統一指定樣品類型、狀態與關聯產品',
+    ],
+  },
   {
     version: 'v1.72.1',
     date: '2026-08-25',
@@ -11826,6 +11836,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [addingToZoneId, setAddingToZoneId] = useState('');            // 要直接加到哪個櫃位（空=不指定）
   const [plannedPicker, setPlannedPicker] = useState(null);            // 新增預定品：{ exId, zoneId }
   const [zoomImg, setZoomImg] = useState(null);                        // 放大檢視圖片：{ media, name }
+  const [showRequestPaste, setShowRequestPaste] = useState(false);     // 貼上請購單批次建立樣品
   const [addingBundleToExId, setAddingBundleToExId] = useState(null);   // 正在建組合品的展覽
 
   const locationOptions = useMemo(() => sortLocations([...new Set(samples.map(s => s.location).filter(Boolean))]), [samples]);
@@ -11904,6 +11915,17 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     if (!cleaned.createdAt) cleaned.createdAt = Date.now();
     await setDoc(doc(db, SAMPLES_COL, sampleId), cleaned);
     setEditingSample(null);
+  };
+
+  // 從請購單一次建立多筆樣品（貼上解析後呼叫）
+  const handleCreateSamplesBatch = async (list) => {
+    const base = Date.now();
+    for (let i = 0; i < list.length; i++) {
+      const id = `s${base + i}`;
+      const cleaned = { id, createdAt: base + i, images: [], notes: '' };
+      Object.entries(list[i]).forEach(([k, v]) => { if (v !== undefined && v !== '' && !k.startsWith('_')) cleaned[k] = v; });
+      await setDoc(doc(db, SAMPLES_COL, id), cleaned);
+    }
   };
 
   const handleDeleteSample = async (sample) => {
@@ -12186,6 +12208,15 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
               >
                 ⊞ {groupByProduct ? '取消分組' : '依產品分組'}
               </button>
+              {canEdit && (
+                <button
+                  onClick={() => setShowRequestPaste(true)}
+                  title="把請購單郵件整段貼上，一次建立多筆樣品"
+                  className="text-xs px-3 py-1.5 border border-slate-200 text-slate-600 rounded hover:bg-slate-50 inline-flex items-center gap-1"
+                >
+                  📋 貼上請購單
+                </button>
+              )}
               {canEdit && (
                 <button
                   onClick={() => setEditingSample({ isNew: true, type: '量產樣', initialQuantity: 1 })}
@@ -13973,6 +14004,14 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                 className="text-xs px-3 py-1 rounded-full bg-white/15 text-white hover:bg-white/25">關閉</button>
             </div>
           </div>
+        )}
+
+        {showRequestPaste && (
+          <SampleRequestPasteModal
+            projects={projects}
+            onCreate={handleCreateSamplesBatch}
+            onClose={() => setShowRequestPaste(false)}
+          />
         )}
 
         {plannedPicker && (
@@ -16286,6 +16325,218 @@ function PrototypeSection({ orders, onChange, defaultSupplier, readOnly, designs
 //   品項數量:
 //   BC03260200*1pc/ 双排磁吸底座+底座盖片【模具费: RMB 31500*1.2*1800=VND 143640000未税】
 //   WM26080001*1pc/ 双排磁吸底座铁片-五金大货模【模具费: VND 21600000未税】
+// 解析「請購單」郵件內容 → 多筆樣品。
+// 針對實際往來的信件格式：交期用群組標題（底下的品項共用），單價寫在品項的下一行。
+function parseSampleRequestPaste(text, nowMs) {
+  const raw = String(text || '').split(/\r?\n/);
+  const head = { orderNo: '', supplier: '' };
+  const items = [];
+  const today = new Date(nowMs || Date.now());
+  const normCur = (c) => {
+    const u = (c || '').toUpperCase();
+    if (u === 'RMB' || u === 'CNY' || u === '人民幣') return 'CNY';
+    if (u === 'NTD' || u === 'NT' || u === 'TWD') return 'TWD';
+    return u;
+  };
+  // 只寫「9/11」沒寫年份時沿用今年；若明顯早於今天半年以上，視為明年
+  const toISO = (mo, d) => {
+    const m = Number(mo), day = Number(d);
+    if (!(m >= 1 && m <= 12 && day >= 1 && day <= 31)) return '';
+    let y = today.getFullYear();
+    if (m < today.getMonth() + 1 - 6) y += 1;
+    return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  };
+  let curEta = '';
+  for (let i = 0; i < raw.length; i++) {
+    const line = raw[i].trim();
+    if (!line) continue;
+    let m;
+    if ((m = line.match(/(?:請購單號|請購單|訂單號|單號|採購單號)\s*[:：]\s*(\S+)/))) { head.orderNo = m[1]; continue; }
+    if ((m = line.match(/(?:供應商|廠商|供货商)\s*[:：]\s*(\S+)/))) { head.supplier = m[1]; continue; }
+    // 信件常寫成「需向恒群採購」，沒有欄位標籤
+    if (!head.supplier && (m = line.match(/(?:向|跟)\s*([一-龥A-Za-z0-9]{2,10}?)\s*(?:採購|采购|下單|下单|訂購)/))) { head.supplier = m[1]; }
+    if ((m = line.match(/^(?:交期|交货期|交貨期|預計交期)\s*[:：]\s*(?:(\d{4})[-/.])?(\d{1,2})[-/.](\d{1,2})/))) {
+      curEta = m[1]
+        ? `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`
+        : toISO(m[2], m[3]);
+      continue;
+    }
+    // 品項列：料號*數量pc/ 品名
+    m = line.match(/^([A-Za-z][A-Za-z0-9\-_]{3,})\s*[*xX×]\s*(\d+)\s*(?:pcs?|支|套|個|件|组|組)?\s*[\/、,，]?\s*(.*)$/);
+    if (!m) continue;
+    const partNo = m[1];
+    const qty = Number(m[2]) || 1;
+    const name = (m[3] || '').replace(/^[\/、,，\s]+/, '').trim();
+    // 單價通常在下一行；多看一行以防中間夾空白
+    let currency = '', unitPrice = 0;
+    const priceLine = (raw[i + 1] || '') + ' ' + (raw[i + 2] || '');
+    const pm = priceLine.match(/(?:單價|单价)\s*[:：]\s*([^\n]*?)(?:合計|合计|$)/);
+    if (pm) {
+      const expr = pm[1];
+      const cm = expr.match(/(RMB|CNY|VND|USD|TWD|NTD|JPY|EUR|人民幣)/i);
+      if (cm) currency = normCur(cm[1]);
+      // 有等號時取「=」後面的結果，避免抓到 1.2、1.13 這種係數
+      const finalPart = expr.includes('=') ? expr.split('=').pop() : expr;
+      const nums = (finalPart.match(/[\d][\d,.]*/g) || [])
+        .map(x => Number(x.replace(/,/g, ''))).filter(n => !isNaN(n) && n > 0);
+      if (nums.length) unitPrice = Math.max(...nums);
+    }
+    items.push({ partNo, qty, name, currency: currency || 'TWD', unitPrice, etaDate: curEta });
+  }
+  return { ...head, items };
+}
+
+// 貼上請購單 → 預覽並微調 → 一次建立多筆樣品
+function SampleRequestPasteModal({ projects = [], onCreate, onClose }) {
+  const [text, setText] = useState('');
+  const [parsed, setParsed] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [type, setType] = useState('手板');
+  const [status, setStatus] = useState('已下單');
+  const [projectId, setProjectId] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const doParse = (t) => {
+    const r = parseSampleRequestPaste(t, Date.now());
+    setParsed(r);
+    setRows(r.items.map(it => ({ ...it, use: true })));
+  };
+
+  const upd = (i, patch) => setRows(rs => rs.map((r, j) => j === i ? { ...r, ...patch } : r));
+  const picked = rows.filter(r => r.use);
+
+  const create = async () => {
+    if (!picked.length) return;
+    setSaving(true);
+    try {
+      await onCreate(picked.map(r => ({
+        type,
+        status,
+        name: r.name || r.partNo,
+        sampleNo: r.partNo,
+        initialQuantity: r.qty,
+        unitPrice: r.unitPrice || '',
+        currency: r.currency,
+        orderNo: parsed?.orderNo || '',
+        supplier: parsed?.supplier || '',
+        etaDate: r.etaDate || '',
+        relatedProjectId: projectId ? Number(projectId) : undefined,
+      })));
+      onClose();
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/60 z-[60] flex items-start justify-center p-3 overflow-y-auto">
+      <div className="bg-white rounded-xl max-w-3xl w-full my-4 flex flex-col max-h-[92vh]">
+        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-medium text-slate-800">📋 貼上請購單，批次建立樣品</h3>
+            <p className="text-[11px] text-slate-400 mt-0.5">把整封信貼進來即可，會自動抓單號、供應商、料號、品名、數量、單價與交期</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="p-4 overflow-y-auto space-y-3">
+          <textarea
+            value={text}
+            onChange={e => { setText(e.target.value); doParse(e.target.value); }}
+            onPaste={e => { const t = e.clipboardData.getData('text'); setTimeout(() => doParse(text + t), 0); }}
+            rows={6}
+            placeholder={'把請購單內容整段貼在這裡…\n\n請購單號：CP012-2609090001\n交期: 9/11\nPC26090002*1pc/ Magsafe 25.2mm球頭\n單價：800*1.2*1.13=1084.8 RMB(含税)'}
+            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono leading-relaxed focus:outline-none focus:border-slate-400"
+          />
+
+          {parsed && (
+            <>
+              <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                <span className="px-2 py-1 rounded bg-slate-100 text-slate-700">
+                  單號 <b>{parsed.orderNo || '未偵測到'}</b>
+                </span>
+                <span className="px-2 py-1 rounded bg-slate-100 text-slate-700">
+                  供應商 <b>{parsed.supplier || '未偵測到'}</b>
+                </span>
+                <span className={`px-2 py-1 rounded ${rows.length ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                  解析到 <b>{rows.length}</b> 筆品項
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">樣品類型</label>
+                  <select value={type} onChange={e => setType(e.target.value)}
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-white">
+                    {SAMPLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">狀態</label>
+                  <select value={status} onChange={e => setStatus(e.target.value)}
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-white">
+                    {ORDER_STATUS.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">關聯產品（選填，全部套用）</label>
+                  <select value={projectId} onChange={e => setProjectId(e.target.value)}
+                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-white">
+                    <option value="">不指定</option>
+                    {projects.map(p => <option key={p.id} value={p.id}>{p.code ? `${p.code} ` : ''}{p.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-400 -mt-1">
+                狀態選「已下單／生產中」的樣品還沒到貨，庫存會顯示「在途」而不計入可用數量；等實體收到再改成「已收到」。
+              </p>
+
+              {rows.length > 0 && (
+                <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  <div className="flex items-center gap-2 px-2 py-1.5 bg-slate-50 border-b border-slate-200 text-[10px] text-slate-400">
+                    <span className="w-5" />
+                    <span className="w-24">料號</span>
+                    <span className="flex-1">品名</span>
+                    <span className="w-10 text-right">數量</span>
+                    <span className="w-20 text-right">單價</span>
+                    <span className="w-12">幣別</span>
+                    <span className="w-24">交期</span>
+                  </div>
+                  <div className="divide-y divide-slate-100 max-h-64 overflow-y-auto">
+                    {rows.map((r, i) => (
+                      <div key={i} className={`flex items-center gap-2 px-2 py-1 ${r.use ? '' : 'opacity-40'}`}>
+                        <input type="checkbox" checked={r.use} onChange={e => upd(i, { use: e.target.checked })} className="w-5" />
+                        <input value={r.partNo} onChange={e => upd(i, { partNo: e.target.value })}
+                          className="w-24 px-1 py-0.5 text-[11px] border border-transparent hover:border-slate-200 focus:border-slate-400 rounded font-mono focus:outline-none" />
+                        <input value={r.name} onChange={e => upd(i, { name: e.target.value })}
+                          className="flex-1 min-w-0 px-1 py-0.5 text-[11px] border border-transparent hover:border-slate-200 focus:border-slate-400 rounded focus:outline-none" />
+                        <input type="number" min="1" value={r.qty} onChange={e => upd(i, { qty: Number(e.target.value) })}
+                          className="w-10 px-1 py-0.5 text-[11px] border border-transparent hover:border-slate-200 focus:border-slate-400 rounded text-right focus:outline-none" />
+                        <input type="number" min="0" value={r.unitPrice} onChange={e => upd(i, { unitPrice: Number(e.target.value) })}
+                          className="w-20 px-1 py-0.5 text-[11px] border border-transparent hover:border-slate-200 focus:border-slate-400 rounded text-right focus:outline-none" />
+                        <input value={r.currency} onChange={e => upd(i, { currency: e.target.value })}
+                          className="w-12 px-1 py-0.5 text-[11px] border border-transparent hover:border-slate-200 focus:border-slate-400 rounded focus:outline-none" />
+                        <input type="date" value={r.etaDate || ''} onChange={e => upd(i, { etaDate: e.target.value })}
+                          className="w-24 px-1 py-0.5 text-[10px] border border-transparent hover:border-slate-200 focus:border-slate-400 rounded focus:outline-none" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-slate-100 flex items-center justify-end gap-2">
+          <button onClick={onClose} className="px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100 rounded-lg">取消</button>
+          <button onClick={create} disabled={!picked.length || saving}
+            className="px-4 py-1.5 text-xs text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-40">
+            {saving ? '建立中…' : `建立 ${picked.length} 筆樣品`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function parseMouldPaste(text) {
   const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const head = { orderNo: '', supplier: '', orderDate: '' };

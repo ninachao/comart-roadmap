@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.74.0';
-const BUILD_ID = '20260909-1200';
+const APP_VERSION = 'v1.74.1';
+const BUILD_ID = '20260922-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.74.1',
+    date: '2026-09-22',
+    changes: [
+      '🚩 逾期改為看上下文：後面的輪次已經有進展時，前面只差補完成日的輪次不再標成紅色逾期，改為灰色虛線「未補完成日」',
+      '　· 例：T3 已完成 9/22，T1／T2 就不該因為沒填完成日而亮紅燈',
+      '　· 提醒面板的「試模逾期」也套用同一規則，只列真正卡住的輪次',
+    ],
+  },
   {
     version: 'v1.74.0',
     date: '2026-09-09',
@@ -3832,6 +3841,21 @@ function trialShortDate(s) {
   const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${Number(m[2])}/${Number(m[3])}` : '';
 }
+// 逾期要看上下文：若後面的輪次已經有進展（T3 都做完了），
+// 那 T1／T2 只是「沒補完成日」，不是進度落後，不該亮紅燈。
+function resolveTrialStates(runs = []) {
+  const out = {};
+  runs.forEach(r => { out[r.round] = trialRunState(r); });
+  runs.forEach(r => {
+    if (out[r.round] !== 'overdue') return;
+    const mine = TRIAL_ROUNDS.indexOf(r.round);
+    const superseded = runs.some(o =>
+      TRIAL_ROUNDS.indexOf(o.round) > mine && (o.date || o.plannedDate));
+    if (superseded) out[r.round] = 'passed';   // 已被後續輪次超過，只是沒補完成日
+  });
+  return out;
+}
+
 // 目前走到哪一輪：有填日期的輪次裡編號最大的那個。
 // 不用「最早的逾期輪次」，否則 T1 逾期未補完成日時，會一直蓋掉你新排的 T2。
 function latestTrialRun(runs = []) {
@@ -3840,9 +3864,9 @@ function latestTrialRun(runs = []) {
   return withDate.reduce((a, b) =>
     TRIAL_ROUNDS.indexOf(b.round) > TRIAL_ROUNDS.indexOf(a.round) ? b : a);
 }
-function trialRunBrief(r) {
+function trialRunBrief(r, st0) {
   if (!r) return '';
-  const st = trialRunState(r);
+  const st = st0 || trialRunState(r);
   if (st === 'done') return `${r.round} ${trialDateText(r.date)}`.trim();
   if (st === 'overdue') return `${r.round} 逾期 ${trialShortDate(r.plannedDate)}`.trim();
   return `${r.round} ${trialDateText(r.plannedDate)}`.trim();
@@ -3850,7 +3874,9 @@ function trialRunBrief(r) {
 
 // 這個產品所有已逾期的試模輪次
 function overdueTrialRuns(project) {
-  return (project.trialRuns || []).filter(r => trialRunState(r) === 'overdue');
+  const runs = project.trialRuns || [];
+  const states = resolveTrialStates(runs);
+  return runs.filter(r => states[r.round] === 'overdue');
 }
 
 // 從進度紀錄的文字裡撈出「T1 9/15」這類已經寫過的試模資訊。
@@ -4089,25 +4115,28 @@ function QuickProtoPopover({ value, onSave, onClose }) {
 function TrialTrack({ runs = [], className = '' }) {
   const byRound = {};
   runs.forEach(r => { if (r?.round) byRound[r.round] = r; });
+  const states = resolveTrialStates(runs);
   return (
     <span className={`inline-flex items-center gap-1 flex-wrap ${className}`}>
       {TRIAL_ROUNDS.map((round, i) => {
         const r = byRound[round];
-        const st = r ? trialRunState(r) : 'none';
+        const st = r ? (states[round] || 'none') : 'none';
         const d = st === 'done' ? trialDateText(r.date) : trialDateText(r?.plannedDate);
         const style = {
           done:    'bg-emerald-50 text-emerald-700 border-emerald-200',
           planned: 'bg-amber-50 text-amber-700 border-amber-200',
           overdue: 'bg-rose-50 text-rose-700 border-rose-300',
+          passed:  'bg-slate-50 text-slate-400 border-slate-200 border-dashed',
           todo:    'bg-slate-50 text-slate-500 border-slate-200',
           none:    'bg-white text-slate-300 border-slate-100',
         }[st];
-        const mark = { done: '✓', planned: '⏳', overdue: '⚠', todo: '', none: '' }[st];
+        const mark = { done: '✓', planned: '⏳', overdue: '⚠', passed: '', todo: '', none: '' }[st];
+        const hint = st === 'passed' ? '後續輪次已有進展，這一輪只是沒補完成日' : (r?.issues || '');
         return (
           <React.Fragment key={round}>
             {i > 0 && <span className="text-slate-200 text-[9px]">›</span>}
             <span className={`text-[10px] px-1.5 py-0.5 rounded border tabular-nums ${style}`}
-              title={r?.issues || ''}>
+              title={hint}>
               {round}{mark ? ` ${mark}` : ''}{d ? ` ${d}` : ''}
             </span>
           </React.Fragment>
@@ -17230,6 +17259,7 @@ function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes, defa
   const usedRounds = trialRuns.map(r => r.round);
   const availableRounds = TRIAL_ROUNDS.filter(r => !usedRounds.includes(r));
   const latestRound = trialRuns.length > 0 ? trialRuns[trialRuns.length - 1].round : null;
+  const rowStates = resolveTrialStates(trialRuns);
   const curRun = latestTrialRun(trialRuns);
   const badgeText = curRun
     ? (curRun.plannedDate === DATE_TBD && !curRun.date ? `${curRun.round} 時間待確認` : trialRunBrief(curRun))
@@ -17302,7 +17332,8 @@ function TrialSection({ trialRuns, trialNotes, onChangeRuns, onChangeNotes, defa
                       <span className="text-xs text-emerald-700 tabular-nums">完成 {r.date}</span>
                     )}
                     {(() => {
-                      const st = trialRunState(r);
+                      const st = rowStates[r.round] || trialRunState(r);
+                      if (st === 'passed') return <span className="text-[10px] px-1.5 py-0.5 rounded border border-dashed bg-slate-50 text-slate-400 border-slate-200" title="後續輪次已有進展">未補完成日</span>;
                       if (st === 'overdue') return <span className="text-[10px] px-1.5 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-300">逾期未完成</span>;
                       if (st === 'planned') return <span className="text-[10px] px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">{r.plannedDate === DATE_TBD ? '待排期' : '尚未進行'}</span>;
                       if (st === 'todo') return <span className="text-[10px] px-1.5 py-0.5 rounded border bg-slate-50 text-slate-500 border-slate-200">未排日期</span>;

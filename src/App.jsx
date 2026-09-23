@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.74.1';
-const BUILD_ID = '20260922-1000';
+const APP_VERSION = 'v1.75.0';
+const BUILD_ID = '20260923-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.75.0',
+    date: '2026-09-23',
+    changes: [
+      '📌 每個產品新增「重點」區塊，固定在階段圖下方、進度紀錄上方：同事點進來第一眼就看得到你整理的結論，不必翻整串歷程',
+      '　· 可直接打字新增（Enter 送出）、點文字就能改、可上下調整順序、超過 6 則自動收合',
+      '　· 每則進度紀錄右上多一顆 📌，看到重要的一句可直接釘成重點（只複製文字，原紀錄不會被更動）',
+      '　· 唯讀帳號看得到重點但不能編輯；沒有重點時對唯讀帳號不顯示空區塊',
+    ],
+  },
   {
     version: 'v1.74.1',
     date: '2026-09-22',
@@ -3032,6 +3042,7 @@ export default function ProductRoadmap() {
       prototypeOrders: project.prototypeOrders || [],
       mouldOrders: project.mouldOrders || [],
       trialRuns: project.trialRuns || [],
+      keyPoints: project.keyPoints || [],
       materialCodeStatus: project.materialCodeStatus || '未申請',
       materialCodeNumber: project.materialCodeNumber || '',
       phaseOverride: project.phaseOverride || null,
@@ -5099,6 +5110,17 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
   const [showEmailImport, setShowEmailImport] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [editingUpdateIdx, setEditingUpdateIdx] = useState(null);
+  // 把某一則進度紀錄釘成重點：只複製文字，原紀錄不動，之後改重點也不會影響歷程
+  const pinUpdateAsKeyPoint = (u) => {
+    const text = String(u?.text || '').trim();
+    if (!text) return;
+    const pts = project.keyPoints || [];
+    if (pts.some(p => p.text === text)) { alert('這一則已經在重點裡了'); return; }
+    onUpdateField('keyPoints', [...pts, {
+      id: `kp${Date.now()}`, text,
+      by: currentUser?.name || '', createdAt: Date.now(), fromDate: u.date || '',
+    }]);
+  };
   const [editingField, setEditingField] = useState(null);
   const [tempValue, setTempValue] = useState('');
   const [newTag, setNewTag] = useState('');
@@ -5399,6 +5421,12 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             onOverride={(phase) => onUpdateField('phaseOverride', phase)}
           />
 
+          <KeyPointsSection
+            points={project.keyPoints || []}
+            canEdit={!isViewer}
+            currentUser={currentUser}
+            onChange={(pts) => onUpdateField('keyPoints', pts)}
+          />
 
           <section id="pd-progress">
             <div className="flex items-center justify-between mb-2">
@@ -5487,6 +5515,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     refFiles={refFiles}
                     project={project}
                     onOpenDoc={(d) => onOpenRefLibrary && onOpenRefLibrary(project, d.title)}
+                    onPinKeyPoint={isViewer ? null : pinUpdateAsKeyPoint}
                     />
                   </div>
                 )}
@@ -5520,6 +5549,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
                     refFiles={refFiles}
                     project={project}
                     onOpenDoc={(d) => onOpenRefLibrary && onOpenRefLibrary(project, d.title)}
+                    onPinKeyPoint={isViewer ? null : pinUpdateAsKeyPoint}
                     />
                   </div>
                 ))}
@@ -18115,7 +18145,105 @@ function UpdateForm({ initial, onCancel, onSave, currentUser, refFiles = [], pro
   );
 }
 
-function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete, onMarkFollowedUp, onAddUpdate, onSetFollowUpDate, currentUser, refFiles = [], project = null, onOpenDoc }) {
+// 產品重點：把散在歷程裡的關鍵結論集中到最上面。
+// 進度紀錄是流水帳（照時間長），重點是編輯過的結論（照重要性排），兩者用途不同，所以分開放。
+function KeyPointsSection({ points = [], canEdit, currentUser, onChange }) {
+  const [draft, setDraft] = useState('');
+  const [openAll, setOpenAll] = useState(false);
+  const list = Array.isArray(points) ? points : [];
+  const shown = openAll ? list : list.slice(0, 6);
+
+  const add = () => {
+    const t = draft.trim();
+    if (!t) return;
+    onChange([...list, { id: `kp${Date.now()}`, text: t, by: currentUser?.name || '', createdAt: Date.now() }]);
+    setDraft('');
+  };
+  const edit = (id, text) => onChange(list.map(p => p.id === id ? { ...p, text } : p));
+  const del = (id) => onChange(list.filter(p => p.id !== id));
+  const move = (i, dir) => {
+    const j = i + dir;
+    if (j < 0 || j >= list.length) return;
+    const next = [...list];
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+
+  if (!canEdit && list.length === 0) return null;
+
+  return (
+    <section id="pd-keypoints" className="rounded-xl border border-amber-200 bg-amber-50/50 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-medium text-amber-800 uppercase tracking-wide flex items-center gap-1.5">
+          📌 重點
+          {list.length > 0 && <span className="text-[10px] font-normal text-amber-600">{list.length} 項</span>}
+        </h3>
+        {!canEdit && <span className="text-[10px] text-amber-600">由負責人整理</span>}
+      </div>
+
+      {list.length === 0 ? (
+        <p className="text-[11px] text-amber-700/70 mb-2">
+          把這個產品最該知道的幾件事寫在這裡，同事點進來就看得到，不用翻整串歷程。
+        </p>
+      ) : (
+        <ul className="space-y-1 mb-2">
+          {shown.map((p, i) => (
+            <li key={p.id} className="group flex items-start gap-1.5">
+              <span className="text-amber-500 text-xs leading-5 flex-shrink-0">・</span>
+              {canEdit ? (
+                <textarea
+                  defaultValue={p.text}
+                  rows={1}
+                  onInput={e => { e.target.style.height = 'auto'; e.target.style.height = `${e.target.scrollHeight}px`; }}
+                  onBlur={e => { const v = e.target.value.trim(); if (v && v !== p.text) edit(p.id, v); }}
+                  className="flex-1 min-w-0 text-[13px] text-slate-800 leading-relaxed bg-transparent border-b border-transparent hover:border-amber-200 focus:border-amber-400 focus:outline-none resize-none py-0.5"
+                />
+              ) : (
+                <span className="flex-1 min-w-0 text-[13px] text-slate-800 leading-relaxed whitespace-pre-wrap">{p.text}</span>
+              )}
+              {canEdit && (
+                <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
+                  <button onClick={() => move(i, -1)} disabled={i === 0}
+                    className="p-0.5 text-amber-300 hover:text-amber-700 disabled:opacity-30" title="上移">↑</button>
+                  <button onClick={() => move(i, 1)} disabled={i === list.length - 1}
+                    className="p-0.5 text-amber-300 hover:text-amber-700 disabled:opacity-30" title="下移">↓</button>
+                  <button onClick={() => { if (confirm('刪除這則重點？')) del(p.id); }}
+                    className="p-0.5 text-amber-300 hover:text-rose-600" title="刪除">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {list.length > 6 && (
+        <button onClick={() => setOpenAll(v => !v)} className="text-[11px] text-amber-700 hover:underline mb-1">
+          {openAll ? '收合' : `還有 ${list.length - 6} 項…`}
+        </button>
+      )}
+
+      {canEdit && (
+        <div className="flex items-center gap-1.5">
+          <input
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
+            placeholder="新增一則重點，按 Enter（例：底座沿用 V6 模具，不另開）"
+            className="flex-1 px-2 py-1 text-[13px] bg-white border border-amber-200 rounded focus:outline-none focus:border-amber-400"
+          />
+          <button onClick={add} disabled={!draft.trim()}
+            className="px-2.5 py-1 text-[11px] text-white bg-amber-600 rounded hover:bg-amber-700 disabled:opacity-40 flex-shrink-0">
+            加入
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, onSave, onDelete, onMarkFollowedUp, onAddUpdate, onSetFollowUpDate, currentUser, refFiles = [], project = null, onOpenDoc, onPinKeyPoint }) {
   const [previewImg, setPreviewImg] = useState(null);
   const [inlineImgPreview, setInlineImgPreview] = useState(null);
   const [showFollowUpForm, setShowFollowUpForm] = useState(false);
@@ -18189,6 +18317,13 @@ function UpdateCard({ update, isLatest, isEditing, onStartEdit, onCancelEdit, on
                 className="p-1 text-slate-400 hover:text-amber-600 hover:bg-white rounded text-[10px]"
               >
                 🔔
+              </button>
+            )}
+            {onPinKeyPoint && (
+              <button onClick={() => onPinKeyPoint(update)}
+                title="把這則設為重點（會放到最上面的重點區）"
+                className="p-1 text-slate-400 hover:text-amber-600 hover:bg-white rounded text-[10px]">
+                📌
               </button>
             )}
             <button onClick={onStartEdit} className="p-1 text-slate-400 hover:text-slate-700 hover:bg-white rounded">

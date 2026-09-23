@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.75.0';
-const BUILD_ID = '20260923-1000';
+const APP_VERSION = 'v1.75.1';
+const BUILD_ID = '20260923-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.75.1',
+    date: '2026-09-23',
+    changes: [
+      '📌 重點改成「分享」旁邊的小按鈕＋彈出視窗，不再佔用產品頁版面；有重點時按鈕會變琥珀色並顯示則數',
+      '✏️ 輸入區改為多行文字框，可以分段落；Enter 換行、Ctrl/⌘ + Enter 送出',
+      '　· 既有重點點下去也會自動長高，長文不再被壓成一行',
+      '　· 在進度紀錄按 📌 釘選後會直接打開視窗，方便立刻編修',
+    ],
+  },
   {
     version: 'v1.75.0',
     date: '2026-09-23',
@@ -5110,6 +5120,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
   const [showEmailImport, setShowEmailImport] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [editingUpdateIdx, setEditingUpdateIdx] = useState(null);
+  const [showKeyPoints, setShowKeyPoints] = useState(false);
   // 把某一則進度紀錄釘成重點：只複製文字，原紀錄不動，之後改重點也不會影響歷程
   const pinUpdateAsKeyPoint = (u) => {
     const text = String(u?.text || '').trim();
@@ -5120,6 +5131,7 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
       id: `kp${Date.now()}`, text,
       by: currentUser?.name || '', createdAt: Date.now(), fromDate: u.date || '',
     }]);
+    setShowKeyPoints(true);   // 釘完直接打開，讓人看見結果並可立刻編修
   };
   const [editingField, setEditingField] = useState(null);
   const [tempValue, setTempValue] = useState('');
@@ -5307,6 +5319,24 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
+            {/* 重點：有內容時用琥珀色實心，讓人一眼知道這裡有整理過的東西 */}
+            {(!isViewer || (project.keyPoints || []).length > 0) && (
+              <button
+                onClick={() => setShowKeyPoints(true)}
+                title="這個產品的重點整理"
+                className={`p-1.5 rounded inline-flex items-center gap-1 text-xs px-2 ${
+                  (project.keyPoints || []).length > 0
+                    ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                    : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'
+                }`}
+              >
+                <span>📌</span>
+                <span className="hidden sm:inline">重點</span>
+                {(project.keyPoints || []).length > 0 && (
+                  <span className="font-semibold">{(project.keyPoints || []).length}</span>
+                )}
+              </button>
+            )}
             {/* 分享連結按鈕 */}
             <button
               onClick={() => {
@@ -5419,13 +5449,6 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           <PhaseTimeline
             project={project}
             onOverride={(phase) => onUpdateField('phaseOverride', phase)}
-          />
-
-          <KeyPointsSection
-            points={project.keyPoints || []}
-            canEdit={!isViewer}
-            currentUser={currentUser}
-            onChange={(pts) => onUpdateField('keyPoints', pts)}
           />
 
           <section id="pd-progress">
@@ -5662,6 +5685,16 @@ function ProjectDetail({ project, allTags, isViewer, onClose, onAddUpdate, onEdi
           />
         </div>
       </div>
+
+      {showKeyPoints && (
+        <KeyPointsModal
+          points={project.keyPoints || []}
+          canEdit={!isViewer}
+          currentUser={currentUser}
+          onChange={(pts) => onUpdateField('keyPoints', pts)}
+          onClose={() => setShowKeyPoints(false)}
+        />
+      )}
 
       {showWizard && (
         <ProductCodeWizard
@@ -18145,13 +18178,11 @@ function UpdateForm({ initial, onCancel, onSave, currentUser, refFiles = [], pro
   );
 }
 
-// 產品重點：把散在歷程裡的關鍵結論集中到最上面。
-// 進度紀錄是流水帳（照時間長），重點是編輯過的結論（照重要性排），兩者用途不同，所以分開放。
-function KeyPointsSection({ points = [], canEdit, currentUser, onChange }) {
+// 產品重點：把散在歷程裡的關鍵結論集中起來。
+// 做成獨立視窗而不是頁面上的區塊 —— 重點常常是好幾段文字，塞在產品頁裡會把其他資訊擠掉。
+function KeyPointsModal({ points = [], canEdit, currentUser, onChange, onClose }) {
   const [draft, setDraft] = useState('');
-  const [openAll, setOpenAll] = useState(false);
   const list = Array.isArray(points) ? points : [];
-  const shown = openAll ? list : list.slice(0, 6);
 
   const add = () => {
     const t = draft.trim();
@@ -18169,77 +18200,96 @@ function KeyPointsSection({ points = [], canEdit, currentUser, onChange }) {
     onChange(next);
   };
 
-  if (!canEdit && list.length === 0) return null;
-
   return (
-    <section id="pd-keypoints" className="rounded-xl border border-amber-200 bg-amber-50/50 p-3">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-medium text-amber-800 uppercase tracking-wide flex items-center gap-1.5">
-          📌 重點
-          {list.length > 0 && <span className="text-[10px] font-normal text-amber-600">{list.length} 項</span>}
-        </h3>
-        {!canEdit && <span className="text-[10px] text-amber-600">由負責人整理</span>}
-      </div>
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/50 z-[60] flex items-start sm:items-center justify-center p-3 overflow-y-auto"
+      onClick={onClose}>
+      <div className="bg-white rounded-xl w-full max-w-2xl my-auto max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+          <div>
+            <h3 className="text-sm font-medium text-slate-800 flex items-center gap-1.5">📌 重點</h3>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              這個產品最該知道的幾件事。同事點開就看得到，不必翻整串歷程。
+            </p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-4 h-4" /></button>
+        </div>
 
-      {list.length === 0 ? (
-        <p className="text-[11px] text-amber-700/70 mb-2">
-          把這個產品最該知道的幾件事寫在這裡，同事點進來就看得到，不用翻整串歷程。
-        </p>
-      ) : (
-        <ul className="space-y-1 mb-2">
-          {shown.map((p, i) => (
-            <li key={p.id} className="group flex items-start gap-1.5">
-              <span className="text-amber-500 text-xs leading-5 flex-shrink-0">・</span>
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {list.length === 0 && (
+            <p className="text-xs text-slate-400 text-center py-8">
+              還沒有重點。{canEdit ? '在下面寫第一則，或到進度紀錄按 📌 直接釘上來。' : ''}
+            </p>
+          )}
+          {list.map((p, i) => (
+            <div key={p.id} className="group flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/40 p-2">
+              <span className="text-amber-500 text-sm leading-6 flex-shrink-0">・</span>
               {canEdit ? (
-                <textarea
-                  defaultValue={p.text}
-                  rows={1}
-                  onInput={e => { e.target.style.height = 'auto'; e.target.style.height = `${e.target.scrollHeight}px`; }}
-                  onBlur={e => { const v = e.target.value.trim(); if (v && v !== p.text) edit(p.id, v); }}
-                  className="flex-1 min-w-0 text-[13px] text-slate-800 leading-relaxed bg-transparent border-b border-transparent hover:border-amber-200 focus:border-amber-400 focus:outline-none resize-none py-0.5"
+                <AutoGrowTextarea
+                  value={p.text}
+                  onCommit={(v) => { if (v && v !== p.text) edit(p.id, v); }}
+                  className="flex-1 min-w-0 text-[13px] text-slate-800 leading-relaxed bg-transparent border border-transparent hover:border-amber-200 focus:border-amber-400 focus:bg-white rounded px-1.5 py-1 focus:outline-none resize-none"
                 />
               ) : (
-                <span className="flex-1 min-w-0 text-[13px] text-slate-800 leading-relaxed whitespace-pre-wrap">{p.text}</span>
+                <span className="flex-1 min-w-0 text-[13px] text-slate-800 leading-relaxed whitespace-pre-wrap px-1.5 py-1">{p.text}</span>
               )}
               {canEdit && (
                 <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
                   <button onClick={() => move(i, -1)} disabled={i === 0}
-                    className="p-0.5 text-amber-300 hover:text-amber-700 disabled:opacity-30" title="上移">↑</button>
+                    className="p-1 text-amber-300 hover:text-amber-700 disabled:opacity-30" title="上移">↑</button>
                   <button onClick={() => move(i, 1)} disabled={i === list.length - 1}
-                    className="p-0.5 text-amber-300 hover:text-amber-700 disabled:opacity-30" title="下移">↓</button>
+                    className="p-1 text-amber-300 hover:text-amber-700 disabled:opacity-30" title="下移">↓</button>
                   <button onClick={() => { if (confirm('刪除這則重點？')) del(p.id); }}
-                    className="p-0.5 text-amber-300 hover:text-rose-600" title="刪除">
-                    <X className="w-3 h-3" />
+                    className="p-1 text-amber-300 hover:text-rose-600" title="刪除">
+                    <X className="w-3.5 h-3.5" />
                   </button>
                 </span>
               )}
-            </li>
+            </div>
           ))}
-        </ul>
-      )}
-
-      {list.length > 6 && (
-        <button onClick={() => setOpenAll(v => !v)} className="text-[11px] text-amber-700 hover:underline mb-1">
-          {openAll ? '收合' : `還有 ${list.length - 6} 項…`}
-        </button>
-      )}
-
-      {canEdit && (
-        <div className="flex items-center gap-1.5">
-          <input
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
-            placeholder="新增一則重點，按 Enter（例：底座沿用 V6 模具，不另開）"
-            className="flex-1 px-2 py-1 text-[13px] bg-white border border-amber-200 rounded focus:outline-none focus:border-amber-400"
-          />
-          <button onClick={add} disabled={!draft.trim()}
-            className="px-2.5 py-1 text-[11px] text-white bg-amber-600 rounded hover:bg-amber-700 disabled:opacity-40 flex-shrink-0">
-            加入
-          </button>
         </div>
-      )}
-    </section>
+
+        {canEdit && (
+          <div className="p-4 border-t border-slate-100 flex-shrink-0">
+            <textarea
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); add(); } }}
+              rows={4}
+              placeholder={'新增一則重點，可以分段。\n\n例：\n底座沿用 V6 模具，不另開。\nA 款只給 S，其他客戶賣 B 款。'}
+              className="w-full px-3 py-2 text-[13px] leading-relaxed border border-slate-200 rounded-lg focus:outline-none focus:border-amber-400 resize-y"
+            />
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-[10px] text-slate-400">Enter 換行 · Ctrl/⌘ + Enter 送出</span>
+              <button onClick={add} disabled={!draft.trim()}
+                className="px-3 py-1.5 text-xs text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-40">
+                加入重點
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// 會跟著內容長高的文字框：離開焦點才寫回，避免每打一個字就存一次雲端
+function AutoGrowTextarea({ value, onCommit, className }) {
+  const ref = useRef(null);
+  const [v, setV] = useState(value);
+  useEffect(() => { setV(value); }, [value]);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; }
+  }, [v]);
+  return (
+    <textarea
+      ref={ref}
+      value={v}
+      rows={1}
+      onChange={e => setV(e.target.value)}
+      onBlur={() => onCommit(v.trim())}
+      className={className}
+    />
   );
 }
 

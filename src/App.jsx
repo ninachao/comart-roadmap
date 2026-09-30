@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.76.0';
-const BUILD_ID = '20260930-1000';
+const APP_VERSION = 'v1.76.1';
+const BUILD_ID = '20260930-1100';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.76.1',
+    date: '2026-09-30',
+    changes: [
+      '📝 櫃位裡的每一項樣品／組合品都可以加備註（例：搭配 A+b 無線充、擺左側、需小立牌），點一下就能寫',
+      '　· 備註存在展覽項目上，不是樣品本身，所以同一個樣品在不同展覽的擺法不會互相干擾',
+      '　· 備註也會出現在配置圖的滑鼠提示與匯出的 PDF 清單裡',
+    ],
+  },
   {
     version: 'v1.76.0',
     date: '2026-09-30',
@@ -4138,6 +4147,14 @@ function ZoneItemRow({ it, samples = [], canEdit, onChange, onRemove }) {
             </span>
           ))}
         </div>
+        {canEdit ? (
+          <input
+            defaultValue={it.note || ''}
+            placeholder="＋ 備註"
+            onBlur={e => { const v = e.target.value.trim(); if (v !== (it.note || '')) onChange({ note: v }); }}
+            className="w-full mt-1 text-[10px] text-slate-600 bg-transparent border-b border-transparent hover:border-purple-200 focus:border-purple-400 focus:outline-none py-0.5"
+          />
+        ) : (it.note && <p className="text-[10px] text-slate-500 mt-1 whitespace-pre-wrap">📝 {it.note}</p>)}
       </div>
     );
   }
@@ -4153,33 +4170,53 @@ function ZoneItemRow({ it, samples = [], canEdit, onChange, onRemove }) {
   }
   const code = s.sampleNo || s._displayCode || s.relatedProjectCode || '';
   return (
-    <div className="flex items-center gap-2 rounded border border-slate-200 bg-white px-2 py-1.5">
-      <span className="w-9 h-9 rounded border border-slate-100 bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
-        <SampleMediaThumb media={(s.images || [])[0]} className="w-full h-full object-contain" />
-      </span>
-      <span className="flex-1 min-w-0">
-        <span className="block text-[11px] text-slate-800 truncate">{s._displayName || s.name}</span>
-        <span className="block text-[10px] text-slate-400 truncate">
-          {code && <span className="font-mono">{code} · </span>}
-          {s.location ? `📍 ${s.location}` : '未填位置'}
+    <div className="rounded border border-slate-200 bg-white px-2 py-1.5">
+      <div className="flex items-center gap-2">
+        <span className="w-9 h-9 rounded border border-slate-100 bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
+          <SampleMediaThumb media={(s.images || [])[0]} className="w-full h-full object-contain" />
         </span>
-      </span>
-      <span className={`text-[9px] px-1 py-0.5 rounded border flex-shrink-0 ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
-      <input type="number" min="1" value={it.qty || 1} disabled={!canEdit}
-        onChange={e => onChange({ qty: Number(e.target.value) || 1 })}
-        title="要帶的數量"
-        className="w-11 px-1 py-0.5 text-[11px] border border-slate-200 rounded text-center flex-shrink-0" />
-      <select value={it.packStatus || '待準備'} disabled={!canEdit}
-        onChange={e => onChange({ packStatus: e.target.value })}
-        className={`text-[10px] px-1 py-0.5 border rounded flex-shrink-0 ${packCls}`}>
-        {PACK.map(p => <option key={p} value={p}>{p}</option>)}
-      </select>
-      {canEdit && (
-        <button onClick={onRemove} className="p-0.5 text-slate-300 hover:text-rose-600 flex-shrink-0" title="從展覽移除">
-          <X className="w-3 h-3" />
-        </button>
-      )}
+        <span className="flex-1 min-w-0">
+          <span className="block text-[11px] text-slate-800 truncate">{s._displayName || s.name}</span>
+          <span className="block text-[10px] text-slate-400 truncate">
+            {code && <span className="font-mono">{code} · </span>}
+            {s.location ? `📍 ${s.location}` : '未填位置'}
+          </span>
+        </span>
+        <span className={`text-[9px] px-1 py-0.5 rounded border flex-shrink-0 ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
+        <input type="number" min="1" value={it.qty || 1} disabled={!canEdit}
+          onChange={e => onChange({ qty: Number(e.target.value) || 1 })}
+          title="要帶的數量"
+          className="w-11 px-1 py-0.5 text-[11px] border border-slate-200 rounded text-center flex-shrink-0" />
+        <select value={it.packStatus || '待準備'} disabled={!canEdit}
+          onChange={e => onChange({ packStatus: e.target.value })}
+          className={`text-[10px] px-1 py-0.5 border rounded flex-shrink-0 ${packCls}`}>
+          {PACK.map(p => <option key={p} value={p}>{p}</option>)}
+        </select>
+        {canEdit && (
+          <button onClick={onRemove} className="p-0.5 text-slate-300 hover:text-rose-600 flex-shrink-0" title="從展覽移除">
+            <X className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+      <ZoneItemNote note={it.note} canEdit={canEdit} onChange={v => onChange({ note: v })} />
     </div>
+  );
+}
+
+// 這一項在這場展覽的備註（例：要搭 A+b 無線充、擺左側、附小立牌）。
+// 寫在展覽項目上而不是樣品本身 —— 同一個樣品在不同展覽的擺法不會互相干擾。
+function ZoneItemNote({ note, canEdit, onChange }) {
+  if (!canEdit) {
+    return note ? <p className="text-[10px] text-slate-500 mt-1 pl-11 whitespace-pre-wrap">📝 {note}</p> : null;
+  }
+  return (
+    <input
+      defaultValue={note || ''}
+      placeholder="＋ 備註（例：搭配 A+b 無線充、擺左側、需小立牌）"
+      onBlur={e => { const v = e.target.value.trim(); if (v !== (note || '')) onChange(v); }}
+      className="w-full mt-1 ml-11 text-[10px] text-slate-600 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5"
+      style={{ width: 'calc(100% - 2.75rem)' }}
+    />
   );
 }
 
@@ -9015,6 +9052,16 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
                     {n > 6 && <span className="text-[10px] text-slate-400 self-end">+{n - 6}</span>}
                   </span>
                 )}
+                {/* 有備註的項目也列進提示，報告時滑過去就講得出來 */}
+                {k === 'cabinet' && zoneItems(z.id).filter(it => it.type !== 'planned' && it.note).map((it, i) => {
+                  const sp = samples.find(x => x.id === it.sampleId);
+                  const nm = it.type === 'bundle' ? it.name : (sp?._displayName || sp?.name || '');
+                  return (
+                    <span key={i} className="block text-slate-300 whitespace-normal mt-0.5">
+                      📝 {nm}：{it.note}
+                    </span>
+                  );
+                })}
                 {/* 預定品沒有照片，改用文字列出來，報告時才不會漏講 */}
                 {k === 'cabinet' && zoneItems(z.id).filter(it => it.type === 'planned').map(p => (
                   <span key={p.plannedId} className="block whitespace-normal mt-1">
@@ -14600,7 +14647,8 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
         var imgUrl = (s.images || [])[0] && s.images[0].url;
         var bg = idx % 2 === 0 ? '#fff' : '#f8fafc';
         rows += '<tr style="background:' + bg + ';">';
-        rows += '<td>' + (withImages ? imgTag(imgUrl, 40) + ' ' : '') + (s._displayName || s.name) + '</td>';
+        rows += '<td>' + (withImages ? imgTag(imgUrl, 40) + ' ' : '') + (s._displayName || s.name)
+          + (it.note ? '<div style="font-size:11px;color:#64748b;">📝 ' + it.note + '</div>' : '') + '</td>';
         rows += '<td>' + (s.sampleNo || s._displayCode || '—') + '</td>';
         rows += '<td style="font-size:11px;color:#64748b;">' + s.type + '</td>';
         rows += '<td style="font-weight:600;text-align:center;">× ' + (it.qty || 1) + '</td>';

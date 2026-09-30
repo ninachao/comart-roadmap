@@ -49,10 +49,22 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.76.1';
-const BUILD_ID = '20260930-1100';
+const APP_VERSION = 'v1.77.0';
+const BUILD_ID = '20260930-1400';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.77.0',
+    date: '2026-09-30',
+    changes: [
+      '🔗 展覽與樣品庫打通：展覽卡片新增「📤 登記領用」，一鍵把這場的樣品寫成領用紀錄，樣品庫可用數量跟著扣，明細會註明是哪一場展覽帶走的',
+      '　· 展覽結束按「↩ 全部歸還」把數量加回來；沒帶回來的可在領用紀錄改成「不歸還」',
+      '　· 尚未扣庫存時，展覽標題會顯示「⚠ N 種樣品尚未扣庫存」提醒；組合品會拆到成員層級計算',
+      '📂 櫃位可以收合：每一櫃標題左邊的箭頭，或右上「全部收合」；收合時仍顯示小縮圖，一眼知道這櫃擺什麼',
+      '📝 加入樣品的挑選視窗會顯示樣品備註（材質、版本等），備註也納入搜尋',
+      '🏷 打包狀態調整為 待準備／已準備／已打包／已歸還（移除「已帶走」，舊資料仍可正常顯示）',
+    ],
+  },
   {
     version: 'v1.76.1',
     date: '2026-09-30',
@@ -4112,10 +4124,13 @@ function QuickTrialPopover({ runs, onSave, onClose }) {
 
 // 櫃位底下的一列樣品／組合品：看得到名稱、編碼、數量與打包狀態，並能就地修改
 function ZoneItemRow({ it, samples = [], canEdit, onChange, onRemove }) {
-  const PACK = ['待準備', '已打包', '已帶走', '已歸還'];
+  // 舊資料可能還有「已帶走」，保留在選項裡才不會一打開就被改掉
+  const PACK = ['待準備', '已準備', '已打包', '已歸還']
+    .concat(it.packStatus === '已帶走' ? ['已帶走'] : []);
   const packCls = {
+    '已準備': 'bg-amber-50 text-amber-700 border-amber-200',
     '已打包': 'bg-blue-50 text-blue-700 border-blue-200',
-    '已帶走': 'bg-amber-50 text-amber-700 border-amber-200',
+    '已帶走': 'bg-blue-50 text-blue-700 border-blue-200',
     '已歸還': 'bg-emerald-50 text-emerald-700 border-emerald-200',
   }[it.packStatus] || 'bg-slate-50 text-slate-600 border-slate-200';
 
@@ -8872,6 +8887,7 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
   const [showLabels, setShowLabels] = useState(false);  // 圖上是否常駐顯示名稱（預設關，改用滑鼠移上去顯示）
   const [presenting, setPresenting] = useState(false);  // 簡報模式
   const [artUploading, setArtUploading] = useState(null);
+  const [collapsed, setCollapsed] = useState(() => new Set());   // 收合的櫃位 id
 
   const zones = ex.zones || [];
   const layouts = ex.layoutImages || [];
@@ -9166,13 +9182,31 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
         {/* 櫃位 */}
         {cabinets.length > 0 && (
           <div className="space-y-2">
-            <p className="text-[11px] font-medium text-rose-600">📦 櫃位 · {cabinets.length}</p>
+            <div className="flex items-center gap-2">
+              <p className="text-[11px] font-medium text-rose-600">📦 櫃位 · {cabinets.length}</p>
+              {/* 樣品一多就洗版，給一個一次收合全部的開關 */}
+              <button
+                onClick={() => setCollapsed(prev => prev.size >= cabinets.length ? new Set() : new Set(cabinets.map(z => z.id)))}
+                className="text-[10px] px-1.5 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">
+                {collapsed.size >= cabinets.length ? '全部展開' : '全部收合'}
+              </button>
+            </div>
             {cabinets.map((z) => {
               const list = zoneItems(z.id);
               const thumbs = itemThumbs(list);
+              const isCollapsed = collapsed.has(z.id);
+              const toggleZone = () => setCollapsed(prev => {
+                const next = new Set(prev);
+                if (next.has(z.id)) next.delete(z.id); else next.add(z.id);
+                return next;
+              });
               return (
                 <div key={z.id} className="border border-slate-100 rounded-lg p-2 bg-slate-50/40">
                   <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                    <button onClick={toggleZone} title={isCollapsed ? '展開' : '收合'}
+                      className="text-slate-400 hover:text-slate-700 text-[10px] w-3 flex-shrink-0">
+                      {isCollapsed ? '▶' : '▼'}
+                    </button>
                     <span className="w-5 h-5 rounded-full text-[10px] font-bold text-white flex items-center justify-center flex-shrink-0"
                       style={{ background: PIN.cabinet }}>{zones.indexOf(z) + 1}</span>
                     {canEdit ? (
@@ -9206,6 +9240,16 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
                       </span>
                     )}
                   </div>
+                  {isCollapsed ? (
+                    <div className="flex gap-1 flex-wrap items-center">
+                      {thumbs.slice(0, 10).map((m, i) => (
+                        <div key={i} className="w-7 h-7 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
+                          <SampleMediaThumb media={m} className="w-full h-full object-contain" />
+                        </div>
+                      ))}
+                      {thumbs.length > 10 && <span className="text-[10px] text-slate-400">+{thumbs.length - 10}</span>}
+                    </div>
+                  ) : (<>
                   {canEdit ? (
                     <textarea defaultValue={z.note || ''} rows={1}
                       placeholder="這一櫃的備註（例：支架要搭配 A+b 的無線充、需要小立牌）"
@@ -9237,6 +9281,7 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
                       </div>
                     );
                   })()}
+                  </>)}
                 </div>
               );
             })}
@@ -12188,6 +12233,80 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     setEditingSample(null);
   };
 
+  // === 展覽與樣品庫的連動 ===
+  // 把展覽裡的樣品攤平成「要扣幾個」，組合品要拆到成員層級
+  const exhibitionDemand = (ex) => {
+    const need = new Map();   // sampleId → qty
+    (ex.items || []).forEach(it => {
+      if (it.type === 'planned') return;             // 預定品還沒進庫，不扣
+      if (it.type === 'bundle') {
+        (it.bundleItems || []).forEach(bi => {
+          if (!bi.sampleId) return;
+          need.set(bi.sampleId, (need.get(bi.sampleId) || 0) + (Number(bi.qty) || 1));
+        });
+        return;
+      }
+      if (!it.sampleId) return;
+      need.set(it.sampleId, (need.get(it.sampleId) || 0) + (Number(it.qty) || 1));
+    });
+    return need;
+  };
+
+  // 這場展覽已經登記、而且還沒歸還的領用
+  const exhibitionWithdrawals = (ex) => withdrawals.filter(w => w.fromExhibitionId === ex.id && !w.returned);
+
+  // 還沒扣庫存的數量（展覽需要的 − 已登記的）
+  const exhibitionPending = (ex) => {
+    const need = exhibitionDemand(ex);
+    exhibitionWithdrawals(ex).forEach(w => {
+      if (!need.has(w.sampleId)) return;
+      const left = need.get(w.sampleId) - (Number(w.quantity) || 0);
+      if (left > 0) need.set(w.sampleId, left); else need.delete(w.sampleId);
+    });
+    return need;
+  };
+
+  // 一鍵把展覽樣品登記成領用，樣品庫數量才會跟著減少
+  const handleExhibitionCheckout = async (ex) => {
+    const pending = exhibitionPending(ex);
+    if (pending.size === 0) { alert('這場展覽的樣品都已經登記過領用了'); return; }
+    const total = [...pending.values()].reduce((a, b) => a + b, 0);
+    if (!confirm(`把這場展覽的 ${pending.size} 種樣品（共 ${total} 個）登記為領用？\n樣品庫的可用數量會跟著減少，領用紀錄會註明是「${ex.name}」帶走的。`)) return;
+    const base = Date.now();
+    let i = 0;
+    for (const [sampleId, qty] of pending) {
+      const smp = samples.find(x => x.id === sampleId);
+      const id = `w${base + i++}`;
+      await setDoc(doc(db, WITHDRAWALS_COL, id), {
+        id,
+        sampleId,
+        sampleName: smp?._displayName || smp?.name || '',
+        personName: ex.name || '展覽',
+        quantity: qty,
+        purpose: `展覽：${ex.name}${ex.date ? `（${ex.date}）` : ''}`,
+        date: new Date().toISOString().split('T')[0],
+        returned: false,
+        noReturn: false,
+        operator: currentUser?.name || '',
+        fromExhibitionId: ex.id,
+        timestamp: base + i,
+      });
+    }
+  };
+
+  // 展覽結束：把這場的領用一次標記歸還
+  const handleExhibitionReturn = async (ex) => {
+    const list = exhibitionWithdrawals(ex);
+    if (!list.length) { alert('這場展覽目前沒有未歸還的領用紀錄'); return; }
+    if (!confirm(`把「${ex.name}」的 ${list.length} 筆領用全部標記為已歸還？\n樣品庫數量會加回來。若有樣品實際沒帶回來，可以之後在領用紀錄裡改成「不歸還」。`)) return;
+    for (const w of list) {
+      const updated = { ...w, returned: true, returnedAt: Date.now() };
+      const cleaned = {};
+      Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && k !== '_docId') cleaned[k] = updated[k]; });
+      await setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
+    }
+  };
+
   // 從請購單一次建立多筆樣品（貼上解析後呼叫）
   const handleCreateSamplesBatch = async (list) => {
     const base = Date.now();
@@ -12828,11 +12947,43 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                             {ex.date && <span className="text-xs text-slate-500">{ex.date}</span>}
                             {ex.location && <span className="text-xs text-slate-500">📍 {ex.location}</span>}
                           </div>
-                          <div className="text-[11px] text-slate-500 mt-0.5 ml-4">
-                            {items.length} 項樣品 · 已打包 {packedCount}/{items.length}
+                          <div className="text-[11px] text-slate-500 mt-0.5 ml-4 flex items-center gap-2 flex-wrap">
+                            <span>{items.length} 項樣品 · 已打包 {packedCount}/{items.length}</span>
+                            {(() => {
+                              const pend = exhibitionPending(ex);
+                              const out = exhibitionWithdrawals(ex);
+                              if (pend.size > 0) return (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">
+                                  ⚠ {pend.size} 種樣品尚未扣庫存
+                                </span>
+                              );
+                              if (out.length > 0) return (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded border bg-blue-50 text-blue-700 border-blue-200">
+                                  已領出 {out.length} 種
+                                </span>
+                              );
+                              return null;
+                            })()}
                           </div>
                         </div>
-                            <div className="flex gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex gap-0.5 flex-shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
+                            {canEdit && items.length > 0 && (
+                              exhibitionPending(ex).size > 0 ? (
+                                <button
+                                  onClick={() => handleExhibitionCheckout(ex)}
+                                  title="把這場展覽的樣品登記為領用，樣品庫數量會跟著扣掉"
+                                  className="text-[11px] px-2 py-1 rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 whitespace-nowrap">
+                                  📤 登記領用
+                                </button>
+                              ) : exhibitionWithdrawals(ex).length > 0 ? (
+                                <button
+                                  onClick={() => handleExhibitionReturn(ex)}
+                                  title="展覽結束，把這場的領用全部標記歸還"
+                                  className="text-[11px] px-2 py-1 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 whitespace-nowrap">
+                                  ↩ 全部歸還
+                                </button>
+                              ) : null
+                            )}
                             <div className="relative group/pdf">
                               <button
                                 className="p-1 text-slate-400 hover:text-blue-600"
@@ -12995,9 +13146,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                           }`}
                                         >
                                           <option value="待準備">待準備</option>
+                                          <option value="已準備">已準備</option>
                                           <option value="已打包">已打包</option>
-                                          <option value="已帶走">已帶走</option>
                                           <option value="已歸還">已歸還</option>
+                                          {it.packStatus === '已帶走' && <option value="已帶走">已帶走</option>}
                                         </select>
                                         {canEdit && (
                                           <button onClick={() => handleRemoveBundle(ex.id, it.bundleId)} className="p-1 text-slate-300 hover:text-rose-600 flex-shrink-0" title="刪除組合品">
@@ -13086,9 +13238,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                       }`}
                                     >
                                       <option value="待準備">待準備</option>
+                                      <option value="已準備">已準備</option>
                                       <option value="已打包">已打包</option>
-                                      <option value="已帶走">已帶走</option>
                                       <option value="已歸還">已歸還</option>
+                                      {it.packStatus === '已帶走' && <option value="已帶走">已帶走</option>}
                                     </select>
                                     {canEdit && (
                                       <button onClick={() => handleRemoveExhibitionItem(ex.id, it.sampleId)} className="flex-shrink-0 p-1 text-slate-300 hover:text-rose-600" title="從展覽移除">
@@ -14473,7 +14626,7 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
     if (alreadyIn.has(s.id)) return false; // 已加入的不顯示
     if (!search) return true;
     // 編碼也要能搜：料號、產品編碼常常是大家嘴上講的那個代號
-    return [s._displayName, s.name, s.location, s.type, s.material,
+    return [s._displayName, s.name, s.location, s.type, s.material, s.notes,
             s.sampleNo, s._displayCode, s.relatedProjectCode, s.partNo]
       .some(v => (v || '').toLowerCase().includes(search.toLowerCase()));
   });
@@ -14513,7 +14666,7 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="搜尋樣品名稱、編碼、料號、位置、類型..."
+          placeholder="搜尋樣品名稱、編碼、料號、備註、位置、類型..."
           className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded mb-2"
         />
         <div className="flex-1 overflow-y-auto -mx-1 px-1">
@@ -14545,6 +14698,10 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
                         {s.location && <span>📍 {s.location} · </span>}
                         剩 {s._remaining}
                       </div>
+                      {/* 備註常常寫著材質、版本這類分辨用的資訊，挑選時看不到等於白寫 */}
+                      {s.notes && (
+                        <div className="text-[10px] text-slate-400 truncate" title={s.notes}>📝 {s.notes}</div>
+                      )}
                     </div>
                     {/* 選了才出現數量框，避免整份清單都是輸入框 */}
                     {isSel && (
@@ -14592,6 +14749,7 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
   const singleCount = items.filter(function(it){ return it.type !== 'bundle' && it.type !== 'planned'; }).length;
 
   function packLabel(status) {
+    if (status === '已準備') return '🟡 已準備';
     if (status === '已打包') return '✅ 已打包';
     if (status === '已帶走') return '🚗 已帶走';
     if (status === '已歸還') return '↩ 已歸還';
@@ -14656,7 +14814,7 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
       }
     });
 
-    var packedCount = items.filter(function(it){ return ['已打包','已帶走','已歸還'].indexOf(it.packStatus) !== -1; }).length;
+    var packedCount = items.filter(function(it){ return ['已準備','已打包','已帶走','已歸還'].indexOf(it.packStatus) !== -1; }).length;
     var notesHtml = exhibition.notes ? '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#78350f;">' + exhibition.notes + '</div>' : '';
 
     var html = '<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8">'

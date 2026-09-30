@@ -49,10 +49,21 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.80.1';
-const BUILD_ID = '20260930-2030';
+const APP_VERSION = 'v1.81.0';
+const BUILD_ID = '20260930-2130';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.81.0',
+    date: '2026-09-30',
+    changes: [
+      '🔄 展覽與樣品庫改為自動連動：加入樣品就扣庫存、移除就還回、改數量就跟著改，不必再按「登記領用」',
+      '　· 領用紀錄會註明是哪一場展覽帶走的；已手動標記歸還或不歸還的紀錄不會被自動改動',
+      '🏁 按「↩ 全部歸還」即為展覽結案：數量全部加回，之後再編輯清單也不會再動到庫存',
+      '🗑 刪除展覽時，會一併收回這場未歸還的領用，樣品庫數量自動加回（避免留下查不到來源的扣帳）',
+      '　· 舊展覽若還沒扣過，仍可用「📤 補登領用」一次補上',
+    ],
+  },
   {
     version: 'v1.80.1',
     date: '2026-09-30',
@@ -12440,7 +12451,52 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     return need;
   };
 
-  // 一鍵把展覽樣品登記成領用，樣品庫數量才會跟著減少
+  // 展覽內容 → 樣品庫領用紀錄的自動對帳。
+  // 加了就扣、刪了就還、改數量就跟著改；已經歸還或標記不歸還的紀錄一律不碰，
+  // 那是人為決定。展覽結案（stockClosed）之後也不再自動動作。
+  const reconcileExhibitionStock = async (ex) => {
+    if (!ex || !canEdit || ex.stockClosed) return;
+    const need = exhibitionDemand(ex);
+    const mine = withdrawals.filter(w => w.fromExhibitionId === ex.id && !w.returned && !w.noReturn);
+    const base = Date.now();
+    let n = 0;
+
+    for (const w of mine) {
+      const want = need.get(w.sampleId);
+      if (want == null) {
+        await deleteDoc(doc(db, WITHDRAWALS_COL, w.id));      // 從展覽移除 → 收回領用
+        continue;
+      }
+      if (Number(w.quantity) !== want) {
+        const updated = { ...w, quantity: want };
+        const cleaned = {};
+        Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && k !== '_docId') cleaned[k] = updated[k]; });
+        await setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
+      }
+      need.delete(w.sampleId);
+    }
+
+    for (const [sampleId, qty] of need) {
+      const smp = samples.find(x => x.id === sampleId);
+      const id = `w${base + n++}`;
+      await setDoc(doc(db, WITHDRAWALS_COL, id), {
+        id,
+        sampleId,
+        sampleName: smp?._displayName || smp?.name || '',
+        personName: ex.name || '展覽',
+        quantity: qty,
+        purpose: `展覽：${ex.name}${ex.date ? `（${ex.date}）` : ''}`,
+        date: new Date().toISOString().split('T')[0],
+        returned: false,
+        noReturn: false,
+        operator: currentUser?.name || '',
+        fromExhibitionId: ex.id,
+        timestamp: base + n,
+      });
+    }
+  };
+
+  // 保留手動補登，供舊展覽或對帳被關閉後使用
   const handleExhibitionCheckout = async (ex) => {
     const pending = exhibitionPending(ex);
     if (pending.size === 0) { alert('這場展覽的樣品都已經登記過領用了'); return; }
@@ -12479,6 +12535,11 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && k !== '_docId') cleaned[k] = updated[k]; });
       await setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
     }
+    // 標記結案：展覽結束後再編輯清單，不該又把庫存扣走
+    const cleanedEx = {};
+    Object.keys({ ...ex, stockClosed: true }).forEach(k => { if (ex[k] !== undefined && k !== '_docId') cleanedEx[k] = ex[k]; });
+    cleanedEx.stockClosed = true;
+    await setDoc(doc(db, EXHIBITIONS_COL, ex.id), cleanedEx);
   };
 
   // 從請購單一次建立多筆樣品（貼上解析後呼叫）
@@ -12552,6 +12613,8 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     if (!cleaned.items) cleaned.items = [];
     await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
     setEditingExhibition(null);
+    // 展覽內容一變動就同步樣品庫，不必再按任何按鈕
+    await reconcileExhibitionStock(cleaned);
   };
 
   // 指派展覽項目要擺在哪一個櫃位（用索引，散件與組合品共用）
@@ -12561,7 +12624,9 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   };
 
   const handleDeleteExhibition = async (ex) => {
-    if (!confirm(`確定刪除展覽「${ex.name}」嗎？此操作無法復原。`)) return;
+    const held = withdrawals.filter(w => w.fromExhibitionId === ex.id && !w.returned && !w.noReturn);
+    if (!confirm(`確定刪除展覽「${ex.name}」嗎？此操作無法復原。${held.length ? `\n這場還有 ${held.length} 筆未歸還的領用，會一起收回，樣品庫數量加回來。` : ''}`)) return;
+    for (const w of held) await deleteDoc(doc(db, WITHDRAWALS_COL, w.id));
     await deleteDoc(doc(db, EXHIBITIONS_COL, ex.id));
     if (openExhibitionId === ex.id) setOpenExhibitionId(null);
   };
@@ -12577,10 +12642,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     const newItems = norm
       .filter(p => !existingIds.has(p.sampleId))
       .map(p => ({ type: 'single', sampleId: p.sampleId, qty: Number(p.qty) || 1, packStatus: '待準備', zoneId: addingToZoneId || '' }));
-    const updated = { ...ex, items: [...existing, ...newItems] };
-    const cleaned = {};
-    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
-    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
+    await handleSaveExhibition({ ...ex, items: [...existing, ...newItems] });
     setAddingSamplesToExId(null);
     setAddingToZoneId('');
   };
@@ -12597,10 +12659,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       zoneId: addingToZoneId || '',
       bundleItems: bundle.sampleIds.map(sid => ({ sampleId: sid, qty: 1 })),
     };
-    const updated = { ...ex, items: [...(ex.items || []), newBundle] };
-    const cleaned = {};
-    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
-    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
+    await handleSaveExhibition({ ...ex, items: [...(ex.items || []), newBundle] });
     setAddingBundleToExId(null);
     setAddingToZoneId('');
   };
@@ -13081,16 +13140,21 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                           <div className="text-[11px] text-slate-500 mt-0.5 ml-4 flex items-center gap-2 flex-wrap">
                             <span>{items.length} 項樣品 · 已打包 {packedCount}/{items.length}</span>
                             {(() => {
+                              if (ex.stockClosed) return (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded border bg-slate-50 text-slate-500 border-slate-200">
+                                  已結案 · 不再連動庫存
+                                </span>
+                              );
                               const pend = exhibitionPending(ex);
                               const out = exhibitionWithdrawals(ex);
                               if (pend.size > 0) return (
                                 <span className="text-[10px] px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">
-                                  ⚠ {pend.size} 種樣品尚未扣庫存
+                                  ⚠ {pend.size} 種尚未扣庫存
                                 </span>
                               );
                               if (out.length > 0) return (
                                 <span className="text-[10px] px-1.5 py-0.5 rounded border bg-blue-50 text-blue-700 border-blue-200">
-                                  已領出 {out.length} 種
+                                  已從樣品庫扣除 {out.length} 種
                                 </span>
                               );
                               return null;
@@ -13099,19 +13163,24 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                         </div>
                             <div className="flex gap-0.5 flex-shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
                             {canEdit && items.length > 0 && (
-                              exhibitionPending(ex).size > 0 ? (
-                                <button
-                                  onClick={() => handleExhibitionCheckout(ex)}
-                                  title="把這場展覽的樣品登記為領用，樣品庫數量會跟著扣掉"
-                                  className="text-[11px] px-2 py-1 rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 whitespace-nowrap">
-                                  📤 登記領用
-                                </button>
+                              ex.stockClosed ? (
+                                <span className="text-[11px] px-2 py-1 rounded border border-slate-200 bg-slate-50 text-slate-500 whitespace-nowrap"
+                                  title="展覽已結案，之後編輯清單不會再動到樣品庫">
+                                  已結案
+                                </span>
                               ) : exhibitionWithdrawals(ex).length > 0 ? (
                                 <button
                                   onClick={() => handleExhibitionReturn(ex)}
-                                  title="展覽結束，把這場的領用全部標記歸還"
+                                  title="展覽結束，把這場的領用全部標記歸還並結案"
                                   className="text-[11px] px-2 py-1 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 whitespace-nowrap">
                                   ↩ 全部歸還
+                                </button>
+                              ) : exhibitionPending(ex).size > 0 ? (
+                                <button
+                                  onClick={() => handleExhibitionCheckout(ex)}
+                                  title="補登這場展覽的領用（平常會自動同步，這是給舊資料補帳用的）"
+                                  className="text-[11px] px-2 py-1 rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 whitespace-nowrap">
+                                  📤 補登領用
                                 </button>
                               ) : null
                             )}

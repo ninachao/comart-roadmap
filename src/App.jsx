@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.75.1';
-const BUILD_ID = '20260923-1100';
+const APP_VERSION = 'v1.76.0';
+const BUILD_ID = '20260930-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.76.0',
+    date: '2026-09-30',
+    changes: [
+      '🔎 加入樣品到展覽時可用「編碼／料號」搜尋，清單上也會顯示編碼',
+      '🔢 選取當下就能填數量（勾選後右邊出現數量框），不必加完再回頭一筆筆改；底部顯示已選幾項共幾個',
+      '📋 櫃位底下改為顯示完整明細：名稱、編碼、位置、類型、數量、打包狀態都在這一櫃裡，可直接修改或移除，不必再捲到最下面的總清單',
+      '　· 組合品會列出成員與各自數量；預定品卡片維持在明細後方',
+    ],
+  },
   {
     version: 'v1.75.1',
     date: '2026-09-23',
@@ -4087,6 +4097,88 @@ function QuickTrialPopover({ runs, onSave, onClose }) {
             title={`刪除 ${round} 的紀錄`}>清除</button>
         )}
       </div>
+    </div>
+  );
+}
+
+// 櫃位底下的一列樣品／組合品：看得到名稱、編碼、數量與打包狀態，並能就地修改
+function ZoneItemRow({ it, samples = [], canEdit, onChange, onRemove }) {
+  const PACK = ['待準備', '已打包', '已帶走', '已歸還'];
+  const packCls = {
+    '已打包': 'bg-blue-50 text-blue-700 border-blue-200',
+    '已帶走': 'bg-amber-50 text-amber-700 border-amber-200',
+    '已歸還': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  }[it.packStatus] || 'bg-slate-50 text-slate-600 border-slate-200';
+
+  if (it.type === 'bundle') {
+    const members = (it.bundleItems || []).map(bi => ({ bi, s: samples.find(x => x.id === bi.sampleId) }));
+    return (
+      <div className="rounded border border-purple-200 bg-purple-50/40 px-2 py-1.5">
+        <div className="flex items-center gap-2">
+          <span className="text-[9px] px-1 py-0.5 rounded border bg-purple-100 text-purple-700 border-purple-200 flex-shrink-0">組合品</span>
+          <span className="text-[11px] font-medium text-slate-800 flex-1 min-w-0 truncate">{it.name || '(未命名)'}</span>
+          <select value={it.packStatus || '待準備'} disabled={!canEdit}
+            onChange={e => onChange({ packStatus: e.target.value })}
+            className={`text-[10px] px-1 py-0.5 border rounded flex-shrink-0 ${packCls}`}>
+            {PACK.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+          {canEdit && (
+            <button onClick={onRemove} className="p-0.5 text-slate-300 hover:text-rose-600 flex-shrink-0" title="移除">
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 pl-1">
+          {members.map(({ bi, s }, i) => (
+            <span key={i} className="text-[10px] text-slate-500 flex items-center gap-1">
+              <span className="w-5 h-5 rounded border border-slate-200 bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
+                <SampleMediaThumb media={(s?.images || [])[0]} className="w-full h-full object-contain" />
+              </span>
+              {s ? (s._displayName || s.name) : '(已刪除)'} ×{bi.qty || 1}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const s = samples.find(x => x.id === it.sampleId);
+  if (!s) {
+    return (
+      <div className="flex items-center gap-2 rounded border border-slate-200 bg-white px-2 py-1.5">
+        <span className="text-[11px] text-slate-400 flex-1">（樣品已刪除）</span>
+        {canEdit && <button onClick={onRemove} className="p-0.5 text-slate-300 hover:text-rose-600"><X className="w-3 h-3" /></button>}
+      </div>
+    );
+  }
+  const code = s.sampleNo || s._displayCode || s.relatedProjectCode || '';
+  return (
+    <div className="flex items-center gap-2 rounded border border-slate-200 bg-white px-2 py-1.5">
+      <span className="w-9 h-9 rounded border border-slate-100 bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
+        <SampleMediaThumb media={(s.images || [])[0]} className="w-full h-full object-contain" />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-[11px] text-slate-800 truncate">{s._displayName || s.name}</span>
+        <span className="block text-[10px] text-slate-400 truncate">
+          {code && <span className="font-mono">{code} · </span>}
+          {s.location ? `📍 ${s.location}` : '未填位置'}
+        </span>
+      </span>
+      <span className={`text-[9px] px-1 py-0.5 rounded border flex-shrink-0 ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
+      <input type="number" min="1" value={it.qty || 1} disabled={!canEdit}
+        onChange={e => onChange({ qty: Number(e.target.value) || 1 })}
+        title="要帶的數量"
+        className="w-11 px-1 py-0.5 text-[11px] border border-slate-200 rounded text-center flex-shrink-0" />
+      <select value={it.packStatus || '待準備'} disabled={!canEdit}
+        onChange={e => onChange({ packStatus: e.target.value })}
+        className={`text-[10px] px-1 py-0.5 border rounded flex-shrink-0 ${packCls}`}>
+        {PACK.map(p => <option key={p} value={p}>{p}</option>)}
+      </select>
+      {canEdit && (
+        <button onClick={onRemove} className="p-0.5 text-slate-300 hover:text-rose-600 flex-shrink-0" title="從展覽移除">
+          <X className="w-3 h-3" />
+        </button>
+      )}
     </div>
   );
 }
@@ -8834,6 +8926,18 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
     const proj = projects.find(x => x.id === p.projectId);
     return (proj?.productImages || [])[0] || null;
   };
+  // 直接在櫃位底下改數量、打包狀態與移除，不必到最下面那份總清單
+  const updItem = (target, patch) => onSave({
+    ...ex,
+    items: items.map(it => (it === target ? { ...it, ...patch } : it)),
+  });
+  const delItem = (target) => {
+    const s = samples.find(x => x.id === target.sampleId);
+    const nm = target.type === 'bundle' ? target.name : (s?._displayName || s?.name || '這一項');
+    if (!window.confirm(`把「${nm}」從這場展覽移除？`)) return;
+    return onSave({ ...ex, items: items.filter(it => it !== target) });
+  };
+
   const delPlanned = (p) => {
     if (!window.confirm(`移除預定品「${p.name}」？`)) return;
     return onSave({ ...ex, items: items.filter(it => it.plannedId !== p.plannedId) });
@@ -9063,21 +9167,26 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
                   ) : (z.note && <p className="text-[11px] text-slate-500 mb-1.5 whitespace-pre-line">{z.note}</p>)}
                   {(() => {
                     const planned = list.filter(it => it.type === 'planned');
-                    if (!thumbs.length && !planned.length) {
+                    const real = list.filter(it => it.type !== 'planned');
+                    if (!real.length && !planned.length) {
                       return <p className="text-[10px] text-slate-300">尚未指派樣品到這一櫃</p>;
                     }
                     return (
-                      <div className="flex gap-1 flex-wrap items-start">
-                        {thumbs.map((m, i) => (
-                          <div key={i} className="w-12 h-12 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
-                            <SampleMediaThumb media={m} className="w-full h-full object-contain" />
+                      <div className="space-y-1">
+                        {/* 明細直接列在這一櫃底下：原本只有縮圖，要看細節得捲到最下面那份總清單 */}
+                        {real.map(it => (
+                          <ZoneItemRow key={it.bundleId || it.sampleId} it={it} samples={samples} canEdit={canEdit}
+                            onChange={patch => updItem(it, patch)} onRemove={() => delItem(it)} />
+                        ))}
+                        {planned.length > 0 && (
+                          <div className="flex gap-1 flex-wrap items-start pt-1">
+                            {planned.map(p => (
+                              <PlannedCard key={p.plannedId} p={p} canEdit={canEdit} fallbackMedia={plannedFallback(p)}
+                                onChange={patch => updPlanned(p.plannedId, patch)}
+                                onDelete={() => delPlanned(p)} />
+                            ))}
                           </div>
-                        ))}
-                        {planned.map(p => (
-                          <PlannedCard key={p.plannedId} p={p} canEdit={canEdit} fallbackMedia={plannedFallback(p)}
-                            onChange={patch => updPlanned(p.plannedId, patch)}
-                            onDelete={() => delPlanned(p)} />
-                        ))}
+                        )}
                       </div>
                     );
                   })()}
@@ -12118,14 +12227,16 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   };
 
   // 把樣品加進展覽（items 是 [{sampleId, qty, packStatus}]）
-  const handleAddSamplesToExhibition = async (exId, sampleIds) => {
+  const handleAddSamplesToExhibition = async (exId, picks) => {
     const ex = exhibitions.find(e => e.id === exId);
     if (!ex) return;
     const existing = ex.items || [];
     const existingIds = new Set(existing.filter(it => it.type !== 'bundle').map(it => it.sampleId));
-    const newItems = sampleIds
-      .filter(sid => !existingIds.has(sid))
-      .map(sid => ({ type: 'single', sampleId: sid, qty: 1, packStatus: '待準備', zoneId: addingToZoneId || '' }));
+    // 相容舊呼叫：可能只傳 id 陣列
+    const norm = (picks || []).map(p => (typeof p === 'string' ? { sampleId: p, qty: 1 } : p));
+    const newItems = norm
+      .filter(p => !existingIds.has(p.sampleId))
+      .map(p => ({ type: 'single', sampleId: p.sampleId, qty: Number(p.qty) || 1, packStatus: '待準備', zoneId: addingToZoneId || '' }));
     const updated = { ...ex, items: [...existing, ...newItems] };
     const cleaned = {};
     Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
@@ -14162,7 +14273,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
               const z = (ex?.zones || []).find(z => z.id === addingToZoneId);
               return z ? z.name : '';
             })()}
-            onConfirm={(sampleIds) => handleAddSamplesToExhibition(addingSamplesToExId, sampleIds)}
+            onConfirm={(picks) => handleAddSamplesToExhibition(addingSamplesToExId, picks)}
             onClose={() => { setAddingSamplesToExId(null); setAddingToZoneId(''); }}
           />
         )}
@@ -14304,7 +14415,8 @@ function ExhibitionEditModal({ exhibition, onSave, onClose }) {
 
 // === 加樣品到展覽 Modal ===
 function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, targetZoneName = '' }) {
-  const [selected, setSelected] = useState(new Set());
+  // 用 Map 存「哪些樣品、各要幾個」，選取當下就能決定數量，不必加完再回頭改
+  const [picked, setPicked] = useState(new Map());
   const [search, setSearch] = useState('');
 
   // 已在展覽裡的樣品 id
@@ -14313,18 +14425,28 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
   const filtered = samples.filter(s => {
     if (alreadyIn.has(s.id)) return false; // 已加入的不顯示
     if (!search) return true;
-    return [s._displayName, s.name, s.location, s.type, s.material]
+    // 編碼也要能搜：料號、產品編碼常常是大家嘴上講的那個代號
+    return [s._displayName, s.name, s.location, s.type, s.material,
+            s.sampleNo, s._displayCode, s.relatedProjectCode, s.partNo]
       .some(v => (v || '').toLowerCase().includes(search.toLowerCase()));
   });
 
-  const toggle = (id) => {
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+  const toggle = (s) => {
+    setPicked(prev => {
+      const next = new Map(prev);
+      if (next.has(s.id)) next.delete(s.id);
+      else next.set(s.id, 1);
       return next;
     });
   };
+  const setQty = (id, n) => {
+    setPicked(prev => {
+      const next = new Map(prev);
+      if (next.has(id)) next.set(id, Math.max(1, Number(n) || 1));
+      return next;
+    });
+  };
+  const totalPcs = [...picked.values()].reduce((a, b) => a + b, 0);
 
   return (
     <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/70 z-[60] flex items-start sm:items-center justify-center p-3 overflow-y-auto">
@@ -14344,7 +14466,7 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="搜尋樣品名稱、位置、類型..."
+          placeholder="搜尋樣品名稱、編碼、料號、位置、類型..."
           className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded mb-2"
         />
         <div className="flex-1 overflow-y-auto -mx-1 px-1">
@@ -14354,11 +14476,12 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
             <div className="space-y-1">
               {filtered.map(s => {
                 const mainImage = (s.images || [])[0];
-                const isSel = selected.has(s.id);
+                const isSel = picked.has(s.id);
+                const code = s.sampleNo || s._displayCode || s.relatedProjectCode || '';
                 return (
                   <div
                     key={s.id}
-                    onClick={() => toggle(s.id)}
+                    onClick={() => toggle(s)}
                     className={`flex gap-2 items-center p-2 rounded-lg border cursor-pointer transition ${isSel ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200 hover:border-slate-300'}`}
                   >
                     <input type="checkbox" checked={isSel} readOnly className="w-4 h-4 flex-shrink-0" />
@@ -14368,13 +14491,25 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline gap-1.5">
                         <span className="text-xs font-medium text-slate-900 truncate">{s._displayName || s.name}</span>
-                        <span className={`text-[9px] px-1 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
+                        <span className={`text-[9px] px-1 py-0.5 rounded border flex-shrink-0 ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
                       </div>
-                      <div className="text-[10px] text-slate-500">
+                      <div className="text-[10px] text-slate-500 truncate">
+                        {code && <span className="font-mono text-slate-400">{code} · </span>}
                         {s.location && <span>📍 {s.location} · </span>}
                         剩 {s._remaining}
                       </div>
                     </div>
+                    {/* 選了才出現數量框，避免整份清單都是輸入框 */}
+                    {isSel && (
+                      <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
+                        <span className="text-[10px] text-slate-400">×</span>
+                        <input
+                          type="number" min="1" value={picked.get(s.id)}
+                          onChange={e => setQty(s.id, e.target.value)}
+                          className="w-12 px-1 py-0.5 text-xs border border-amber-300 rounded text-center"
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -14382,15 +14517,17 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
           )}
         </div>
         <div className="flex justify-between items-center gap-2 mt-3 pt-3 border-t border-slate-100">
-          <span className="text-xs text-slate-500">已選 {selected.size} 項</span>
+          <span className="text-xs text-slate-500">
+            已選 {picked.size} 項{totalPcs > picked.size ? ` · 共 ${totalPcs} 個` : ''}
+          </span>
           <div className="flex gap-2">
             <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>
             <button
-              onClick={() => onConfirm([...selected])}
-              disabled={selected.size === 0}
+              onClick={() => onConfirm([...picked.entries()].map(([sampleId, qty]) => ({ sampleId, qty })))}
+              disabled={picked.size === 0}
               className="text-sm px-4 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-40"
             >
-              加入 {selected.size > 0 ? `(${selected.size})` : ''}
+              加入 {picked.size > 0 ? `(${picked.size})` : ''}
             </button>
           </div>
         </div>

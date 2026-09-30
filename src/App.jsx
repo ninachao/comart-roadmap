@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.79.0';
-const BUILD_ID = '20260930-1830';
+const APP_VERSION = 'v1.80.0';
+const BUILD_ID = '20260930-1930';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.80.0',
+    date: '2026-09-30',
+    changes: [
+      '🛒 展覽可以加入「外購品」與「道具」：新增視窗上方三選一（🛠 預定品／🛒 外購品／🪧 道具），外購品用藍色、道具用灰色區分',
+      '　· 各自有合適的狀態：外購品是待採購／已採購／已到貨，道具是待製作／已完成',
+      '　· 三者都不進樣品庫，不影響任何庫存數字，但都會出現在櫃位、配置圖提示與匯出的 PDF 清單上',
+      '　· 匯出 PDF 時會標明是外購品，老闆一眼看得出哪些不是自製品',
+    ],
+  },
   {
     version: 'v1.79.0',
     date: '2026-09-30',
@@ -8738,10 +8748,12 @@ function listItemSampleUsage(it, samples = []) {
 
 // 新增預定品：先從既有產品挑一個當底（名稱、照片自動帶入），再改名；
 // 完全新的東西（例如小立牌）也可以直接打字，不必先建產品。
-function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose }) {
+function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose, initialKind = 'planned' }) {
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState(null);   // 選中的產品
   const [name, setName] = useState('');
+  const [kind, setKind] = useState(initialKind);
+  const cfg = EXTRA_ITEM_KINDS[kind] || EXTRA_ITEM_KINDS.planned;
 
   const list = useMemo(() => {
     const kw = q.trim().toLowerCase();
@@ -8762,7 +8774,7 @@ function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose }) {
     if (!n) { alert('請填名稱'); return; }
     // 只帶 projectId，不複製圖片：產品照可能是 base64（dataUrl），
     // 整包塞進展覽文件會撐爆 Firestore 單筆 1MB 上限。卡片改成直接讀產品的照片。
-    onConfirm({ name: n, projectId: picked?.id || '' });
+    onConfirm({ name: n, projectId: picked?.id || '', kind, packStatus: cfg.defaultStatus });
   };
 
   return (
@@ -8770,11 +8782,20 @@ function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose }) {
       <div className="bg-white rounded-xl w-full max-w-md flex flex-col max-h-[85vh]">
         <div className="p-4 border-b border-slate-100">
           <h3 className="text-sm font-medium text-slate-800">
-            新增預定品{targetZoneName ? ` → ${targetZoneName}` : ''}
+            新增{cfg.label}{targetZoneName ? ` → ${targetZoneName}` : ''}
           </h3>
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            還在請工程做、樣品庫還沒有的東西。從既有產品挑一個當底最快，名稱之後還能改。
-          </p>
+          <p className="text-[11px] text-slate-400 mt-0.5">{cfg.hint}。不會進樣品庫，所以不影響庫存數字。</p>
+          {/* 三種都是「樣品庫沒有的東西」，差別只在來源，所以同一個視窗切換就好 */}
+          <div className="flex gap-1 mt-2">
+            {Object.entries(EXTRA_ITEM_KINDS).map(([k, c]) => (
+              <button key={k} onClick={() => setKind(k)}
+                className={`flex-1 text-[11px] py-1 rounded border ${
+                  kind === k ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                }`}>
+                {c.icon} {c.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="p-4 pb-2">
@@ -8809,11 +8830,11 @@ function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose }) {
 
         <div className="p-4 border-t border-slate-100 space-y-2">
           <label className="block text-[11px] text-slate-500">
-            名稱（可直接改，例：吸盤支架 T1 手板）
+            名稱（可直接改）
           </label>
           <input value={name} onChange={e => setName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') submit(); }}
-            placeholder="沒有對應產品就直接打字，例：小立牌"
+            placeholder={kind === 'outsourced' ? '例：他牌 3 合 1 充電座（比較用）' : kind === 'prop' ? '例：主推產品小立牌' : '例：吸盤支架 T1 手板'}
             className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400" />
           <div className="flex gap-2 justify-end pt-1">
             <button onClick={onClose} className="px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100 rounded-lg">取消</button>
@@ -8831,6 +8852,7 @@ function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose }) {
 // 展覽裡的「預定品」小卡：東西還沒做好、樣品庫查不到，所以照片、名稱、備註都直接在這裡填。
 // 圖片支援三種給法：點一下選檔、拖進來、或按 Ctrl+V 貼上（從 LINE／郵件截圖最常用）。
 function PlannedCard({ p, canEdit, onChange, onDelete, fallbackMedia }) {
+  const kind = extraKindOf(p);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
   const imgs = p.images || [];
@@ -8857,7 +8879,7 @@ function PlannedCard({ p, canEdit, onChange, onDelete, fallbackMedia }) {
   const removeImage = (i) => onChange({ images: imgs.filter((_, ii) => ii !== i) });
 
   return (
-    <div className="w-40 rounded border border-dashed border-amber-300 bg-amber-50/60 p-1.5 flex flex-col gap-1">
+    <div className={`w-40 rounded border border-dashed p-1.5 flex flex-col gap-1 ${kind.cls}`}>
       <div
         tabIndex={canEdit ? 0 : -1}
         onPaste={canEdit ? (e) => { const f = e.clipboardData?.files; if (f?.length) { e.preventDefault(); addImages(f); } } : undefined}
@@ -8885,16 +8907,17 @@ function PlannedCard({ p, canEdit, onChange, onDelete, fallbackMedia }) {
             )}
           </>
         ) : (
-          <span className="text-[9px] text-amber-500 text-center leading-tight px-1">🛠<br />點一下選圖<br />或 Ctrl+V 貼上</span>
+          <span className="text-[9px] text-slate-400 text-center leading-tight px-1">{kind.icon}<br />點一下選圖<br />或 Ctrl+V 貼上</span>
         )}
         <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
           onChange={(e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; addImages(fs); }} />
       </div>
 
+      <span className={`self-start text-[9px] px-1 py-0.5 rounded border ${kind.chip}`}>{kind.icon} {kind.label}</span>
       {canEdit ? (
         <input defaultValue={p.name}
           onBlur={e => { if (e.target.value !== p.name) onChange({ name: e.target.value }); }}
-          className="text-[11px] font-medium text-slate-800 bg-transparent border-b border-amber-200 focus:border-amber-500 focus:outline-none py-0.5" />
+          className="text-[11px] font-medium text-slate-800 bg-transparent border-b border-slate-200 focus:border-slate-500 focus:outline-none py-0.5" />
       ) : <span className="text-[11px] font-medium text-slate-800 truncate">{p.name}</span>}
 
       {canEdit ? (
@@ -8905,16 +8928,13 @@ function PlannedCard({ p, canEdit, onChange, onDelete, fallbackMedia }) {
 
       <div className="flex items-center gap-1">
         {canEdit ? (
-          <select value={p.packStatus || '製作中'} onChange={e => onChange({ packStatus: e.target.value })}
+          <select value={p.packStatus || kind.defaultStatus} onChange={e => onChange({ packStatus: e.target.value })}
             className={`text-[10px] px-1 py-0.5 border rounded flex-1 ${
-              p.packStatus === '已到貨' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                : 'bg-amber-100 text-amber-800 border-amber-200'
+              ['已到貨', '已完成'].includes(p.packStatus) ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : kind.chip
             }`}>
-            <option value="設計中">設計中</option>
-            <option value="製作中">製作中</option>
-            <option value="已到貨">已到貨</option>
+            {kind.statuses.map(st => <option key={st} value={st}>{st}</option>)}
           </select>
-        ) : <span className="text-[10px] text-amber-700 flex-1">{p.packStatus || '製作中'}</span>}
+        ) : <span className="text-[10px] text-slate-600 flex-1">{p.packStatus || kind.defaultStatus}</span>}
         {canEdit && (
           <button onClick={onDelete} className="text-[10px] text-slate-300 hover:text-rose-600 px-1" title="移除預定品">刪除</button>
         )}
@@ -9127,7 +9147,7 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
                 {/* 預定品沒有照片，改用文字列出來，報告時才不會漏講 */}
                 {k === 'cabinet' && zoneItems(z.id).filter(it => it.type === 'planned').map(p => (
                   <span key={p.plannedId} className="block whitespace-normal mt-1">
-                    <span className="block text-amber-300">🛠 {p.name}（{p.packStatus || '製作中'}）</span>
+                    <span className="block text-amber-300">{extraKindOf(p).icon} {p.name}（{extraKindOf(p).label}·{p.packStatus || extraKindOf(p).defaultStatus}）</span>
                     {(() => {
                       const m = (p.images || [])[0] || plannedFallback(p);
                       if (!m) return null;
@@ -9284,9 +9304,9 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
                         )}
                         {onAddPlanned && (
                           <button onClick={() => onAddPlanned(z.id)}
-                            title="還在請工程做、樣品庫還沒有的東西，先在這裡佔位"
+                            title="樣品庫沒有的東西：預定品、外購品、道具"
                             className="text-[10px] px-2 py-0.5 rounded border border-dashed border-amber-300 text-amber-700 bg-white hover:bg-amber-50">
-                            ＋ 預定品（還沒做好）
+                            ＋ 預定品／外購品
                           </button>
                         )}
                         <button onClick={() => delZone(z)} className="text-[10px] text-slate-300 hover:text-rose-500">刪除</button>
@@ -9363,7 +9383,7 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
                       {onAddPlanned && (
                         <button onClick={() => onAddPlanned('')}
                           className="text-[10px] px-2 py-0.5 rounded border border-dashed border-amber-300 text-amber-700 bg-white hover:bg-amber-50">
-                          ＋ 預定品
+                          ＋ 預定品／外購品
                         </button>
                       )}
                     </span>
@@ -12542,11 +12562,12 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     if (!name) return;
     const planned = {
       type: 'planned',
+      kind: seed.kind || 'planned',
       plannedId: `pl_${Date.now()}`,
       name,
       qty: 1,
       note: '',
-      packStatus: '製作中',
+      packStatus: seed.packStatus || '製作中',
       zoneId: zoneId || '',
       projectId: seed.projectId || '',
       images: seed.images || [],
@@ -14632,11 +14653,14 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
       } else if (it.type === 'planned') {
         // 預定品：樣品庫還沒有的東西，用虛線列表示，讓清單上看得到它也要進攤位
         rows += '<tr style="background:#fffbeb;">';
-        rows += '<td><span style="background:#f59e0b;color:white;font-size:10px;padding:1px 6px;border-radius:10px;margin-right:6px;">預定品</span>' + (it.name || '未命名') + (it.note ? '<span style="color:#92400e;font-size:11px;"> · ' + it.note + '</span>' : '') + '</td>';
+        var kd = it.kind === 'outsourced' ? { label: '外購品', color: '#0284c7' }
+          : it.kind === 'prop' ? { label: '道具', color: '#64748b' }
+            : { label: '預定品', color: '#f59e0b' };
+        rows += '<td><span style="background:' + kd.color + ';color:white;font-size:10px;padding:1px 6px;border-radius:10px;margin-right:6px;">' + kd.label + '</span>' + (it.name || '未命名') + (it.note ? '<span style="color:#92400e;font-size:11px;"> · ' + it.note + '</span>' : '') + '</td>';
         rows += '<td>—</td>';
-        rows += '<td style="font-size:11px;color:#64748b;">未入庫</td>';
+        rows += '<td style="font-size:11px;color:#64748b;">' + (it.kind === 'outsourced' ? '外購' : '未入庫') + '</td>';
         rows += '<td style="font-weight:600;text-align:center;">× ' + (it.qty || 1) + '</td>';
-        rows += '<td style="font-size:12px;color:#92400e;">' + (it.packStatus || '製作中') + '</td></tr>';
+        rows += '<td style="font-size:12px;color:#92400e;">' + (it.packStatus || '') + '</td></tr>';
       } else {
         var s = allSamples.find(function(s){ return s.id === it.sampleId; });
         if (!s) return;
@@ -16657,6 +16681,22 @@ function PrototypeSection({ orders, onChange, defaultSupplier, readOnly, designs
 //   品項數量:
 //   BC03260200*1pc/ 双排磁吸底座+底座盖片【模具费: RMB 31500*1.2*1800=VND 143640000未税】
 //   WM26080001*1pc/ 双排磁吸底座铁片-五金大货模【模具费: VND 21600000未税】
+// 展覽裡「樣品庫沒有的東西」共用同一套機制，用 kind 區分用途：
+// 預定品＝還在做、外購品＝外面買的（競品、配件）、道具＝小立牌與陳列物。
+// 三者都不進樣品庫，所以不會影響任何庫存數字。
+const EXTRA_ITEM_KINDS = {
+  planned:    { label: '預定品', icon: '🛠', hint: '還在請工程做、樣品庫還沒有',
+                statuses: ['設計中', '製作中', '已到貨'], defaultStatus: '製作中',
+                cls: 'border-amber-300 bg-amber-50/60', chip: 'bg-amber-100 text-amber-800 border-amber-200' },
+  outsourced: { label: '外購品', icon: '🛒', hint: '外面買的，例如競品、搭配用的配件',
+                statuses: ['待採購', '已採購', '已到貨'], defaultStatus: '待採購',
+                cls: 'border-sky-300 bg-sky-50/60', chip: 'bg-sky-100 text-sky-800 border-sky-200' },
+  prop:       { label: '道具', icon: '🪧', hint: '小立牌、展架、背板等陳列物',
+                statuses: ['待製作', '已完成'], defaultStatus: '待製作',
+                cls: 'border-slate-300 bg-slate-50', chip: 'bg-slate-100 text-slate-700 border-slate-200' },
+};
+const extraKindOf = (it) => EXTRA_ITEM_KINDS[it?.kind] || EXTRA_ITEM_KINDS.planned;
+
 // 帶縮圖的產品挑選視窗：原生 <select> 放不了圖片，光看編碼與名稱常常認不出是哪個東西
 function ProductPickerModal({ projects = [], value = '', onPick, onClose }) {
   const [q, setQ] = useState('');

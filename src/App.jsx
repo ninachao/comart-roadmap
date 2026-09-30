@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.78.1';
-const BUILD_ID = '20260930-1700';
+const APP_VERSION = 'v1.79.0';
+const BUILD_ID = '20260930-1830';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.79.0',
+    date: '2026-09-30',
+    changes: [
+      '🧱 所有「挑選樣品」的畫面統一成同一套顯示：名稱、類型、料號／編碼、位置、材質、剩餘數量、備註',
+      '　· 建立組合品的挑選清單原本只有名稱與位置，現在也看得到料號與備註',
+      '　· 搜尋欄位一併統一，任何一處都能用編碼、料號、材質或備註搜尋',
+    ],
+  },
   {
     version: 'v1.78.1',
     date: '2026-09-30',
@@ -12626,7 +12635,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="搜尋產品名、料號、材質、位置..."
+                placeholder="搜尋產品名、料號、材質、備註、位置…"
                 className="flex-1 min-w-[200px] px-3 py-1.5 text-sm border border-slate-200 rounded"
               />
               <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="px-2 py-1.5 text-sm border border-slate-200 rounded bg-white">
@@ -14426,6 +14435,41 @@ function ExhibitionEditModal({ exhibition, onSave, onClose }) {
 }
 
 // === 加樣品到展覽 Modal ===
+// 挑選樣品時，「這到底是哪一支」靠的是編碼、位置、材質與備註 —— 光有名稱分不出來。
+// 所有挑選畫面共用同一組欄位，才不會這裡看得到、那裡看不到。
+function sampleCodeOf(s) {
+  return s?.sampleNo || s?._displayCode || s?.relatedProjectCode || s?.partNo || '';
+}
+function sampleMatchesKeyword(s, kw) {
+  if (!kw) return true;
+  const k = kw.toLowerCase();
+  return [s?._displayName, s?.name, s?.location, s?.type, s?.material, s?.notes,
+          s?.sampleNo, s?._displayCode, s?.relatedProjectCode, s?.partNo, s?.orderNote]
+    .some(v => (v || '').toLowerCase().includes(k));
+}
+// 挑選清單裡一列樣品的文字部分（縮圖與勾選框由呼叫端自己排版）
+function SampleIdentity({ s, extraBadge = null, stockClass = '' }) {
+  const code = sampleCodeOf(s);
+  return (
+    <div className="flex-1 min-w-0">
+      <div className="flex items-baseline gap-1.5 min-w-0">
+        <span className="text-xs font-medium text-slate-900 truncate">{s._displayName || s.name}</span>
+        <span className={`text-[9px] px-1 py-0.5 rounded border flex-shrink-0 ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
+        {extraBadge}
+      </div>
+      <div className="text-[10px] text-slate-500 truncate">
+        {code && <span className="font-mono text-slate-400">{code} · </span>}
+        {s.location && <span>📍 {s.location} · </span>}
+        {s.material && <span>{s.material} · </span>}
+        <span className={stockClass}>剩 {s._remaining}</span>
+      </div>
+      {s.notes && (
+        <div className="text-[10px] text-slate-400 truncate" title={s.notes}>📝 {s.notes}</div>
+      )}
+    </div>
+  );
+}
+
 function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, targetZoneName = '' }) {
   // 用 Map 存「哪些樣品、各要幾個」，選取當下就能決定數量，不必加完再回頭改
   const [picked, setPicked] = useState(new Map());
@@ -14437,10 +14481,7 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
   const filtered = samples.filter(s => {
     if (alreadyIn.has(s.id)) return false; // 已加入的不顯示
     if (!search) return true;
-    // 編碼也要能搜：料號、產品編碼常常是大家嘴上講的那個代號
-    return [s._displayName, s.name, s.location, s.type, s.material, s.notes,
-            s.sampleNo, s._displayCode, s.relatedProjectCode, s.partNo]
-      .some(v => (v || '').toLowerCase().includes(search.toLowerCase()));
+    return sampleMatchesKeyword(s, search);
   });
 
   const toggle = (s) => {
@@ -14489,7 +14530,6 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
               {filtered.map(s => {
                 const mainImage = (s.images || [])[0];
                 const isSel = picked.has(s.id);
-                const code = s.sampleNo || s._displayCode || s.relatedProjectCode || '';
                 return (
                   <div
                     key={s.id}
@@ -14500,21 +14540,7 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
                     <div className="flex-shrink-0 w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
                       <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-xs font-medium text-slate-900 truncate">{s._displayName || s.name}</span>
-                        <span className={`text-[9px] px-1 py-0.5 rounded border flex-shrink-0 ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
-                      </div>
-                      <div className="text-[10px] text-slate-500 truncate">
-                        {code && <span className="font-mono text-slate-400">{code} · </span>}
-                        {s.location && <span>📍 {s.location} · </span>}
-                        剩 {s._remaining}
-                      </div>
-                      {/* 備註常常寫著材質、版本這類分辨用的資訊，挑選時看不到等於白寫 */}
-                      {s.notes && (
-                        <div className="text-[10px] text-slate-400 truncate" title={s.notes}>📝 {s.notes}</div>
-                      )}
-                    </div>
+                    <SampleIdentity s={s} />
                     {/* 選了才出現數量框，避免整份清單都是輸入框 */}
                     {isSel && (
                       <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
@@ -14735,11 +14761,7 @@ function CreateBundleModal({ exhibition, samples, onConfirm, onClose, usedSample
           .map(it => it.sampleId)
       );
 
-  const filtered = samples.filter(s => {
-    if (!search) return true;
-    return [s._displayName, s.name, s.location, s.type, s.material]
-      .some(v => (v || '').toLowerCase().includes(search.toLowerCase()));
-  });
+  const filtered = samples.filter(s => sampleMatchesKeyword(s, search));
 
   const toggle = (id) => {
     setSelected(prev => {
@@ -14779,7 +14801,7 @@ function CreateBundleModal({ exhibition, samples, onConfirm, onClose, usedSample
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="搜尋樣品..."
+          placeholder="搜尋樣品名稱、編碼、料號、備註、位置…"
           className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded mb-2"
         />
 
@@ -14809,17 +14831,9 @@ function CreateBundleModal({ exhibition, samples, onConfirm, onClose, usedSample
                   <div className="flex-shrink-0 w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
                     <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline gap-1.5">
-                      <span className="text-xs font-medium text-slate-900 truncate">{s._displayName || s.name}</span>
-                      <span className={`text-[9px] px-1 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
-                      {used && <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700">已在清單</span>}
-                    </div>
-                    <div className="text-[10px] text-slate-500">
-                      {s.location && <span>📍 {s.location} · </span>}
-                      <span className={noStock ? 'text-rose-500 font-medium' : ''}>剩 {s._remaining}</span>
-                    </div>
-                  </div>
+                  <SampleIdentity s={s}
+                    stockClass={noStock ? 'text-rose-500 font-medium' : ''}
+                    extraBadge={used ? <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 flex-shrink-0">已在清單</span> : null} />
                 </div>
               );
             })}

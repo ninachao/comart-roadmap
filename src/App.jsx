@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.77.0';
-const BUILD_ID = '20260930-1400';
+const APP_VERSION = 'v1.78.0';
+const BUILD_ID = '20260930-1600';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.78.0',
+    date: '2026-09-30',
+    changes: [
+      '🧩 每一櫃都能直接「＋ 組合品」，建立後自動放進那一櫃，不必再捲到最下面',
+      '🗑 移除展覽最下方那份重複的樣品總清單 —— 明細已經在各櫃位底下了',
+      '📥 新增「未指派櫃位」區塊：還沒分配的項目就地列出並可指派，加入樣品／組合品／預定品的按鈕也移到這裡',
+      '↔️ 每一列多了櫃位下拉，可直接把樣品從這一櫃換到另一櫃',
+    ],
+  },
   {
     version: 'v1.77.0',
     date: '2026-09-30',
@@ -4123,7 +4133,15 @@ function QuickTrialPopover({ runs, onSave, onClose }) {
 }
 
 // 櫃位底下的一列樣品／組合品：看得到名稱、編碼、數量與打包狀態，並能就地修改
-function ZoneItemRow({ it, samples = [], canEdit, onChange, onRemove }) {
+function ZoneItemRow({ it, samples = [], canEdit, onChange, onRemove, zones = [], onAssignZone }) {
+  const zoneSelect = (canEdit && onAssignZone && zones.length > 0) ? (
+    <select value={it.zoneId || ''} onChange={e => onAssignZone(it, e.target.value)}
+      title="要擺在哪一櫃" onClick={e => e.stopPropagation()}
+      className="text-[10px] px-1 py-0.5 border border-slate-200 rounded bg-white flex-shrink-0 max-w-[6.5rem]">
+      <option value="">未指派</option>
+      {zones.map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
+    </select>
+  ) : null;
   // 舊資料可能還有「已帶走」，保留在選項裡才不會一打開就被改掉
   const PACK = ['待準備', '已準備', '已打包', '已歸還']
     .concat(it.packStatus === '已帶走' ? ['已帶走'] : []);
@@ -4141,6 +4159,7 @@ function ZoneItemRow({ it, samples = [], canEdit, onChange, onRemove }) {
         <div className="flex items-center gap-2">
           <span className="text-[9px] px-1 py-0.5 rounded border bg-purple-100 text-purple-700 border-purple-200 flex-shrink-0">組合品</span>
           <span className="text-[11px] font-medium text-slate-800 flex-1 min-w-0 truncate">{it.name || '(未命名)'}</span>
+          {zoneSelect}
           <select value={it.packStatus || '待準備'} disabled={!canEdit}
             onChange={e => onChange({ packStatus: e.target.value })}
             className={`text-[10px] px-1 py-0.5 border rounded flex-shrink-0 ${packCls}`}>
@@ -4202,6 +4221,7 @@ function ZoneItemRow({ it, samples = [], canEdit, onChange, onRemove }) {
           onChange={e => onChange({ qty: Number(e.target.value) || 1 })}
           title="要帶的數量"
           className="w-11 px-1 py-0.5 text-[11px] border border-slate-200 rounded text-center flex-shrink-0" />
+        {zoneSelect}
         <select value={it.packStatus || '待準備'} disabled={!canEdit}
           onChange={e => onChange({ packStatus: e.target.value })}
           className={`text-[10px] px-1 py-0.5 border rounded flex-shrink-0 ${packCls}`}>
@@ -8880,7 +8900,7 @@ function PlannedCard({ p, canEdit, onChange, onDelete, fallbackMedia }) {
 // ===== 展覽：攤位配置 =====
 // 每場展的攤位都不一樣，所以先上傳這次的配置圖，再直接在圖上點出櫃位，
 // 樣品指派到櫃位後就能用「照片牆」預覽每一櫃會擺什麼——取代把實體樣品全部搬出來擺的做法
-function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAddToZone, onAddPlanned }) {
+function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAddToZone, onAddPlanned, onAddBundle, onAssignZone }) {
   const [uploading, setUploading] = useState(false);
   const [placingKind, setPlacingKind] = useState(null); // 'cabinet' | 'poster' | null
   const [dragZone, setDragZone] = useState(null);       // 正在拖曳的標記
@@ -9229,6 +9249,13 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
                             ＋ 加入樣品到這一櫃
                           </button>
                         )}
+                        {onAddBundle && (
+                          <button onClick={() => onAddBundle(z.id)}
+                            title="把幾個樣品綁成一組，直接放進這一櫃"
+                            className="text-[10px] px-2 py-0.5 rounded border border-purple-200 text-purple-600 bg-white hover:bg-purple-50">
+                            ＋ 組合品
+                          </button>
+                        )}
                         {onAddPlanned && (
                           <button onClick={() => onAddPlanned(z.id)}
                             title="還在請工程做、樣品庫還沒有的東西，先在這裡佔位"
@@ -9267,6 +9294,7 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
                         {/* 明細直接列在這一櫃底下：原本只有縮圖，要看細節得捲到最下面那份總清單 */}
                         {real.map(it => (
                           <ZoneItemRow key={it.bundleId || it.sampleId} it={it} samples={samples} canEdit={canEdit}
+                            zones={cabinets} onAssignZone={onAssignZone}
                             onChange={patch => updItem(it, patch)} onRemove={() => delItem(it)} />
                         ))}
                         {planned.length > 0 && (
@@ -9285,8 +9313,55 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
                 </div>
               );
             })}
-            {unassigned.length > 0 && (
-              <p className="text-[11px] text-amber-600">⚠ 還有 {unassigned.length} 項尚未指派櫃位</p>
+            {/* 未指派：原本只有一行警告，項目卻只能到別處處理。現在就地列出並可指派櫃位 */}
+            {(unassigned.length > 0 || canEdit) && (
+              <div className="border border-dashed border-amber-300 rounded-lg p-2 bg-amber-50/30">
+                <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                  <p className="text-[11px] font-medium text-amber-700">
+                    未指派櫃位{unassigned.length > 0 ? ` · ${unassigned.length}` : ''}
+                  </p>
+                  {canEdit && (
+                    <span className="ml-auto flex items-center gap-1.5">
+                      {onAddToZone && (
+                        <button onClick={() => onAddToZone('')}
+                          className="text-[10px] px-2 py-0.5 rounded border border-violet-200 text-violet-600 bg-white hover:bg-violet-50">
+                          ＋ 加入樣品
+                        </button>
+                      )}
+                      {onAddBundle && (
+                        <button onClick={() => onAddBundle('')}
+                          className="text-[10px] px-2 py-0.5 rounded border border-purple-200 text-purple-600 bg-white hover:bg-purple-50">
+                          ＋ 組合品
+                        </button>
+                      )}
+                      {onAddPlanned && (
+                        <button onClick={() => onAddPlanned('')}
+                          className="text-[10px] px-2 py-0.5 rounded border border-dashed border-amber-300 text-amber-700 bg-white hover:bg-amber-50">
+                          ＋ 預定品
+                        </button>
+                      )}
+                    </span>
+                  )}
+                </div>
+                {unassigned.length === 0 ? (
+                  <p className="text-[10px] text-slate-400">所有項目都已指派到櫃位</p>
+                ) : (
+                  <div className="space-y-1">
+                    {unassigned.filter(it => it.type !== 'planned').map(it => (
+                      <ZoneItemRow key={it.bundleId || it.sampleId} it={it} samples={samples} canEdit={canEdit}
+                        zones={cabinets} onAssignZone={onAssignZone}
+                        onChange={patch => updItem(it, patch)} onRemove={() => delItem(it)} />
+                    ))}
+                    <div className="flex gap-1 flex-wrap items-start">
+                      {unassigned.filter(it => it.type === 'planned').map(p => (
+                        <PlannedCard key={p.plannedId} p={p} canEdit={canEdit} fallbackMedia={plannedFallback(p)}
+                          onChange={patch => updPlanned(p.plannedId, patch)}
+                          onDelete={() => delPlanned(p)} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -12420,6 +12495,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
       bundleId: `bundle_${Date.now()}`,
       name: bundle.name,
       packStatus: '待準備',
+      zoneId: addingToZoneId || '',
       bundleItems: bundle.sampleIds.map(sid => ({ sampleId: sid, qty: 1 })),
     };
     const updated = { ...ex, items: [...(ex.items || []), newBundle] };
@@ -12427,29 +12503,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
     await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
     setAddingBundleToExId(null);
-  };
-
-  // 更新展覽裡某個樣品的狀態/數量
-  const handleUpdateExhibitionItem = async (exId, sampleId, patch) => {
-    const ex = exhibitions.find(e => e.id === exId);
-    if (!ex) return;
-    const updated = {
-      ...ex,
-      items: (ex.items || []).map(it => it.sampleId === sampleId ? { ...it, ...patch } : it),
-    };
-    const cleaned = {};
-    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
-    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
-  };
-
-  // 從展覽移除某個樣品
-  const handleRemoveExhibitionItem = async (exId, sampleId) => {
-    const ex = exhibitions.find(e => e.id === exId);
-    if (!ex) return;
-    const updated = { ...ex, items: (ex.items || []).filter(it => it.sampleId !== sampleId) };
-    const cleaned = {};
-    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
-    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
+    setAddingToZoneId('');
   };
 
   // 「預定品」：還在請工程做、還沒進樣品庫的東西。
@@ -12491,29 +12545,6 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     const ex = exhibitions.find(e => e.id === exId);
     if (!ex) return;
     const updated = { ...ex, items: (ex.items || []).filter(it => it.plannedId !== plannedId) };
-    const cleaned = {};
-    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
-    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
-  };
-
-  // 更新組合品打包狀態
-  const handleUpdateBundle = async (exId, bundleId, patch) => {
-    const ex = exhibitions.find(e => e.id === exId);
-    if (!ex) return;
-    const updated = {
-      ...ex,
-      items: (ex.items || []).map(it => it.bundleId === bundleId ? { ...it, ...patch } : it),
-    };
-    const cleaned = {};
-    Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
-    await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
-  };
-
-  // 刪除組合品
-  const handleRemoveBundle = async (exId, bundleId) => {
-    const ex = exhibitions.find(e => e.id === exId);
-    if (!ex) return;
-    const updated = { ...ex, items: (ex.items || []).filter(it => it.bundleId !== bundleId) };
     const cleaned = {};
     Object.keys(updated).forEach(k => { if (updated[k] !== undefined && k !== '_docId') cleaned[k] = updated[k]; });
     await setDoc(doc(db, EXHIBITIONS_COL, exId), cleaned);
@@ -13034,248 +13065,12 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                             onSave={handleSaveExhibition}
                             onAddToZone={(zoneId) => { setAddingToZoneId(zoneId); setAddingSamplesToExId(ex.id); }}
                             onAddPlanned={(zoneId) => setPlannedPicker({ exId: ex.id, zoneId })}
+                            onAddBundle={(zoneId) => { setAddingToZoneId(zoneId); setAddingBundleToExId(ex.id); }}
+                            onAssignZone={(item, zoneId) => {
+                              const idx = (ex.items || []).indexOf(item);
+                              if (idx >= 0) handleAssignZone(ex, idx, zoneId);
+                            }}
                           />
-                          {items.length === 0 ? (
-                            <p className="text-xs text-slate-400 py-3 text-center">尚未加入樣品或組合品</p>
-                          ) : (
-                            <div className="space-y-2 mb-2">
-                              {items.map((it, itIdx) => {
-                                // === 預定品（樣品庫還沒有的東西）===
-                                if (it.type === 'planned') {
-                                  return (
-                                    <div key={it.plannedId || itIdx} className="flex gap-2 items-center bg-amber-50/40 border border-dashed border-amber-300 rounded-lg p-2">
-                                      <div className="flex-shrink-0 w-12 h-12 border border-dashed border-amber-300 rounded flex items-center justify-center text-amber-400 text-lg overflow-hidden bg-white">
-                                        {(() => {
-                                          const m = (it.images || [])[0]
-                                            || ((projects.find(x => x.id === it.projectId)?.productImages || [])[0]);
-                                          return m ? <SampleMediaThumb media={m} className="w-full h-full object-contain" /> : '🛠';
-                                        })()}
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-baseline gap-1.5 flex-wrap">
-                                          {canEdit ? (
-                                            <input defaultValue={it.name}
-                                              onBlur={e => { if (e.target.value !== it.name) handleUpdatePlanned(ex.id, it.plannedId, { name: e.target.value }); }}
-                                              className="text-xs font-medium text-slate-900 bg-transparent border-b border-transparent hover:border-amber-200 focus:border-amber-400 focus:outline-none py-0.5 w-40" />
-                                          ) : <span className="text-xs font-medium text-slate-900 truncate">{it.name}</span>}
-                                          <span className="text-[9px] px-1 py-0.5 rounded border bg-amber-100 text-amber-800 border-amber-200">預定品</span>
-                                        </div>
-                                        {canEdit ? (
-                                          <input defaultValue={it.note || ''} placeholder="備註（例：9/1 確認、素亦做、含底座）"
-                                            onBlur={e => { if (e.target.value !== (it.note || '')) handleUpdatePlanned(ex.id, it.plannedId, { note: e.target.value }); }}
-                                            className="w-full text-[10px] text-slate-500 bg-transparent border-b border-transparent hover:border-amber-200 focus:border-amber-400 focus:outline-none py-0.5" />
-                                        ) : (it.note && <p className="text-[10px] text-slate-500">{it.note}</p>)}
-                                      </div>
-                                      {(ex.zones || []).length > 0 && (
-                                        <select value={it.zoneId || ''} disabled={!canEdit}
-                                          onChange={(e) => handleUpdatePlanned(ex.id, it.plannedId, { zoneId: e.target.value })}
-                                          title="要擺在哪一櫃"
-                                          className="text-[10px] border border-slate-200 rounded px-1 py-1 bg-white flex-shrink-0 max-w-[110px]">
-                                          <option value="">未指派櫃位</option>
-                                          {(ex.zones || []).map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
-                                        </select>
-                                      )}
-                                      <input type="number" min="1" value={it.qty || 1} disabled={!canEdit}
-                                        onChange={(e) => handleUpdatePlanned(ex.id, it.plannedId, { qty: Number(e.target.value) })}
-                                        className="w-12 px-1 py-1 text-xs border border-slate-200 rounded text-center flex-shrink-0" title="要帶的數量" />
-                                      <select value={it.packStatus || '製作中'} disabled={!canEdit}
-                                        onChange={(e) => handleUpdatePlanned(ex.id, it.plannedId, { packStatus: e.target.value })}
-                                        className={`text-[11px] px-1.5 py-1 border rounded flex-shrink-0 ${
-                                          it.packStatus === '已到貨' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                            : 'bg-amber-50 text-amber-700 border-amber-200'
-                                        }`}>
-                                        <option value="設計中">設計中</option>
-                                        <option value="製作中">製作中</option>
-                                        <option value="已到貨">已到貨</option>
-                                      </select>
-                                      {canEdit && (
-                                        <button onClick={() => handleRemovePlanned(ex.id, it.plannedId)} className="flex-shrink-0 p-1 text-slate-300 hover:text-rose-600" title="移除預定品">
-                                          <X className="w-3.5 h-3.5" />
-                                        </button>
-                                      )}
-                                    </div>
-                                  );
-                                }
-
-                                // === 組合品 ===
-                                if (it.type === 'bundle') {
-                                  const bundleImages = (it.bundleItems || [])
-                                    .map(bi => samplesWithRemaining.find(s => s.id === bi.sampleId))
-                                    .filter(Boolean)
-                                    .flatMap(s => s.images || [])
-                                    .slice(0, 4);
-                                  return (
-                                    <div key={it.bundleId || itIdx} className="border border-purple-200 rounded-lg overflow-hidden">
-                                      {/* 組合品標題 */}
-                                      <div className="bg-purple-50 px-3 py-2 flex items-center gap-2">
-                                        <span className="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-700 border border-purple-200 rounded font-medium flex-shrink-0">組合品</span>
-                                        <span className="text-sm font-semibold text-slate-800 flex-1">{it.name || '(未命名組合品)'}</span>
-                                        {/* 縮圖預覽（最多4張） */}
-                                        <div className="flex gap-0.5 flex-shrink-0">
-                                          {bundleImages.slice(0,3).map((img, ii) => (
-                                            <div key={ii} className="w-8 h-8 bg-white border border-slate-200 rounded overflow-hidden">
-                                              <SampleMediaThumb media={img} className="w-full h-full object-contain" />
-                                            </div>
-                                          ))}
-                                          {bundleImages.length > 3 && (
-                                            <div className="w-8 h-8 bg-slate-100 border border-slate-200 rounded flex items-center justify-center text-[9px] text-slate-500">+{bundleImages.length - 3}</div>
-                                          )}
-                                        </div>
-                                        {/* 櫃位指派 */}
-                                        {(ex.zones || []).length > 0 && (
-                                          <select
-                                            value={it.zoneId || ''}
-                                            disabled={!canEdit}
-                                            onChange={(e) => handleAssignZone(ex, itIdx, e.target.value)}
-                                            className="text-[10px] border border-slate-200 rounded px-1 py-0.5 bg-white flex-shrink-0 max-w-[110px]"
-                                          >
-                                            <option value="">未指派櫃位</option>
-                                            {(ex.zones || []).map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
-                                          </select>
-                                        )}
-                                        {/* 打包狀態 */}
-                                        <select
-                                          value={it.packStatus || '待準備'}
-                                          disabled={!canEdit}
-                                          onChange={(e) => handleUpdateBundle(ex.id, it.bundleId, { packStatus: e.target.value })}
-                                          className={`text-[11px] px-1.5 py-1 border rounded flex-shrink-0 ${
-                                            it.packStatus === '已打包' ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                                            it.packStatus === '已帶走' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                                            it.packStatus === '已歸還' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                                            'bg-slate-50 text-slate-600 border-slate-200'
-                                          }`}
-                                        >
-                                          <option value="待準備">待準備</option>
-                                          <option value="已準備">已準備</option>
-                                          <option value="已打包">已打包</option>
-                                          <option value="已歸還">已歸還</option>
-                                          {it.packStatus === '已帶走' && <option value="已帶走">已帶走</option>}
-                                        </select>
-                                        {canEdit && (
-                                          <button onClick={() => handleRemoveBundle(ex.id, it.bundleId)} className="p-1 text-slate-300 hover:text-rose-600 flex-shrink-0" title="刪除組合品">
-                                            <X className="w-3.5 h-3.5" />
-                                          </button>
-                                        )}
-                                      </div>
-                                      {/* 組合品內的散件 */}
-                                      <div className="divide-y divide-slate-100">
-                                        {(it.bundleItems || []).map((bi, bii) => {
-                                          const s = samplesWithRemaining.find(s => s.id === bi.sampleId);
-                                          if (!s) return (
-                                            <div key={bii} className="px-3 py-1.5 text-[11px] text-slate-400 pl-6">（樣品已刪除）</div>
-                                          );
-                                          const img = (s.images || [])[0];
-                                          return (
-                                            <div key={bii} className="flex gap-2 items-center px-3 py-1.5 pl-6 bg-white">
-                                              <div className="w-8 h-8 bg-white border border-slate-100 rounded overflow-hidden flex items-center justify-center flex-shrink-0">
-                                                <SampleMediaThumb media={img} className="w-full h-full object-contain" />
-                                              </div>
-                                              <span className="text-xs text-slate-700 flex-1 truncate">{s._displayName || s.name}</span>
-                                              <span className={`text-[9px] px-1 py-0.5 rounded border flex-shrink-0 ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
-                                              <input
-                                                type="number" min="1" value={bi.qty}
-                                                disabled={!canEdit}
-                                                onChange={(e) => {
-                                                  const newBundle = { ...it, bundleItems: it.bundleItems.map((b, i) => i === bii ? { ...b, qty: Number(e.target.value) } : b) };
-                                                  handleUpdateBundle(ex.id, it.bundleId, newBundle);
-                                                }}
-                                                className="w-10 px-1 py-0.5 text-xs border border-slate-200 rounded text-center flex-shrink-0"
-                                              />
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-                                  );
-                                }
-
-                                // === 散件 ===
-                                const sample = samplesWithRemaining.find(s => s.id === it.sampleId);
-                                if (!sample) {
-                                  return (
-                                    <div key={it.sampleId || itIdx} className="text-[11px] text-slate-400 bg-slate-50 rounded p-2 flex items-center justify-between">
-                                      <span>（樣品已被刪除）</span>
-                                      {canEdit && <button onClick={() => handleRemoveExhibitionItem(ex.id, it.sampleId)} className="text-rose-500 hover:underline">移除</button>}
-                                    </div>
-                                  );
-                                }
-                                const mainImage = (sample.images || [])[0];
-                                return (
-                                  <div key={it.sampleId || itIdx} className="flex gap-2 items-center bg-white border border-slate-200 rounded-lg p-2">
-                                    <div className="flex-shrink-0 w-12 h-12 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
-                                      <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-baseline gap-1.5 flex-wrap">
-                                        <span className="text-xs font-medium text-slate-900 truncate">{sample._displayName || sample.name}</span>
-                                        <span className={`text-[9px] px-1 py-0.5 rounded border ${SAMPLE_TYPE_COLORS[sample.type] || SAMPLE_TYPE_COLORS['其他']}`}>{sample.type}</span>
-                                      </div>
-                                      <div className="text-[10px] text-slate-500 flex flex-wrap gap-x-2">
-                                        {sample.location && <span>📍 {sample.location}</span>}
-                                        <span>庫存剩 {sample._remaining}</span>
-                                      </div>
-                                    </div>
-                                    {(ex.zones || []).length > 0 && (
-                                      <select value={it.zoneId || ''} disabled={!canEdit}
-                                        onChange={(e) => handleAssignZone(ex, itIdx, e.target.value)}
-                                        title="要擺在哪一櫃"
-                                        className="text-[10px] border border-slate-200 rounded px-1 py-1 bg-white flex-shrink-0 max-w-[110px]">
-                                        <option value="">未指派櫃位</option>
-                                        {(ex.zones || []).map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
-                                      </select>
-                                    )}
-                                    <input type="number" min="1" value={it.qty} disabled={!canEdit}
-                                      onChange={(e) => handleUpdateExhibitionItem(ex.id, it.sampleId, { qty: Number(e.target.value) })}
-                                      className="w-12 px-1 py-1 text-xs border border-slate-200 rounded text-center flex-shrink-0" title="要帶的數量"
-                                    />
-                                    <select value={it.packStatus || '待準備'} disabled={!canEdit}
-                                      onChange={(e) => handleUpdateExhibitionItem(ex.id, it.sampleId, { packStatus: e.target.value })}
-                                      className={`text-[11px] px-1.5 py-1 border rounded flex-shrink-0 ${
-                                        it.packStatus === '已打包' ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                                        it.packStatus === '已帶走' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                                        it.packStatus === '已歸還' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                                        'bg-slate-50 text-slate-600 border-slate-200'
-                                      }`}
-                                    >
-                                      <option value="待準備">待準備</option>
-                                      <option value="已準備">已準備</option>
-                                      <option value="已打包">已打包</option>
-                                      <option value="已歸還">已歸還</option>
-                                      {it.packStatus === '已帶走' && <option value="已帶走">已帶走</option>}
-                                    </select>
-                                    {canEdit && (
-                                      <button onClick={() => handleRemoveExhibitionItem(ex.id, it.sampleId)} className="flex-shrink-0 p-1 text-slate-300 hover:text-rose-600" title="從展覽移除">
-                                        <X className="w-3.5 h-3.5" />
-                                      </button>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                          {canEdit && (
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => setAddingSamplesToExId(ex.id)}
-                                className="flex-1 py-1.5 text-xs text-blue-600 hover:bg-blue-50 border border-dashed border-blue-200 rounded flex items-center justify-center gap-1"
-                              >
-                                <Plus className="w-3 h-3" />加入散件
-                              </button>
-                              <button
-                                onClick={() => setAddingBundleToExId(ex.id)}
-                                className="flex-1 py-1.5 text-xs text-purple-600 hover:bg-purple-50 border border-dashed border-purple-200 rounded flex items-center justify-center gap-1"
-                              >
-                                <Plus className="w-3 h-3" />建立組合品
-                              </button>
-                              <button
-                                onClick={() => setPlannedPicker({ exId: ex.id, zoneId: '' })}
-                                title="樣品庫還沒有、還在請工程做的東西，先打字佔位"
-                                className="flex-1 py-1.5 text-xs text-amber-700 hover:bg-amber-50 border border-dashed border-amber-300 rounded flex items-center justify-center gap-1"
-                              >
-                                <Plus className="w-3 h-3" />預定品（還沒做好）
-                              </button>
-                            </div>
-                          )}
                         </div>
                       )}
                     </div>

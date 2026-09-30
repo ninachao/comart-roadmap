@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.80.0';
-const BUILD_ID = '20260930-1930';
+const APP_VERSION = 'v1.80.1';
+const BUILD_ID = '20260930-2030';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.80.1',
+    date: '2026-09-30',
+    changes: [
+      '📐 預定品／外購品／道具改為和樣品一樣的橫條列，同一櫃裡不再一個方塊一個橫條；也多了數量與櫃位下拉',
+      '🖼 新增外購品時就能貼圖：名稱左邊的圖框可點選檔案、拖曳，或直接 Ctrl+V 貼上截圖',
+    ],
+  },
   {
     version: 'v1.80.0',
     date: '2026-09-30',
@@ -8754,6 +8762,16 @@ function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose, initial
   const [name, setName] = useState('');
   const [kind, setKind] = useState(initialKind);
   const cfg = EXTRA_ITEM_KINDS[kind] || EXTRA_ITEM_KINDS.planned;
+  const [pendingImg, setPendingImg] = useState(null);   // { file, preview }
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef(null);
+
+  // 外購品多半是從網頁或 LINE 截來的圖，所以新增當下就要能貼
+  const takeImage = (fileList) => {
+    const f = Array.from(fileList || []).find(x => (x.type || '').startsWith('image/'));
+    if (!f) return;
+    setPendingImg({ file: f, preview: URL.createObjectURL(f) });
+  };
 
   const list = useMemo(() => {
     const kw = q.trim().toLowerCase();
@@ -8769,12 +8787,23 @@ function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose, initial
     setName(p.name || p.code || '');
   };
 
-  const submit = () => {
+  const submit = async () => {
     const n = name.trim();
     if (!n) { alert('請填名稱'); return; }
-    // 只帶 projectId，不複製圖片：產品照可能是 base64（dataUrl），
-    // 整包塞進展覽文件會撐爆 Firestore 單筆 1MB 上限。卡片改成直接讀產品的照片。
-    onConfirm({ name: n, projectId: picked?.id || '', kind, packStatus: cfg.defaultStatus });
+    setSaving(true);
+    try {
+      let images = [];
+      if (pendingImg) {
+        const r = await uploadFileToStorage(pendingImg.file, () => {});
+        images = [{ url: r.url, path: r.path, name: r.name }];
+      }
+      // 只帶 projectId，不複製產品照：產品照可能是 base64（dataUrl），
+      // 整包塞進展覽文件會撐爆 Firestore 單筆 1MB 上限。卡片改成直接讀產品的照片。
+      await onConfirm({ name: n, projectId: picked?.id || '', kind, packStatus: cfg.defaultStatus, images });
+    } catch (e) {
+      alert(`圖片上傳失敗：${e.message}`);
+      setSaving(false);
+    }
   };
 
   return (
@@ -8832,15 +8861,40 @@ function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose, initial
           <label className="block text-[11px] text-slate-500">
             名稱（可直接改）
           </label>
-          <input value={name} onChange={e => setName(e.target.value)}
+          <div className="flex items-start gap-2">
+            {/* 圖片：點一下選檔、拖進來、或聚焦後 Ctrl+V 貼上 */}
+            <div
+              tabIndex={0}
+              onPaste={e => { const f = e.clipboardData?.files; if (f?.length) { e.preventDefault(); takeImage(f); } }}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { e.preventDefault(); takeImage(e.dataTransfer?.files); }}
+              onClick={() => fileRef.current?.click()}
+              title="點一下選圖、拖進來、或按 Ctrl+V 貼上"
+              className="relative w-14 h-14 rounded border border-dashed border-slate-300 bg-white flex items-center justify-center flex-shrink-0 cursor-pointer hover:border-slate-500 outline-none focus:ring-2 focus:ring-slate-300 overflow-hidden">
+              {pendingImg ? (
+                <>
+                  <img src={pendingImg.preview} alt="" className="w-full h-full object-contain" />
+                  <button onClick={e => { e.stopPropagation(); setPendingImg(null); }}
+                    className="absolute top-0 right-0 w-4 h-4 bg-slate-900/60 text-white text-[10px] leading-none flex items-center justify-center">×</button>
+                </>
+              ) : (
+                <span className="text-[9px] text-slate-400 text-center leading-tight px-1">
+                  {cfg.icon}<br />貼圖
+                </span>
+              )}
+              <input ref={fileRef} type="file" accept="image/*" className="hidden"
+                onChange={e => { const fs = Array.from(e.target.files || []); e.target.value = ''; takeImage(fs); }} />
+            </div>
+            <input value={name} onChange={e => setName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') submit(); }}
             placeholder={kind === 'outsourced' ? '例：他牌 3 合 1 充電座（比較用）' : kind === 'prop' ? '例：主推產品小立牌' : '例：吸盤支架 T1 手板'}
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400" />
+            className="flex-1 min-w-0 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400" />
+          </div>
           <div className="flex gap-2 justify-end pt-1">
             <button onClick={onClose} className="px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100 rounded-lg">取消</button>
-            <button onClick={submit}
-              className="px-3 py-1.5 text-xs text-white bg-amber-600 hover:bg-amber-700 rounded-lg">
-              加入
+            <button onClick={submit} disabled={saving}
+              className="px-3 py-1.5 text-xs text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-50">
+              {saving ? '加入中…' : '加入'}
             </button>
           </div>
         </div>
@@ -8849,9 +8903,9 @@ function AddPlannedModal({ projects, targetZoneName, onConfirm, onClose, initial
   );
 }
 
-// 展覽裡的「預定品」小卡：東西還沒做好、樣品庫查不到，所以照片、名稱、備註都直接在這裡填。
-// 圖片支援三種給法：點一下選檔、拖進來、或按 Ctrl+V 貼上（從 LINE／郵件截圖最常用）。
-function PlannedCard({ p, canEdit, onChange, onDelete, fallbackMedia }) {
+// 展覽裡「樣品庫沒有的東西」小卡（預定品／外購品／道具）。
+// 版面刻意做成和樣品列一樣的橫條，混在同一櫃時才不會一個方塊一個橫條、看起來像兩套系統。
+function PlannedCard({ p, canEdit, onChange, onDelete, fallbackMedia, zones = [], onAssignZone }) {
   const kind = extraKindOf(p);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
@@ -8876,69 +8930,72 @@ function PlannedCard({ p, canEdit, onChange, onDelete, fallbackMedia }) {
     } finally { setBusy(false); }
   };
 
-  const removeImage = (i) => onChange({ images: imgs.filter((_, ii) => ii !== i) });
-
   return (
-    <div className={`w-40 rounded border border-dashed p-1.5 flex flex-col gap-1 ${kind.cls}`}>
-      <div
-        tabIndex={canEdit ? 0 : -1}
-        onPaste={canEdit ? (e) => { const f = e.clipboardData?.files; if (f?.length) { e.preventDefault(); addImages(f); } } : undefined}
-        onDragOver={canEdit ? (e) => e.preventDefault() : undefined}
-        onDrop={canEdit ? (e) => { e.preventDefault(); addImages(e.dataTransfer?.files); } : undefined}
-        onClick={canEdit && !imgs.length ? () => fileRef.current?.click() : undefined}
-        /* 借用產品照時整塊仍可點，代表「換成自己的圖」 */
-        title={canEdit ? '點一下選圖、拖進來、或按 Ctrl+V 貼上' : ''}
-        className={`relative h-20 rounded bg-white border border-amber-200 flex items-center justify-center overflow-hidden outline-none focus:ring-2 focus:ring-amber-300 ${canEdit && !imgs.length ? 'cursor-pointer hover:bg-amber-50' : ''}`}>
-        {busy ? (
-          <span className="text-[10px] text-amber-600">上傳中…</span>
-        ) : shown ? (
-          <>
-            <SampleMediaThumb media={shown} className="w-full h-full object-contain" />
-            {imgs.length > 1 && (
-              <span className="absolute bottom-0.5 right-0.5 text-[9px] px-1 rounded bg-slate-900/70 text-white">+{imgs.length - 1}</span>
-            )}
-            {usingFallback && (
-              <span className="absolute bottom-0.5 left-0.5 text-[9px] px-1 rounded bg-slate-900/60 text-white">產品照</span>
-            )}
-            {canEdit && !usingFallback && (
-              <button onClick={(e) => { e.stopPropagation(); removeImage(0); }}
-                className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-slate-900/60 text-white text-[10px] leading-none flex items-center justify-center hover:bg-rose-600"
-                title="移除這張圖">×</button>
-            )}
-          </>
-        ) : (
-          <span className="text-[9px] text-slate-400 text-center leading-tight px-1">{kind.icon}<br />點一下選圖<br />或 Ctrl+V 貼上</span>
+    <div className={`rounded border border-dashed px-2 py-1.5 ${kind.cls}`}>
+      <div className="flex items-center gap-2">
+        {/* 縮圖：點一下選圖、拖進來、或聚焦後 Ctrl+V 貼上 */}
+        <div
+          tabIndex={canEdit ? 0 : -1}
+          onPaste={canEdit ? (e) => { const f = e.clipboardData?.files; if (f?.length) { e.preventDefault(); addImages(f); } } : undefined}
+          onDragOver={canEdit ? (e) => e.preventDefault() : undefined}
+          onDrop={canEdit ? (e) => { e.preventDefault(); addImages(e.dataTransfer?.files); } : undefined}
+          onClick={canEdit ? () => fileRef.current?.click() : undefined}
+          title={canEdit ? '點一下選圖、拖進來、或按 Ctrl+V 貼上' : ''}
+          className={`relative w-9 h-9 rounded border border-slate-200 bg-white overflow-hidden flex items-center justify-center flex-shrink-0 outline-none focus:ring-2 focus:ring-slate-300 ${canEdit ? 'cursor-pointer hover:border-slate-400' : ''}`}>
+          {busy ? <span className="text-[8px] text-slate-400">上傳中</span>
+            : shown ? <SampleMediaThumb media={shown} className="w-full h-full object-contain" />
+              : <span className="text-sm">{kind.icon}</span>}
+          {usingFallback && <span className="absolute bottom-0 right-0 text-[7px] px-0.5 bg-slate-900/60 text-white">產品照</span>}
+          <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
+            onChange={(e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; addImages(fs); }} />
+        </div>
+
+        <span className="flex-1 min-w-0">
+          {canEdit ? (
+            <input defaultValue={p.name}
+              onBlur={e => { const v = e.target.value.trim(); if (v && v !== p.name) onChange({ name: v }); }}
+              className="block w-full text-[11px] text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-500 focus:outline-none py-0.5" />
+          ) : <span className="block text-[11px] text-slate-800 truncate">{p.name}</span>}
+          <span className={`inline-block mt-0.5 text-[9px] px-1 py-0.5 rounded border ${kind.chip}`}>
+            {kind.icon} {kind.label}
+          </span>
+        </span>
+
+        <input type="number" min="1" value={p.qty || 1} disabled={!canEdit}
+          onChange={e => onChange({ qty: Number(e.target.value) || 1 })}
+          title="要帶的數量"
+          className="w-11 px-1 py-0.5 text-[11px] border border-slate-200 rounded text-center flex-shrink-0 bg-white" />
+
+        {canEdit && onAssignZone && zones.length > 0 && (
+          <select value={p.zoneId || ''} onChange={e => onAssignZone(p, e.target.value)}
+            title="要擺在哪一櫃"
+            className="text-[10px] px-1 py-0.5 border border-slate-200 rounded bg-white flex-shrink-0 max-w-[6.5rem]">
+            <option value="">未指派</option>
+            {zones.map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
+          </select>
         )}
-        <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
-          onChange={(e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; addImages(fs); }} />
-      </div>
 
-      <span className={`self-start text-[9px] px-1 py-0.5 rounded border ${kind.chip}`}>{kind.icon} {kind.label}</span>
-      {canEdit ? (
-        <input defaultValue={p.name}
-          onBlur={e => { if (e.target.value !== p.name) onChange({ name: e.target.value }); }}
-          className="text-[11px] font-medium text-slate-800 bg-transparent border-b border-slate-200 focus:border-slate-500 focus:outline-none py-0.5" />
-      ) : <span className="text-[11px] font-medium text-slate-800 truncate">{p.name}</span>}
-
-      {canEdit ? (
-        <textarea defaultValue={p.note || ''} rows={1} placeholder="備註（例：9/1 確認）"
-          onBlur={e => { if (e.target.value !== (p.note || '')) onChange({ note: e.target.value }); }}
-          className="text-[10px] text-slate-500 bg-transparent border-b border-transparent hover:border-amber-200 focus:border-amber-400 focus:outline-none py-0.5 resize-none leading-snug" />
-      ) : (p.note && <span className="text-[10px] text-slate-500">{p.note}</span>)}
-
-      <div className="flex items-center gap-1">
         {canEdit ? (
           <select value={p.packStatus || kind.defaultStatus} onChange={e => onChange({ packStatus: e.target.value })}
-            className={`text-[10px] px-1 py-0.5 border rounded flex-1 ${
+            className={`text-[10px] px-1 py-0.5 border rounded flex-shrink-0 ${
               ['已到貨', '已完成'].includes(p.packStatus) ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : kind.chip
             }`}>
             {kind.statuses.map(st => <option key={st} value={st}>{st}</option>)}
           </select>
-        ) : <span className="text-[10px] text-slate-600 flex-1">{p.packStatus || kind.defaultStatus}</span>}
+        ) : <span className="text-[10px] text-slate-600 flex-shrink-0">{p.packStatus || kind.defaultStatus}</span>}
+
         {canEdit && (
-          <button onClick={onDelete} className="text-[10px] text-slate-300 hover:text-rose-600 px-1" title="移除預定品">刪除</button>
+          <button onClick={onDelete} className="p-0.5 text-slate-300 hover:text-rose-600 flex-shrink-0" title="移除">
+            <X className="w-3 h-3" />
+          </button>
         )}
       </div>
+      {canEdit ? (
+        <input defaultValue={p.note || ''} placeholder="＋ 這場展覽的備註"
+          onBlur={e => { const v = e.target.value.trim(); if (v !== (p.note || '')) onChange({ note: v }); }}
+          className="mt-1 ml-11 text-[10px] text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-500 focus:outline-none py-0.5"
+          style={{ width: 'calc(100% - 2.75rem)' }} />
+      ) : (p.note && <p className="text-[10px] text-slate-500 mt-1 pl-11 whitespace-pre-wrap">📝 {p.note}</p>)}
     </div>
   );
 }
@@ -9343,15 +9400,12 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
                             zones={cabinets} onAssignZone={onAssignZone}
                             onChange={patch => updItem(it, patch)} onRemove={() => delItem(it)} />
                         ))}
-                        {planned.length > 0 && (
-                          <div className="flex gap-1 flex-wrap items-start pt-1">
-                            {planned.map(p => (
-                              <PlannedCard key={p.plannedId} p={p} canEdit={canEdit} fallbackMedia={plannedFallback(p)}
-                                onChange={patch => updPlanned(p.plannedId, patch)}
-                                onDelete={() => delPlanned(p)} />
-                            ))}
-                          </div>
-                        )}
+                        {planned.map(p => (
+                          <PlannedCard key={p.plannedId} p={p} canEdit={canEdit} fallbackMedia={plannedFallback(p)}
+                            zones={cabinets} onAssignZone={onAssignZone}
+                            onChange={patch => updPlanned(p.plannedId, patch)}
+                            onDelete={() => delPlanned(p)} />
+                        ))}
                       </div>
                     );
                   })()}
@@ -9398,13 +9452,12 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
                         zones={cabinets} onAssignZone={onAssignZone}
                         onChange={patch => updItem(it, patch)} onRemove={() => delItem(it)} />
                     ))}
-                    <div className="flex gap-1 flex-wrap items-start">
-                      {unassigned.filter(it => it.type === 'planned').map(p => (
-                        <PlannedCard key={p.plannedId} p={p} canEdit={canEdit} fallbackMedia={plannedFallback(p)}
-                          onChange={patch => updPlanned(p.plannedId, patch)}
-                          onDelete={() => delPlanned(p)} />
-                      ))}
-                    </div>
+                    {unassigned.filter(it => it.type === 'planned').map(p => (
+                      <PlannedCard key={p.plannedId} p={p} canEdit={canEdit} fallbackMedia={plannedFallback(p)}
+                        zones={cabinets} onAssignZone={onAssignZone}
+                        onChange={patch => updPlanned(p.plannedId, patch)}
+                        onDelete={() => delPlanned(p)} />
+                    ))}
                   </div>
                 )}
               </div>

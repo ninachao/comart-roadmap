@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.78.0';
-const BUILD_ID = '20260930-1600';
+const APP_VERSION = 'v1.78.1';
+const BUILD_ID = '20260930-1700';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.78.1',
+    date: '2026-09-30',
+    changes: [
+      '📝 櫃位裡的每一項會顯示樣品庫的備註與材質 —— 同名同編碼的樣品（例：兩支 QICT0002-SS 手板）只有備註分得出來是哪一支',
+      '　· 組合品的成員也會帶上備註',
+      '　· 展覽自己的備註欄改標示為「這場展覽的備註」，跟樣品庫的備註區分開',
+    ],
+  },
   {
     version: 'v1.78.0',
     date: '2026-09-30',
@@ -4177,7 +4186,10 @@ function ZoneItemRow({ it, samples = [], canEdit, onChange, onRemove, zones = []
               <span className="w-5 h-5 rounded border border-slate-200 bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
                 <SampleMediaThumb media={(s?.images || [])[0]} className="w-full h-full object-contain" />
               </span>
-              {s ? (s._displayName || s.name) : '(已刪除)'} ×{bi.qty || 1}
+              <span title={s?.notes || ''}>
+                {s ? (s._displayName || s.name) : '(已刪除)'} ×{bi.qty || 1}
+                {s?.notes ? <span className="text-slate-400"> · 📝 {s.notes}</span> : null}
+              </span>
             </span>
           ))}
         </div>
@@ -4214,7 +4226,12 @@ function ZoneItemRow({ it, samples = [], canEdit, onChange, onRemove, zones = []
           <span className="block text-[10px] text-slate-400 truncate">
             {code && <span className="font-mono">{code} · </span>}
             {s.location ? `📍 ${s.location}` : '未填位置'}
+            {s.material ? ` · ${s.material}` : ''}
           </span>
+          {/* 樣品庫的備註：同名同編碼時（例：兩支 QICT0002-SS 手板），這是唯一分得出來的資訊 */}
+          {s.notes && (
+            <span className="block text-[10px] text-slate-400 truncate" title={s.notes}>📝 {s.notes}</span>
+          )}
         </span>
         <span className={`text-[9px] px-1 py-0.5 rounded border flex-shrink-0 ${SAMPLE_TYPE_COLORS[s.type] || SAMPLE_TYPE_COLORS['其他']}`}>{s.type}</span>
         <input type="number" min="1" value={it.qty || 1} disabled={!canEdit}
@@ -4247,7 +4264,7 @@ function ZoneItemNote({ note, canEdit, onChange }) {
   return (
     <input
       defaultValue={note || ''}
-      placeholder="＋ 備註（例：搭配 A+b 無線充、擺左側、需小立牌）"
+      placeholder="＋ 這場展覽的備註（例：搭配 A+b 無線充、擺左側、需小立牌）"
       onBlur={e => { const v = e.target.value.trim(); if (v !== (note || '')) onChange(v); }}
       className="w-full mt-1 ml-11 text-[10px] text-slate-600 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none py-0.5"
       style={{ width: 'calc(100% - 2.75rem)' }}

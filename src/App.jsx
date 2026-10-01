@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.81.0';
-const BUILD_ID = '20260930-2130';
+const APP_VERSION = 'v1.81.1';
+const BUILD_ID = '20261001-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.81.1',
+    date: '2026-10-01',
+    changes: [
+      '📂 展覽的櫃位改為預設全部收合，打開展覽不再是整面清單；要看哪一櫃再點開，或用右上「全部展開」',
+      '🈷️ 樣品名稱、備註、材質的簡體字統一轉為繁體（66 筆），之後用繁體字搜尋就找得到',
+      '📥 匯入 2026.4 樣品清單的 32 項 peripower 產品，數量先設為 0',
+    ],
+  },
   {
     version: 'v1.81.0',
     date: '2026-09-30',
@@ -9021,7 +9030,8 @@ function BoothLayoutSection({ ex, samples, projects = [], canEdit, onSave, onAdd
   const [showLabels, setShowLabels] = useState(false);  // 圖上是否常駐顯示名稱（預設關，改用滑鼠移上去顯示）
   const [presenting, setPresenting] = useState(false);  // 簡報模式
   const [artUploading, setArtUploading] = useState(null);
-  const [collapsed, setCollapsed] = useState(() => new Set());   // 收合的櫃位 id
+  // 預設全部收合：櫃位一多、每櫃又有十幾項，一打開就是整面清單
+  const [collapsed, setCollapsed] = useState(() => new Set((ex.zones || []).map(z => z.id)));
 
   const zones = ex.zones || [];
   const layouts = ex.layoutImages || [];

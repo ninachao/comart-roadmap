@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.83.0';
-const BUILD_ID = '20261001-1930';
+const APP_VERSION = 'v1.83.1';
+const BUILD_ID = '20261001-2030';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.83.1',
+    date: '2026-10-01',
+    changes: [
+      '🚫 加入樣品到展覽時，庫存剩 0 的樣品預設不能選（變灰、標示「庫存 0」），與建立組合品的行為一致',
+      '　· 底部有「允許選擇庫存 0 的樣品」開關：剛匯入、還沒填數量的樣品仍可先排進展覽',
+    ],
+  },
   {
     version: 'v1.83.0',
     date: '2026-10-01',
@@ -14702,6 +14710,8 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
   // 用 Map 存「哪些樣品、各要幾個」，選取當下就能決定數量，不必加完再回頭改
   const [picked, setPicked] = useState(new Map());
   const [search, setSearch] = useState('');
+  // 庫存 0 的預設不能選。但剛匯入、還沒填數量的樣品也是 0，所以留一個開關讓你自己決定
+  const [allowEmpty, setAllowEmpty] = useState(false);
 
   // 已在展覽裡的樣品 id
   const alreadyIn = new Set((exhibition?.items || []).map(it => it.sampleId));
@@ -14713,6 +14723,7 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
   });
 
   const toggle = (s) => {
+    if ((s._remaining || 0) <= 0 && !allowEmpty) return;
     setPicked(prev => {
       const next = new Map(prev);
       if (next.has(s.id)) next.delete(s.id);
@@ -14758,17 +14769,26 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
               {filtered.map(s => {
                 const mainImage = (s.images || [])[0];
                 const isSel = picked.has(s.id);
+                const noStock = (s._remaining || 0) <= 0;
+                const blocked = noStock && !allowEmpty;
                 return (
                   <div
                     key={s.id}
                     onClick={() => toggle(s)}
-                    className={`flex gap-2 items-center p-2 rounded-lg border cursor-pointer transition ${isSel ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200 hover:border-slate-300'}`}
+                    title={blocked ? '這項樣品目前剩 0，先到樣品庫填數量，或勾選下方「允許選擇庫存 0 的樣品」' : ''}
+                    className={`flex gap-2 items-center p-2 rounded-lg border transition ${
+                      blocked ? 'bg-slate-100 border-slate-200 opacity-60 cursor-not-allowed'
+                        : isSel ? 'bg-amber-50 border-amber-300 cursor-pointer'
+                          : 'bg-white border-slate-200 hover:border-slate-300 cursor-pointer'
+                    }`}
                   >
-                    <input type="checkbox" checked={isSel} readOnly className="w-4 h-4 flex-shrink-0" />
+                    <input type="checkbox" checked={isSel} readOnly disabled={blocked} className="w-4 h-4 flex-shrink-0" />
                     <div className="flex-shrink-0 w-10 h-10 bg-white border border-slate-200 rounded overflow-hidden flex items-center justify-center">
                       <SampleMediaThumb media={mainImage} className="w-full h-full object-contain" />
                     </div>
-                    <SampleIdentity s={s} />
+                    <SampleIdentity s={s}
+                      stockClass={noStock ? 'text-rose-500 font-medium' : ''}
+                      extraBadge={noStock ? <span className="text-[9px] px-1 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200 flex-shrink-0">庫存 0</span> : null} />
                     {/* 選了才出現數量框，避免整份清單都是輸入框 */}
                     {isSel && (
                       <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
@@ -14787,8 +14807,12 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
           )}
         </div>
         <div className="flex justify-between items-center gap-2 mt-3 pt-3 border-t border-slate-100">
-          <span className="text-xs text-slate-500">
-            已選 {picked.size} 項{totalPcs > picked.size ? ` · 共 ${totalPcs} 個` : ''}
+          <span className="text-xs text-slate-500 flex items-center gap-3 flex-wrap">
+            <span>已選 {picked.size} 項{totalPcs > picked.size ? ` · 共 ${totalPcs} 個` : ''}</span>
+            <label className="flex items-center gap-1 text-[11px] text-slate-400 cursor-pointer">
+              <input type="checkbox" checked={allowEmpty} onChange={e => setAllowEmpty(e.target.checked)} className="w-3 h-3" />
+              允許選擇庫存 0 的樣品
+            </label>
           </span>
           <div className="flex gap-2">
             <button onClick={onClose} className="text-sm px-3 py-1.5 hover:bg-slate-100 rounded">取消</button>

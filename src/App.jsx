@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.81.1';
-const BUILD_ID = '20261001-1000';
+const APP_VERSION = 'v1.82.0';
+const BUILD_ID = '20261001-1500';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.82.0',
+    date: '2026-10-01',
+    changes: [
+      '📊 展覽清單可匯出 Excel（真正的 .xlsx，不是 CSV）：欄位為櫃位／類別／名稱／料號／數量／存放位置／材質／樣品備註／本場備註，標題列已凍結',
+      '📄 PDF 清單改為依櫃位分段列印，順序與你實際編排攤位的方式一致',
+      '　· 新增「存放位置」與「備註」欄：樣品庫原本寫的備註會一起帶出來，這場展覽的備註標示為「【本場】」',
+      '　· 移除「匯出日期／含圖片版」標示與「打包狀態」欄位',
+    ],
+  },
   {
     version: 'v1.81.1',
     date: '2026-10-01',
@@ -13211,9 +13221,15 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                 </button>
                                 <button
                                   onClick={() => exportExhibitionPDF(ex, samplesWithRemaining, true)}
-                                  className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-b-lg border-t border-slate-100"
+                                  className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 border-t border-slate-100"
                                 >
                                   含圖片版
+                                </button>
+                                <button
+                                  onClick={() => exportExhibitionExcel(ex, samplesWithRemaining)}
+                                  className="w-full text-left px-3 py-2 text-xs text-emerald-700 hover:bg-emerald-50 rounded-b-lg border-t border-slate-100"
+                                >
+                                  📊 Excel
                                 </button>
                               </div>
                             </div>
@@ -14732,6 +14748,120 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
 }
 
 // === 展覽 PDF 匯出 ===
+// 多檔 ZIP（store 模式，不壓縮）—— xlsx 本質上就是一個 ZIP，
+// 既然已經有 CRC32 可用，就不必為了匯出 Excel 多裝一個套件。
+function makeZipBlobMulti(entries) {
+  const enc = new TextEncoder();
+  const put = (arr, off, val, size) => { for (let i = 0; i < size; i++) arr[off + i] = (val >>> (i * 8)) & 0xFF; };
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const e of entries) {
+    const nameBytes = enc.encode(e.name);
+    const data = typeof e.data === 'string' ? enc.encode(e.data) : e.data;
+    const crc = crc32(data);
+    const local = new Uint8Array(30 + nameBytes.length);
+    put(local, 0, 0x04034b50, 4); put(local, 4, 20, 2); put(local, 6, 0x0800, 2);
+    put(local, 8, 0, 2);
+    put(local, 14, crc, 4); put(local, 18, data.length, 4); put(local, 22, data.length, 4);
+    put(local, 26, nameBytes.length, 2);
+    local.set(nameBytes, 30);
+    locals.push(local, data);
+
+    const central = new Uint8Array(46 + nameBytes.length);
+    put(central, 0, 0x02014b50, 4); put(central, 4, 20, 2); put(central, 6, 20, 2);
+    put(central, 8, 0x0800, 2); put(central, 10, 0, 2);
+    put(central, 16, crc, 4); put(central, 20, data.length, 4); put(central, 24, data.length, 4);
+    put(central, 28, nameBytes.length, 2);
+    put(central, 42, offset, 4);
+    central.set(nameBytes, 46);
+    centrals.push(central);
+
+    offset += local.length + data.length;
+  }
+  const centralSize = centrals.reduce((n, c) => n + c.length, 0);
+  const eocd = new Uint8Array(22);
+  put(eocd, 0, 0x06054b50, 4);
+  put(eocd, 8, entries.length, 2); put(eocd, 10, entries.length, 2);
+  put(eocd, 12, centralSize, 4); put(eocd, 16, offset, 4);
+  return new Blob([...locals, ...centrals, eocd], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+}
+
+const xmlEsc = (v) => String(v == null ? '' : v)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// 由二維陣列產生 .xlsx（第一列為標題）。文字一律用 inlineStr，省掉 sharedStrings。
+function makeXlsxBlob(rows, sheetName = '清單', colWidths = []) {
+  const colLetter = (n) => { let s = ''; n += 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+  const body = rows.map((row, r) => {
+    const cells = row.map((v, c) => {
+      const ref = colLetter(c) + (r + 1);
+      if (typeof v === 'number' && isFinite(v)) return '<c r="' + ref + '"><v>' + v + '</v></c>';
+      return '<c r="' + ref + '" t="inlineStr"' + (r === 0 ? ' s="1"' : '') + '><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
+    }).join('');
+    return '<row r="' + (r + 1) + '">' + cells + '</row>';
+  }).join('');
+  const cols = colWidths.length
+    ? '<cols>' + colWidths.map((w, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>').join('') + '</cols>'
+    : '';
+  const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' + cols + '<sheetData>' + body + '</sheetData></worksheet>';
+  const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs></styleSheet>';
+  return makeZipBlobMulti([
+    { name: '[Content_Types].xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
+    { name: '_rels/.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+    { name: 'xl/workbook.xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="' + xmlEsc(sheetName).slice(0, 31) + '" sheetId="1" r:id="rId1"/></sheets></workbook>' },
+    { name: 'xl/_rels/workbook.xml.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
+    { name: 'xl/styles.xml', data: styles },
+    { name: 'xl/worksheets/sheet1.xml', data: sheet },
+  ]);
+}
+
+function downloadBlobAs(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename.replace(/[\/\\?%*:|"<>]/g, '_');
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+// 展覽樣品清單 → Excel。欄位與 PDF 一致、依櫃位排序，方便現場點收與轉給同事
+function exportExhibitionExcel(exhibition, allSamples) {
+  const items = exhibition.items || [];
+  const zones = (exhibition.zones || []).filter(z => z.kind !== 'poster');
+  const groups = zones.map(z => ({ name: z.name || '未命名櫃位', list: items.filter(it => (it.zoneId || '') === z.id) }));
+  const noZone = items.filter(it => !it.zoneId || !zones.some(z => z.id === it.zoneId));
+  if (noZone.length) groups.push({ name: '未指派櫃位', list: noZone });
+
+  const rows = [['櫃位', '類別', '名稱', '料號', '數量', '存放位置', '材質', '樣品備註', '本場備註']];
+  groups.filter(g => g.list.length).forEach(g => {
+    g.list.forEach(it => {
+      if (it.type === 'bundle') {
+        rows.push([g.name, '組合品', it.name || '未命名組合品', '', '', '', '', '', it.note || '']);
+        (it.bundleItems || []).forEach(bi => {
+          const s = allSamples.find(x => x.id === bi.sampleId);
+          if (!s) return;
+          rows.push([g.name, '　└ 成員', s._displayName || s.name, s.sampleNo || s._displayCode || '',
+            Number(bi.qty) || 1, s.location || '', s.material || '', s.notes || '', '']);
+        });
+      } else if (it.type === 'planned') {
+        const kd = extraKindOf(it);
+        rows.push([g.name, kd.label, it.name || '未命名', '', Number(it.qty) || 1, '', '',
+          it.packStatus || kd.defaultStatus, it.note || '']);
+      } else {
+        const s = allSamples.find(x => x.id === it.sampleId);
+        if (!s) return;
+        rows.push([g.name, s.type || '', s._displayName || s.name, s.sampleNo || s._displayCode || '',
+          Number(it.qty) || 1, s.location || '', s.material || '', s.notes || '', it.note || '']);
+      }
+    });
+  });
+
+  downloadBlobAs(makeXlsxBlob(rows, '展覽樣品清單', [16, 10, 36, 14, 6, 16, 10, 32, 24]),
+    (exhibition.name || '展覽樣品清單') + '.xlsx');
+}
+
 function exportExhibitionPDF(exhibition, allSamples, withImages) {
   withImages = !!withImages;
   const items = exhibition.items || [];
@@ -14756,56 +14886,75 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
       return '<img src="' + b64 + '" style="width:' + size + 'px;height:' + size + 'px;object-fit:contain;border-radius:4px;border:1px solid #e2e8f0;background:#fff;vertical-align:middle;" />';
     }
 
+    // 依櫃位分段：這是你實際編排攤位的方式，照這個順序印出來才對得上現場
+    var zones = (exhibition.zones || []).filter(function(z){ return z.kind !== 'poster'; });
+    var groups = zones.map(function(z){ return { name: z.name || '未命名櫃位', list: items.filter(function(it){ return (it.zoneId || '') === z.id; }) }; });
+    var noZone = items.filter(function(it){ return !it.zoneId || !zones.some(function(z){ return z.id === it.zoneId; }); });
+    if (noZone.length) groups.push({ name: '未指派櫃位', list: noZone });
+    groups = groups.filter(function(g){ return g.list.length; });
+    if (!groups.length) groups = [{ name: '', list: items }];
+
+    var COLS = 6;
     var rows = '';
-    items.forEach(function(it, idx) {
-      if (it.type === 'bundle') {
-        var bundleImgs = '';
-        if (withImages) {
-          bundleImgs = '<span style="display:inline-flex;gap:3px;margin-left:8px;vertical-align:middle;">';
-          (it.bundleItems || []).slice(0, 4).forEach(function(bi) {
-            var s = allSamples.find(function(s){ return s.id === bi.sampleId; });
-            if (s) bundleImgs += imgTag((s.images || [])[0] && (s.images[0].url), 28);
-          });
-          bundleImgs += '</span>';
-        }
-        rows += '<tr style="background:#f3e8ff;font-weight:600;">';
-        rows += '<td colspan="4"><span style="background:#7c3aed;color:white;font-size:10px;padding:1px 6px;border-radius:10px;margin-right:6px;">組合品</span>' + (it.name || '未命名組合品') + bundleImgs + '</td>';
-        rows += '<td>' + packLabel(it.packStatus) + '</td></tr>';
-        (it.bundleItems || []).forEach(function(bi) {
-          var s = allSamples.find(function(s){ return s.id === bi.sampleId; });
-          if (!s) return;
-          var imgUrl = (s.images || [])[0] && s.images[0].url;
-          rows += '<tr style="background:#faf5ff;font-size:12px;color:#4b5563;">';
-          rows += '<td style="padding-left:24px;">' + (withImages ? imgTag(imgUrl, 28) + ' ' : '') + '└ ' + (s._displayName || s.name) + '</td>';
-          rows += '<td>' + (s.sampleNo || s._displayCode || '—') + '</td>';
-          rows += '<td style="font-size:11px;color:#64748b;">' + s.type + '</td>';
-          rows += '<td style="font-weight:600;text-align:center;">× ' + (bi.qty || 1) + '</td>';
-          rows += '<td>—</td></tr>';
-        });
-      } else if (it.type === 'planned') {
-        // 預定品：樣品庫還沒有的東西，用虛線列表示，讓清單上看得到它也要進攤位
-        rows += '<tr style="background:#fffbeb;">';
-        var kd = it.kind === 'outsourced' ? { label: '外購品', color: '#0284c7' }
-          : it.kind === 'prop' ? { label: '道具', color: '#64748b' }
-            : { label: '預定品', color: '#f59e0b' };
-        rows += '<td><span style="background:' + kd.color + ';color:white;font-size:10px;padding:1px 6px;border-radius:10px;margin-right:6px;">' + kd.label + '</span>' + (it.name || '未命名') + (it.note ? '<span style="color:#92400e;font-size:11px;"> · ' + it.note + '</span>' : '') + '</td>';
-        rows += '<td>—</td>';
-        rows += '<td style="font-size:11px;color:#64748b;">' + (it.kind === 'outsourced' ? '外購' : '未入庫') + '</td>';
-        rows += '<td style="font-weight:600;text-align:center;">× ' + (it.qty || 1) + '</td>';
-        rows += '<td style="font-size:12px;color:#92400e;">' + (it.packStatus || '') + '</td></tr>';
-      } else {
-        var s = allSamples.find(function(s){ return s.id === it.sampleId; });
-        if (!s) return;
-        var imgUrl = (s.images || [])[0] && s.images[0].url;
-        var bg = idx % 2 === 0 ? '#fff' : '#f8fafc';
-        rows += '<tr style="background:' + bg + ';">';
-        rows += '<td>' + (withImages ? imgTag(imgUrl, 40) + ' ' : '') + (s._displayName || s.name)
-          + (it.note ? '<div style="font-size:11px;color:#64748b;">📝 ' + it.note + '</div>' : '') + '</td>';
-        rows += '<td>' + (s.sampleNo || s._displayCode || '—') + '</td>';
-        rows += '<td style="font-size:11px;color:#64748b;">' + s.type + '</td>';
-        rows += '<td style="font-weight:600;text-align:center;">× ' + (it.qty || 1) + '</td>';
-        rows += '<td style="font-size:12px;">' + packLabel(it.packStatus) + '</td></tr>';
+    groups.forEach(function(g) {
+      if (g.name) {
+        rows += '<tr><td colspan="' + COLS + '" style="background:#0f172a;color:#fff;font-weight:600;padding:6px 12px;">'
+          + g.name + ' <span style="font-weight:400;opacity:.7;">· ' + g.list.length + ' 項</span></td></tr>';
       }
+      g.list.forEach(function(it, idx) {
+        if (it.type === 'bundle') {
+          var bundleImgs = '';
+          if (withImages) {
+            bundleImgs = '<span style="display:inline-flex;gap:3px;margin-left:8px;vertical-align:middle;">';
+            (it.bundleItems || []).slice(0, 4).forEach(function(bi) {
+              var sb = allSamples.find(function(x){ return x.id === bi.sampleId; });
+              if (sb) bundleImgs += imgTag((sb.images || [])[0] && (sb.images[0].url), 28);
+            });
+            bundleImgs += '</span>';
+          }
+          rows += '<tr style="background:#f3e8ff;font-weight:600;">';
+          rows += '<td colspan="' + COLS + '"><span style="background:#7c3aed;color:white;font-size:10px;padding:1px 6px;border-radius:10px;margin-right:6px;">組合品</span>'
+            + (it.name || '未命名組合品') + bundleImgs
+            + (it.note ? '<span style="font-weight:400;color:#64748b;font-size:11px;"> · ' + it.note + '</span>' : '') + '</td></tr>';
+          (it.bundleItems || []).forEach(function(bi) {
+            var sb = allSamples.find(function(x){ return x.id === bi.sampleId; });
+            if (!sb) return;
+            var bu = (sb.images || [])[0] && sb.images[0].url;
+            rows += '<tr style="background:#faf5ff;font-size:12px;color:#4b5563;">';
+            rows += '<td style="padding-left:24px;">' + (withImages ? imgTag(bu, 28) + ' ' : '') + '└ ' + (sb._displayName || sb.name) + '</td>';
+            rows += '<td>' + (sb.sampleNo || sb._displayCode || '—') + '</td>';
+            rows += '<td style="font-size:11px;color:#64748b;">' + sb.type + '</td>';
+            rows += '<td style="font-weight:600;text-align:center;">× ' + (bi.qty || 1) + '</td>';
+            rows += '<td style="font-size:11px;color:#64748b;">' + (sb.location || '—') + '</td>';
+            rows += '<td style="font-size:11px;color:#64748b;">' + (sb.notes || '') + '</td></tr>';
+          });
+        } else if (it.type === 'planned') {
+          var kd = it.kind === 'outsourced' ? { label: '外購品', color: '#0284c7' }
+            : it.kind === 'prop' ? { label: '道具', color: '#64748b' }
+              : { label: '預定品', color: '#f59e0b' };
+          rows += '<tr style="background:#fffbeb;">';
+          rows += '<td><span style="background:' + kd.color + ';color:white;font-size:10px;padding:1px 6px;border-radius:10px;margin-right:6px;">' + kd.label + '</span>' + (it.name || '未命名') + '</td>';
+          rows += '<td>—</td>';
+          rows += '<td style="font-size:11px;color:#64748b;">' + (it.kind === 'outsourced' ? '外購' : '未入庫') + '</td>';
+          rows += '<td style="font-weight:600;text-align:center;">× ' + (it.qty || 1) + '</td>';
+          rows += '<td style="font-size:11px;color:#64748b;">—</td>';
+          rows += '<td style="font-size:11px;color:#92400e;">' + (it.note || '') + '</td></tr>';
+        } else {
+          var sm = allSamples.find(function(x){ return x.id === it.sampleId; });
+          if (!sm) return;
+          var iu = (sm.images || [])[0] && sm.images[0].url;
+          var bg = idx % 2 === 0 ? '#fff' : '#f8fafc';
+          // 樣品庫備註與這場展覽的備註都要帶出來，兩者意思不同
+          var memo = [sm.notes || '', it.note ? '【本場】' + it.note : ''].filter(Boolean).join('<br />');
+          rows += '<tr style="background:' + bg + ';">';
+          rows += '<td>' + (withImages ? imgTag(iu, 40) + ' ' : '') + (sm._displayName || sm.name) + '</td>';
+          rows += '<td>' + (sm.sampleNo || sm._displayCode || '—') + '</td>';
+          rows += '<td style="font-size:11px;color:#64748b;">' + sm.type + '</td>';
+          rows += '<td style="font-weight:600;text-align:center;">× ' + (it.qty || 1) + '</td>';
+          rows += '<td style="font-size:11px;color:#64748b;">' + (sm.location || '—') + '</td>';
+          rows += '<td style="font-size:11px;color:#64748b;">' + memo + '</td></tr>';
+        }
+      });
     });
 
     var packedCount = items.filter(function(it){ return ['已準備','已打包','已帶走','已歸還'].indexOf(it.packStatus) !== -1; }).length;
@@ -14832,20 +14981,18 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
       + '<div class="meta">'
       + (exhibition.date ? '<span>📅 ' + exhibition.date + '</span>' : '')
       + (exhibition.location ? '<span>📍 ' + exhibition.location + '</span>' : '')
-      + '<span>🖨 匯出日期：' + today + '</span>'
-      + (withImages ? '<span>含圖片版</span>' : '<span>文字版</span>')
       + '</div>'
       + notesHtml
       + '<div class="stats">'
       + '<div class="stat"><div class="stat-num">' + items.length + '</div><div class="stat-label">樣品 / 組合品</div></div>'
       + '<div class="stat"><div class="stat-num">' + bundleCount + '</div><div class="stat-label">組合品</div></div>'
       + '<div class="stat"><div class="stat-num">' + singleCount + '</div><div class="stat-label">散件</div></div>'
-      + '<div class="stat"><div class="stat-num">' + packedCount + '</div><div class="stat-label">已完成準備</div></div>'
+      + '<div class="stat"><div class="stat-num">' + groups.length + '</div><div class="stat-label">櫃位數</div></div>'
       + '</div>'
       + '<table><thead><tr>'
-      + '<th>名稱</th><th>料號</th><th>類型</th><th>數量</th><th>打包狀態</th>'
+      + '<th>名稱</th><th>料號</th><th>類型</th><th>數量</th><th>存放位置</th><th>備註</th>'
       + '</tr></thead><tbody>'
-      + (rows || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px">尚未加入樣品</td></tr>')
+      + (rows || '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:24px">尚未加入樣品</td></tr>')
       + '</tbody></table>'
       + '<div class="footer">COMART Product Dev · ' + today + '</div>'
       + '<script>window.onload = function() { window.print(); }</' + 'script>'

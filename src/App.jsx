@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.82.1';
-const BUILD_ID = '20261001-1700';
+const APP_VERSION = 'v1.82.2';
+const BUILD_ID = '20261001-1830';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.82.2',
+    date: '2026-10-01',
+    changes: [
+      '📑 匯出的 Excel 改成和 PDF 一樣的分段版面：每個櫃位一條深色標題列（含項數），底下才是該櫃的樣品',
+      '　· 不再每一列重複寫櫃位名稱，掃視時一眼就知道這一區有哪些樣品',
+    ],
+  },
   {
     version: 'v1.82.1',
     date: '2026-10-01',
@@ -14802,7 +14810,17 @@ function makeXlsxBlob(rows, sheetName = '清單', colWidths = [], images = [], r
   const PX = 9525;                       // 1 px = 9525 EMU
   const imgPx = Math.max(32, rowPx - 8);
 
+  // 一列可以是陣列（資料列），也可以是 { section: '櫃位名稱' }（整列合併的分段標題）
+  const width = rows.reduce((n, r) => Math.max(n, Array.isArray(r) ? r.length : 1), 1);
+  const merges = [];
   const body = rows.map((row, r) => {
+    if (!Array.isArray(row) && row && row.section != null) {
+      merges.push('A' + (r + 1) + ':' + colLetter(width - 1) + (r + 1));
+      const cells = Array.from({ length: width }, (_, c) =>
+        '<c r="' + colLetter(c) + (r + 1) + '" t="inlineStr" s="2"><is><t xml:space="preserve">'
+        + (c === 0 ? xmlEsc(row.section) : '') + '</t></is></c>').join('');
+      return '<row r="' + (r + 1) + '" ht="20" customHeight="1">' + cells + '</row>';
+    }
     const cells = row.map((v, c) => {
       const ref = colLetter(c) + (r + 1);
       if (typeof v === 'number' && isFinite(v)) return '<c r="' + ref + '"><v>' + v + '</v></c>';
@@ -14811,6 +14829,9 @@ function makeXlsxBlob(rows, sheetName = '清單', colWidths = [], images = [], r
     const h = (rowPx && r > 0) ? ' ht="' + (rowPx * 0.75) + '" customHeight="1"' : '';
     return '<row r="' + (r + 1) + '"' + h + '>' + cells + '</row>';
   }).join('');
+  const mergeXml = merges.length
+    ? '<mergeCells count="' + merges.length + '">' + merges.map(m => '<mergeCell ref="' + m + '"/>').join('') + '</mergeCells>'
+    : '';
 
   const cols = colWidths.length
     ? '<cols>' + colWidths.map((w, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>').join('') + '</cols>'
@@ -14818,10 +14839,10 @@ function makeXlsxBlob(rows, sheetName = '清單', colWidths = [], images = [], r
 
   const hasImg = images.length > 0;
   const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
-    + cols + '<sheetData>' + body + '</sheetData>'
+    + cols + '<sheetData>' + body + '</sheetData>' + mergeXml
     + (hasImg ? '<drawing r:id="rIdDr"/>' : '') + '</worksheet>';
 
-  const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+  const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts><fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0F172A"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
 
   const parts = [
     { name: '_rels/.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
@@ -14870,28 +14891,30 @@ async function exportExhibitionExcel(exhibition, allSamples) {
   const noZone = items.filter(it => !it.zoneId || !zones.some(z => z.id === it.zoneId));
   if (noZone.length) groups.push({ name: '未指派櫃位', list: noZone });
 
-  const rows = [['圖片', '櫃位', '類別', '名稱', '料號', '數量', '材質', '樣品備註', '本場備註']];
+  // 櫃位改用分段標題列，不再每一列重複寫一次，掃起來像 PDF 一樣清楚
+  const rows = [['圖片', '類別', '名稱', '料號', '數量', '材質', '樣品備註', '本場備註']];
   const picks = [];   // { row, url }
   const push = (r, url) => { rows.push(r); if (url) picks.push({ row: rows.length - 1, url }); };
 
   groups.filter(g => g.list.length).forEach(g => {
+    rows.push({ section: `${g.name}　·　${g.list.length} 項` });
     g.list.forEach(it => {
       if (it.type === 'bundle') {
-        push(['', g.name, '組合品', it.name || '未命名組合品', '', '', '', '', it.note || '']);
+        push(['', '組合品', it.name || '未命名組合品', '', '', '', '', it.note || '']);
         (it.bundleItems || []).forEach(bi => {
           const s2 = allSamples.find(x => x.id === bi.sampleId);
           if (!s2) return;
-          push(['', g.name, '　└ 成員', s2._displayName || s2.name, s2.sampleNo || s2._displayCode || '',
+          push(['', '　└ 成員', s2._displayName || s2.name, s2.sampleNo || s2._displayCode || '',
             Number(bi.qty) || 1, s2.material || '', s2.notes || '', ''], (s2.images || [])[0]?.url);
         });
       } else if (it.type === 'planned') {
         const kd = extraKindOf(it);
-        push(['', g.name, kd.label, it.name || '未命名', '', Number(it.qty) || 1, '',
+        push(['', kd.label, it.name || '未命名', '', Number(it.qty) || 1, '',
           it.packStatus || kd.defaultStatus, it.note || ''], (it.images || [])[0]?.url);
       } else {
         const s2 = allSamples.find(x => x.id === it.sampleId);
         if (!s2) return;
-        push(['', g.name, s2.type || '', s2._displayName || s2.name, s2.sampleNo || s2._displayCode || '',
+        push(['', s2.type || '', s2._displayName || s2.name, s2.sampleNo || s2._displayCode || '',
           Number(it.qty) || 1, s2.material || '', s2.notes || '', it.note || ''], (s2.images || [])[0]?.url);
       }
     });
@@ -14911,7 +14934,7 @@ async function exportExhibitionExcel(exhibition, allSamples) {
     } catch { /* 略過這張 */ }
   }
 
-  downloadBlobAs(makeXlsxBlob(rows, '展覽樣品清單', [9, 16, 10, 36, 14, 6, 10, 32, 24], images, 64),
+  downloadBlobAs(makeXlsxBlob(rows, '展覽樣品清單', [9, 10, 36, 14, 6, 10, 32, 24], images, 64),
     (exhibition.name || '展覽樣品清單') + '.xlsx');
 }
 

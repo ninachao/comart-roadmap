@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.82.2';
-const BUILD_ID = '20261001-1830';
+const APP_VERSION = 'v1.83.0';
+const BUILD_ID = '20261001-1930';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.83.0',
+    date: '2026-10-01',
+    changes: [
+      '⏳ 匯出 PDF／Excel 時右下角顯示進度（已下載幾張圖片、進度條），不會再分不清是當掉還是在跑',
+      '⚡ Excel 的圖片改為一次 6 張平行下載，原本是一張接一張，速度約快 5 倍',
+      '🚫 匯出進行中時按鈕會暫時停用，避免重複觸發',
+    ],
+  },
   {
     version: 'v1.82.2',
     date: '2026-10-01',
@@ -12375,6 +12384,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [plannedPicker, setPlannedPicker] = useState(null);            // 新增預定品：{ exId, zoneId }
   const [zoomImg, setZoomImg] = useState(null);                        // 放大檢視圖片：{ media, name }
   const [showRequestPaste, setShowRequestPaste] = useState(false);     // 貼上請購單批次建立樣品
+  const [exportJob, setExportJob] = useState(null);                    // 匯出進度：{ label, done, total }
   const [addingBundleToExId, setAddingBundleToExId] = useState(null);   // 正在建組合品的展覽
 
   const locationOptions = useMemo(() => sortLocations([...new Set(samples.map(s => s.location).filter(Boolean))]), [samples]);
@@ -13231,14 +13241,29 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                               {/* hover 下拉選項 */}
                               <div className="absolute right-0 top-full mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg z-10 hidden group-hover/pdf:block min-w-[110px]">
                                 <button
-                                  onClick={() => exportExhibitionPDF(ex, samplesWithRemaining, true)}
-                                  className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-t-lg"
+                                  disabled={!!exportJob}
+                                  onClick={() => {
+                                    setExportJob({ label: '正在準備 PDF', done: 0, total: 0 });
+                                    exportExhibitionPDF(ex, samplesWithRemaining, true, (p) => {
+                                      setExportJob(p ? { label: '正在下載圖片', ...p } : null);
+                                    });
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-t-lg disabled:opacity-40"
                                 >
                                   匯出 PDF
                                 </button>
                                 <button
-                                  onClick={() => exportExhibitionExcel(ex, samplesWithRemaining)}
-                                  className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-b-lg border-t border-slate-100"
+                                  disabled={!!exportJob}
+                                  onClick={async () => {
+                                    setExportJob({ label: '正在準備 Excel', done: 0, total: 0 });
+                                    try {
+                                      await exportExhibitionExcel(ex, samplesWithRemaining,
+                                        (p) => setExportJob({ label: '正在下載圖片', ...p }));
+                                    } catch (e) {
+                                      alert(`匯出失敗：${e.message}`);
+                                    } finally { setExportJob(null); }
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-b-lg border-t border-slate-100 disabled:opacity-40"
                                 >
                                   匯出 Excel
                                 </button>
@@ -14432,6 +14457,29 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
           />
         )}
 
+        {/* 匯出進度：圖片多的時候要跑十幾秒，沒有回饋會讓人以為當掉了 */}
+        {exportJob && (
+          <div className="fixed bottom-5 right-5 z-[80] w-64 rounded-xl border border-slate-200 bg-white shadow-xl p-3">
+            <div className="flex items-center gap-2 mb-1.5">
+              <Loader className="w-3.5 h-3.5 text-slate-500 animate-spin" />
+              <span className="text-xs font-medium text-slate-700">{exportJob.label}</span>
+            </div>
+            {exportJob.total > 0 ? (
+              <>
+                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-slate-800 transition-all"
+                    style={{ width: `${Math.round((exportJob.done / exportJob.total) * 100)}%` }} />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1 tabular-nums">
+                  {exportJob.done} / {exportJob.total} 張圖片
+                </p>
+              </>
+            ) : (
+              <p className="text-[10px] text-slate-400">整理資料中…</p>
+            )}
+          </div>
+        )}
+
         {zoomImg && (
           <div onClick={() => setZoomImg(null)}
             className="modal-anim fixed inset-0 bg-slate-900/80 z-[60] flex items-center justify-center p-6 cursor-zoom-out">
@@ -14884,7 +14932,7 @@ function downloadBlobAs(blob, filename) {
 }
 
 // 展覽樣品清單 → Excel。依櫃位排序，並把樣品照片一起放進 A 欄
-async function exportExhibitionExcel(exhibition, allSamples) {
+async function exportExhibitionExcel(exhibition, allSamples, onProgress) {
   const items = exhibition.items || [];
   const zones = (exhibition.zones || []).filter(z => z.kind !== 'poster');
   const groups = zones.map(z => ({ name: z.name || '未命名櫃位', list: items.filter(it => (it.zoneId || '') === z.id) }));
@@ -14920,25 +14968,38 @@ async function exportExhibitionExcel(exhibition, allSamples) {
     });
   });
 
-  // 抓圖：抓不到的就略過，不讓單一張壞圖擋掉整份匯出
+  // 抓圖：一次 6 張平行下載（單張一張慢慢排會等很久），抓不到的略過，
+  // 不讓單一張壞圖擋掉整份匯出。每抓完一張就回報進度。
   const images = [];
-  for (const p of picks) {
-    try {
-      const res = await fetch(p.url);
-      if (!res.ok) continue;
-      const buf = new Uint8Array(await res.arrayBuffer());
-      const type = res.headers.get('content-type') || '';
-      const ext = type.includes('png') ? 'png' : (type.includes('jpeg') || type.includes('jpg')) ? 'jpeg' : '';
-      if (!ext) continue;
-      images.push({ row: p.row, bytes: buf, ext });
-    } catch { /* 略過這張 */ }
-  }
+  let done = 0;
+  const report = () => onProgress && onProgress({ done, total: picks.length });
+  report();
+  const CONCURRENCY = 6;
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < picks.length) {
+      const p = picks[cursor++];
+      try {
+        const res = await fetch(p.url);
+        if (res.ok) {
+          const buf = new Uint8Array(await res.arrayBuffer());
+          const type = res.headers.get('content-type') || '';
+          const ext = type.includes('png') ? 'png' : (type.includes('jpeg') || type.includes('jpg')) ? 'jpeg' : '';
+          if (ext) images.push({ row: p.row, bytes: buf, ext });
+        }
+      } catch { /* 略過這張 */ }
+      done++;
+      report();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, picks.length) }, worker));
+  images.sort((a, b) => a.row - b.row);
 
   downloadBlobAs(makeXlsxBlob(rows, '展覽樣品清單', [9, 10, 36, 14, 6, 10, 32, 24], images, 64),
     (exhibition.name || '展覽樣品清單') + '.xlsx');
 }
 
-function exportExhibitionPDF(exhibition, allSamples, withImages) {
+function exportExhibitionPDF(exhibition, allSamples, withImages, onProgress) {
   withImages = !!withImages;
   const items = exhibition.items || [];
   const today = new Date().toLocaleDateString('zh-TW');
@@ -15100,7 +15161,10 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
 
   var imgCache = {};
   var pending = urlsToFetch.length;
-  if (pending === 0) { buildAndOpen(imgCache); return; }
+  var fetched = 0;
+  var report = function(){ if (onProgress) onProgress({ done: fetched, total: urlsToFetch.length }); };
+  if (pending === 0) { if (onProgress) onProgress(null); buildAndOpen(imgCache); return; }
+  report();
 
   urlsToFetch.forEach(function(url) {
     fetch(url, { mode: 'cors' })
@@ -15116,8 +15180,8 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
       .catch(function(){ return null; })
       .then(function(b64){
         imgCache[url] = b64;
-        pending--;
-        if (pending === 0) buildAndOpen(imgCache);
+        pending--; fetched++; report();
+        if (pending === 0) { if (onProgress) onProgress(null); buildAndOpen(imgCache); }
       });
   });
 }

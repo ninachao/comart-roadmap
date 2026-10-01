@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.82.0';
-const BUILD_ID = '20261001-1500';
+const APP_VERSION = 'v1.82.1';
+const BUILD_ID = '20261001-1700';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.82.1',
+    date: '2026-10-01',
+    changes: [
+      '🖼 匯出的 Excel 會附上樣品照片（放在 A 欄，預定品／外購品自己貼的圖也會帶）',
+      '🧹 PDF 與 Excel 都移除「存放位置」欄',
+      '🧾 匯出選單精簡為「匯出 PDF」「匯出 Excel」兩項，移除純文字版與圖示',
+    ],
+  },
   {
     version: 'v1.82.0',
     date: '2026-10-01',
@@ -13214,22 +13223,16 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                               {/* hover 下拉選項 */}
                               <div className="absolute right-0 top-full mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg z-10 hidden group-hover/pdf:block min-w-[110px]">
                                 <button
-                                  onClick={() => exportExhibitionPDF(ex, samplesWithRemaining, false)}
+                                  onClick={() => exportExhibitionPDF(ex, samplesWithRemaining, true)}
                                   className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-t-lg"
                                 >
-                                  文字版
-                                </button>
-                                <button
-                                  onClick={() => exportExhibitionPDF(ex, samplesWithRemaining, true)}
-                                  className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 border-t border-slate-100"
-                                >
-                                  含圖片版
+                                  匯出 PDF
                                 </button>
                                 <button
                                   onClick={() => exportExhibitionExcel(ex, samplesWithRemaining)}
-                                  className="w-full text-left px-3 py-2 text-xs text-emerald-700 hover:bg-emerald-50 rounded-b-lg border-t border-slate-100"
+                                  className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-b-lg border-t border-slate-100"
                                 >
-                                  📊 Excel
+                                  匯出 Excel
                                 </button>
                               </div>
                             </div>
@@ -14793,29 +14796,62 @@ const xmlEsc = (v) => String(v == null ? '' : v)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // 由二維陣列產生 .xlsx（第一列為標題）。文字一律用 inlineStr，省掉 sharedStrings。
-function makeXlsxBlob(rows, sheetName = '清單', colWidths = []) {
+// images: [{ row, bytes, ext }] —— 放在 A 欄的圖片（row 由 0 起算，0 是標題列）
+function makeXlsxBlob(rows, sheetName = '清單', colWidths = [], images = [], rowPx = 0) {
   const colLetter = (n) => { let s = ''; n += 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+  const PX = 9525;                       // 1 px = 9525 EMU
+  const imgPx = Math.max(32, rowPx - 8);
+
   const body = rows.map((row, r) => {
     const cells = row.map((v, c) => {
       const ref = colLetter(c) + (r + 1);
       if (typeof v === 'number' && isFinite(v)) return '<c r="' + ref + '"><v>' + v + '</v></c>';
       return '<c r="' + ref + '" t="inlineStr"' + (r === 0 ? ' s="1"' : '') + '><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
     }).join('');
-    return '<row r="' + (r + 1) + '">' + cells + '</row>';
+    const h = (rowPx && r > 0) ? ' ht="' + (rowPx * 0.75) + '" customHeight="1"' : '';
+    return '<row r="' + (r + 1) + '"' + h + '>' + cells + '</row>';
   }).join('');
+
   const cols = colWidths.length
     ? '<cols>' + colWidths.map((w, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>').join('') + '</cols>'
     : '';
-  const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' + cols + '<sheetData>' + body + '</sheetData></worksheet>';
-  const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs></styleSheet>';
-  return makeZipBlobMulti([
-    { name: '[Content_Types].xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
+
+  const hasImg = images.length > 0;
+  const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+    + cols + '<sheetData>' + body + '</sheetData>'
+    + (hasImg ? '<drawing r:id="rIdDr"/>' : '') + '</worksheet>';
+
+  const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+
+  const parts = [
     { name: '_rels/.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
     { name: 'xl/workbook.xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="' + xmlEsc(sheetName).slice(0, 31) + '" sheetId="1" r:id="rId1"/></sheets></workbook>' },
     { name: 'xl/_rels/workbook.xml.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
     { name: 'xl/styles.xml', data: styles },
     { name: 'xl/worksheets/sheet1.xml', data: sheet },
-  ]);
+  ];
+
+  let ctExtra = '';
+  if (hasImg) {
+    const anchors = images.map((im, i) => {
+      const off = Math.round((imgPx * 0.12));
+      return '<xdr:oneCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>' + (off * PX) + '</xdr:colOff><xdr:row>' + im.row + '</xdr:row><xdr:rowOff>' + (off * PX) + '</xdr:rowOff></xdr:from>'
+        + '<xdr:ext cx="' + (imgPx * PX) + '" cy="' + (imgPx * PX) + '"/>'
+        + '<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="' + (i + 1) + '" name="圖 ' + (i + 1) + '"/><xdr:cNvPicPr/></xdr:nvPicPr>'
+        + '<xdr:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rIdI' + i + '"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>'
+        + '<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + (imgPx * PX) + '" cy="' + (imgPx * PX) + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>'
+        + '<xdr:clientData/></xdr:oneCellAnchor>';
+    }).join('');
+    parts.push({ name: 'xl/drawings/drawing1.xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' + anchors + '</xdr:wsDr>' });
+    parts.push({ name: 'xl/drawings/_rels/drawing1.xml.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + images.map((im, i) => '<Relationship Id="rIdI' + i + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/img' + i + '.' + im.ext + '"/>').join('') + '</Relationships>' });
+    parts.push({ name: 'xl/worksheets/_rels/sheet1.xml.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdDr" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>' });
+    images.forEach((im, i) => parts.push({ name: 'xl/media/img' + i + '.' + im.ext, data: im.bytes }));
+    ctExtra = '<Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="jpg" ContentType="image/jpeg"/><Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>';
+  }
+
+  parts.unshift({ name: '[Content_Types].xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>' + ctExtra + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' });
+
+  return makeZipBlobMulti(parts);
 }
 
 function downloadBlobAs(blob, filename) {
@@ -14826,39 +14862,56 @@ function downloadBlobAs(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-// 展覽樣品清單 → Excel。欄位與 PDF 一致、依櫃位排序，方便現場點收與轉給同事
-function exportExhibitionExcel(exhibition, allSamples) {
+// 展覽樣品清單 → Excel。依櫃位排序，並把樣品照片一起放進 A 欄
+async function exportExhibitionExcel(exhibition, allSamples) {
   const items = exhibition.items || [];
   const zones = (exhibition.zones || []).filter(z => z.kind !== 'poster');
   const groups = zones.map(z => ({ name: z.name || '未命名櫃位', list: items.filter(it => (it.zoneId || '') === z.id) }));
   const noZone = items.filter(it => !it.zoneId || !zones.some(z => z.id === it.zoneId));
   if (noZone.length) groups.push({ name: '未指派櫃位', list: noZone });
 
-  const rows = [['櫃位', '類別', '名稱', '料號', '數量', '存放位置', '材質', '樣品備註', '本場備註']];
+  const rows = [['圖片', '櫃位', '類別', '名稱', '料號', '數量', '材質', '樣品備註', '本場備註']];
+  const picks = [];   // { row, url }
+  const push = (r, url) => { rows.push(r); if (url) picks.push({ row: rows.length - 1, url }); };
+
   groups.filter(g => g.list.length).forEach(g => {
     g.list.forEach(it => {
       if (it.type === 'bundle') {
-        rows.push([g.name, '組合品', it.name || '未命名組合品', '', '', '', '', '', it.note || '']);
+        push(['', g.name, '組合品', it.name || '未命名組合品', '', '', '', '', it.note || '']);
         (it.bundleItems || []).forEach(bi => {
-          const s = allSamples.find(x => x.id === bi.sampleId);
-          if (!s) return;
-          rows.push([g.name, '　└ 成員', s._displayName || s.name, s.sampleNo || s._displayCode || '',
-            Number(bi.qty) || 1, s.location || '', s.material || '', s.notes || '', '']);
+          const s2 = allSamples.find(x => x.id === bi.sampleId);
+          if (!s2) return;
+          push(['', g.name, '　└ 成員', s2._displayName || s2.name, s2.sampleNo || s2._displayCode || '',
+            Number(bi.qty) || 1, s2.material || '', s2.notes || '', ''], (s2.images || [])[0]?.url);
         });
       } else if (it.type === 'planned') {
         const kd = extraKindOf(it);
-        rows.push([g.name, kd.label, it.name || '未命名', '', Number(it.qty) || 1, '', '',
-          it.packStatus || kd.defaultStatus, it.note || '']);
+        push(['', g.name, kd.label, it.name || '未命名', '', Number(it.qty) || 1, '',
+          it.packStatus || kd.defaultStatus, it.note || ''], (it.images || [])[0]?.url);
       } else {
-        const s = allSamples.find(x => x.id === it.sampleId);
-        if (!s) return;
-        rows.push([g.name, s.type || '', s._displayName || s.name, s.sampleNo || s._displayCode || '',
-          Number(it.qty) || 1, s.location || '', s.material || '', s.notes || '', it.note || '']);
+        const s2 = allSamples.find(x => x.id === it.sampleId);
+        if (!s2) return;
+        push(['', g.name, s2.type || '', s2._displayName || s2.name, s2.sampleNo || s2._displayCode || '',
+          Number(it.qty) || 1, s2.material || '', s2.notes || '', it.note || ''], (s2.images || [])[0]?.url);
       }
     });
   });
 
-  downloadBlobAs(makeXlsxBlob(rows, '展覽樣品清單', [16, 10, 36, 14, 6, 16, 10, 32, 24]),
+  // 抓圖：抓不到的就略過，不讓單一張壞圖擋掉整份匯出
+  const images = [];
+  for (const p of picks) {
+    try {
+      const res = await fetch(p.url);
+      if (!res.ok) continue;
+      const buf = new Uint8Array(await res.arrayBuffer());
+      const type = res.headers.get('content-type') || '';
+      const ext = type.includes('png') ? 'png' : (type.includes('jpeg') || type.includes('jpg')) ? 'jpeg' : '';
+      if (!ext) continue;
+      images.push({ row: p.row, bytes: buf, ext });
+    } catch { /* 略過這張 */ }
+  }
+
+  downloadBlobAs(makeXlsxBlob(rows, '展覽樣品清單', [9, 16, 10, 36, 14, 6, 10, 32, 24], images, 64),
     (exhibition.name || '展覽樣品清單') + '.xlsx');
 }
 
@@ -14894,7 +14947,7 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
     groups = groups.filter(function(g){ return g.list.length; });
     if (!groups.length) groups = [{ name: '', list: items }];
 
-    var COLS = 6;
+    var COLS = 5;
     var rows = '';
     groups.forEach(function(g) {
       if (g.name) {
@@ -14925,7 +14978,6 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
             rows += '<td>' + (sb.sampleNo || sb._displayCode || '—') + '</td>';
             rows += '<td style="font-size:11px;color:#64748b;">' + sb.type + '</td>';
             rows += '<td style="font-weight:600;text-align:center;">× ' + (bi.qty || 1) + '</td>';
-            rows += '<td style="font-size:11px;color:#64748b;">' + (sb.location || '—') + '</td>';
             rows += '<td style="font-size:11px;color:#64748b;">' + (sb.notes || '') + '</td></tr>';
           });
         } else if (it.type === 'planned') {
@@ -14937,7 +14989,6 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
           rows += '<td>—</td>';
           rows += '<td style="font-size:11px;color:#64748b;">' + (it.kind === 'outsourced' ? '外購' : '未入庫') + '</td>';
           rows += '<td style="font-weight:600;text-align:center;">× ' + (it.qty || 1) + '</td>';
-          rows += '<td style="font-size:11px;color:#64748b;">—</td>';
           rows += '<td style="font-size:11px;color:#92400e;">' + (it.note || '') + '</td></tr>';
         } else {
           var sm = allSamples.find(function(x){ return x.id === it.sampleId; });
@@ -14951,7 +15002,6 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
           rows += '<td>' + (sm.sampleNo || sm._displayCode || '—') + '</td>';
           rows += '<td style="font-size:11px;color:#64748b;">' + sm.type + '</td>';
           rows += '<td style="font-weight:600;text-align:center;">× ' + (it.qty || 1) + '</td>';
-          rows += '<td style="font-size:11px;color:#64748b;">' + (sm.location || '—') + '</td>';
           rows += '<td style="font-size:11px;color:#64748b;">' + memo + '</td></tr>';
         }
       });
@@ -14990,9 +15040,9 @@ function exportExhibitionPDF(exhibition, allSamples, withImages) {
       + '<div class="stat"><div class="stat-num">' + groups.length + '</div><div class="stat-label">櫃位數</div></div>'
       + '</div>'
       + '<table><thead><tr>'
-      + '<th>名稱</th><th>料號</th><th>類型</th><th>數量</th><th>存放位置</th><th>備註</th>'
+      + '<th>名稱</th><th>料號</th><th>類型</th><th>數量</th><th>備註</th>'
       + '</tr></thead><tbody>'
-      + (rows || '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:24px">尚未加入樣品</td></tr>')
+      + (rows || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px">尚未加入樣品</td></tr>')
       + '</tbody></table>'
       + '<div class="footer">COMART Product Dev · ' + today + '</div>'
       + '<script>window.onload = function() { window.print(); }</' + 'script>'

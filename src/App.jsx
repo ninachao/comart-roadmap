@@ -49,10 +49,19 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.83.1';
-const BUILD_ID = '20261001-2030';
+const APP_VERSION = 'v1.83.2';
+const BUILD_ID = '20261001-2130';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.83.2',
+    date: '2026-10-01',
+    changes: [
+      '🔎 已加入展覽的樣品不再從挑選清單消失：改為變灰並標示「已在『某某櫃』」，搜尋得到也看得到它被放在哪一櫃',
+      '　· 原本是直接隱藏，會讓人誤以為樣品庫根本沒有這一項',
+      '　· 組合品的成員也會標示（顯示為「某某櫃（組合品）」）',
+    ],
+  },
   {
     version: 'v1.83.1',
     date: '2026-10-01',
@@ -14713,16 +14722,24 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
   // 庫存 0 的預設不能選。但剛匯入、還沒填數量的樣品也是 0，所以留一個開關讓你自己決定
   const [allowEmpty, setAllowEmpty] = useState(false);
 
-  // 已在展覽裡的樣品 id
-  const alreadyIn = new Set((exhibition?.items || []).map(it => it.sampleId));
+  // 已在展覽裡的樣品 → 記下它在哪一櫃。
+  // 不直接隱藏：搜尋不到會讓人以為樣品庫沒有這一項，實際上只是已經加過了。
+  const placedIn = useMemo(() => {
+    const m = new Map();
+    (exhibition?.items || []).forEach(it => {
+      const z = (exhibition?.zones || []).find(x => x.id === it.zoneId);
+      const where = z ? z.name : '未指派櫃位';
+      if (it.type === 'bundle') {
+        (it.bundleItems || []).forEach(bi => { if (bi.sampleId) m.set(bi.sampleId, `${where}（組合品）`); });
+      } else if (it.sampleId) m.set(it.sampleId, where);
+    });
+    return m;
+  }, [exhibition]);
 
-  const filtered = samples.filter(s => {
-    if (alreadyIn.has(s.id)) return false; // 已加入的不顯示
-    if (!search) return true;
-    return sampleMatchesKeyword(s, search);
-  });
+  const filtered = samples.filter(s => sampleMatchesKeyword(s, search));
 
   const toggle = (s) => {
+    if (placedIn.has(s.id)) return;
     if ((s._remaining || 0) <= 0 && !allowEmpty) return;
     setPicked(prev => {
       const next = new Map(prev);
@@ -14770,12 +14787,14 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
                 const mainImage = (s.images || [])[0];
                 const isSel = picked.has(s.id);
                 const noStock = (s._remaining || 0) <= 0;
-                const blocked = noStock && !allowEmpty;
+                const where = placedIn.get(s.id);
+                const blocked = !!where || (noStock && !allowEmpty);
                 return (
                   <div
                     key={s.id}
                     onClick={() => toggle(s)}
-                    title={blocked ? '這項樣品目前剩 0，先到樣品庫填數量，或勾選下方「允許選擇庫存 0 的樣品」' : ''}
+                    title={where ? `已經在這場展覽的「${where}」裡了`
+                      : blocked ? '這項樣品目前剩 0，先到樣品庫填數量，或勾選下方「允許選擇庫存 0 的樣品」' : ''}
                     className={`flex gap-2 items-center p-2 rounded-lg border transition ${
                       blocked ? 'bg-slate-100 border-slate-200 opacity-60 cursor-not-allowed'
                         : isSel ? 'bg-amber-50 border-amber-300 cursor-pointer'
@@ -14788,7 +14807,10 @@ function AddSamplesToExhibitionModal({ exhibition, samples, onConfirm, onClose, 
                     </div>
                     <SampleIdentity s={s}
                       stockClass={noStock ? 'text-rose-500 font-medium' : ''}
-                      extraBadge={noStock ? <span className="text-[9px] px-1 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200 flex-shrink-0">庫存 0</span> : null} />
+                      extraBadge={where
+                        ? <span className="text-[9px] px-1 py-0.5 rounded bg-violet-100 text-violet-700 border border-violet-200 flex-shrink-0">已在「{where}」</span>
+                        : noStock ? <span className="text-[9px] px-1 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200 flex-shrink-0">庫存 0</span>
+                          : null} />
                     {/* 選了才出現數量框，避免整份清單都是輸入框 */}
                     {isSel && (
                       <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>

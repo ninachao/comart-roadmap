@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Search, Plus, X, Edit2, Trash2, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Image as ImageIcon, Calendar, Tag, AlertCircle, Filter, MessageSquare, Info, LogOut, Lock, Eye, EyeOff, FileText, Loader, Check, RotateCcw, Ban } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
-import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
+import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 
 // === Firebase 設定 ===
 // 主 project：負責資料庫（Firestore）
@@ -49,10 +49,18 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.83.2';
-const BUILD_ID = '20261001-2130';
+const APP_VERSION = 'v1.84.0';
+const BUILD_ID = '20261005-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.84.0',
+    date: '2026-10-05',
+    changes: [
+      '🐛 修正破圖的根本原因：刪除產品圖或附件時，原本會把雲端上的檔案一起刪掉。但同一個檔案常被多處共用（產品圖／文件中心／樣品），一刪就讓別處變成破圖。現在只移除這裡的參照，檔案保留',
+      '🖼 圖片載入失敗時不再把長檔名攤在畫面上，改為淡紅色的遺失圖示，滑過去才顯示是哪個檔案',
+    ],
+  },
   {
     version: 'v1.83.2',
     date: '2026-10-01',
@@ -6867,12 +6875,12 @@ function StorageImage({ src, path, alt, className, onClick, style }) {
     // 載入失敗的 fallback：顯示佔位符而不是壞圖
     return (
       <div
-        className={`${className} bg-slate-50 flex items-center justify-center`}
+        className={`${className} bg-rose-50/60 flex items-center justify-center`}
         style={style}
         onClick={onClick}
-        title={`圖片無法載入：${alt || path}`}
+        title={`圖片已遺失（檔案不在雲端）：${alt || path}`}
       >
-        <ImageIcon className="w-1/3 h-1/3 text-slate-300" />
+        <ImageIcon className="w-1/3 h-1/3 text-rose-200" />
       </div>
     );
   }
@@ -6880,7 +6888,8 @@ function StorageImage({ src, path, alt, className, onClick, style }) {
   return (
     <img
       src={currentSrc}
-      alt={alt}
+      alt=""                        /* 不放 alt 文字：載入失敗的空檔會把長檔名攤在畫面上 */
+      title={alt || ''}
       className={className}
       onClick={onClick}
       onError={handleError}
@@ -7009,11 +7018,9 @@ function ProductImagesSection({ images, onChange, projectId, projectName }) {
     onChange(newImgs);
   };
 
+  // 只移除這裡的參照，不刪 Storage 上的檔案。
+  // 同一個檔案常被多處共用（產品圖 ↔ 文件中心 ↔ 樣品），刪掉會讓別處變成破圖。
   const handleRemove = async (idx) => {
-    const img = images[idx];
-    if (img.path) {
-      await deleteFileFromStorage(img.path);
-    }
     onChange(images.filter((_, i) => i !== idx));
     setPreviewIdx(null);
   };
@@ -7541,14 +7548,7 @@ async function uploadFileToStorage(inputFile, onProgress) {
   });
 }
 
-async function deleteFileFromStorage(path) {
-  if (!path) return;
-  try {
-    await deleteObject(storageRef(storage, path));
-  } catch (e) {
-    console.warn('刪除 Storage 檔案失敗:', e.message);
-  }
-}
+
 
 // ===== 大檔自動壓縮成 ZIP =====
 // STP／STEP／IGS 這類 CAD 交換檔是純文字，壓縮率通常有 85～90%，
@@ -7927,11 +7927,8 @@ function AttachmentList({ attachments, onChange, readOnly, showBomStatus = false
     alert('無法處理拖入的內容。如果是從 SharePoint 網頁拖檔案，請改用 Chrome 的「下載」後再拖；或點「貼連結」貼上網址。');
   };
 
+  // 同上：只移除參照，不動 Storage 檔案
   const handleDelete = async (idx) => {
-    const item = (attachments || [])[idx];
-    if (item?.kind === 'upload' && item.path) {
-      await deleteFileFromStorage(item.path);
-    }
     onChange((attachments || []).filter((_, i) => i !== idx));
   };
 

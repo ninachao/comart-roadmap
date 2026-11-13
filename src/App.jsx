@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.85.0';
-const BUILD_ID = '20261113-1000';
+const APP_VERSION = 'v1.85.1';
+const BUILD_ID = '20261113-1200';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.85.1',
+    date: '2026-11-13',
+    changes: [
+      '🧩 結案盤點可以分很多次做：按「先存這些，之後再繼續」就把這次收到的入庫，下次打開清單只剩還沒回來的',
+      '　· 展覽卡片顯示「盤點中 · 已收回 N · 還差 M · 上次日期」，按鈕變成「繼續盤點」',
+      '　· 盤點開始後自動停止庫存連動，避免剛收回的又被扣出去',
+      '　· 全部收完、或確定剩下的不會回來時，再按「剩下的都不會回來了 →」指定去向並結案',
+    ],
+  },
   {
     version: 'v1.85.0',
     date: '2026-11-13',
@@ -12527,7 +12537,8 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   // 加了就扣、刪了就還、改數量就跟著改；已經歸還或標記不歸還的紀錄一律不碰，
   // 那是人為決定。展覽結案（stockClosed）之後也不再自動動作。
   const reconcileExhibitionStock = async (ex) => {
-    if (!ex || !canEdit || ex.stockClosed) return;
+    // 一旦開始盤點或已結案，就不再自動對帳 —— 否則剛收回入庫的，下次存檔又會被扣出去
+    if (!ex || !canEdit || ex.stockClosed || ex.countingStarted) return;
     const need = exhibitionDemand(ex);
     const mine = withdrawals.filter(w => w.fromExhibitionId === ex.id && !w.returned && !w.noReturn);
     const base = Date.now();
@@ -12596,6 +12607,47 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     }
   };
 
+  // 分批收回：只處理「這次實際收到的」，不結案。
+  // 展後東西是一箱一箱陸續回來的，沒辦法一次點完，所以要能存檔續做。
+  const handleExhibitionPartialReturn = async (ex, { rows, putLocation }) => {
+    const now = new Date().toISOString().split('T')[0];
+    const base = Date.now();
+    let n = 0;
+    for (const { w, backQty } of rows) {
+      if (!backQty) continue;
+      const took = Number(w.quantity || 0);
+      const id = `w${base + n++}`;
+      await setDoc(doc(db, WITHDRAWALS_COL, id), {
+        ...Object.fromEntries(Object.entries(w).filter(([k, v]) => v !== undefined && v !== null && !k.startsWith('_'))),
+        id, quantity: Math.min(backQty, took), returned: true, noReturn: false, returnedAt: Date.now(),
+        purpose: `${w.purpose || ''}｜展後收回 ${now}`,
+      });
+      const left = took - backQty;
+      if (left <= 0) {
+        await deleteDoc(doc(db, WITHDRAWALS_COL, w.id));
+      } else {
+        const updated = { ...w, quantity: left };
+        const cleaned = {};
+        Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && !k.startsWith('_')) cleaned[k] = updated[k]; });
+        await setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
+      }
+      if (putLocation) {
+        const smp = samples.find(x => x.id === w.sampleId);
+        if (smp && smp.location !== putLocation) {
+          const up = { ...smp, location: putLocation };
+          const c2 = {};
+          Object.keys(up).forEach(k => { if (up[k] !== undefined && !k.startsWith('_')) c2[k] = up[k]; });
+          await setDoc(doc(db, SAMPLES_COL, smp.id), c2);
+        }
+      }
+    }
+    const cleanedEx = {};
+    Object.keys(ex).forEach(k => { if (ex[k] !== undefined && k !== '_docId') cleanedEx[k] = ex[k]; });
+    cleanedEx.countingStarted = true;             // 停止自動對帳
+    cleanedEx.countingUpdatedAt = now;
+    await setDoc(doc(db, EXHIBITIONS_COL, ex.id), cleanedEx);
+  };
+
   // 展覽結案盤點：以「實際收回的數量」為準，其餘標記去向
   const handleExhibitionClose = async (ex, { rows, putLocation }) => {
     const now = new Date().toISOString().split('T')[0];
@@ -12650,6 +12702,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     const cleanedEx = {};
     Object.keys(ex).forEach(k => { if (ex[k] !== undefined && k !== '_docId') cleanedEx[k] = ex[k]; });
     cleanedEx.stockClosed = true;
+    cleanedEx.countingStarted = true;
     await setDoc(doc(db, EXHIBITIONS_COL, ex.id), cleanedEx);
   };
 
@@ -13276,6 +13329,17 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   已結案 · 不再連動庫存
                                 </span>
                               );
+                              if (ex.countingStarted) {
+                                const backQty = withdrawals.filter(w => w.fromExhibitionId === ex.id && w.returned)
+                                  .reduce((n, w) => n + Number(w.quantity || 0), 0);
+                                const leftQty = exhibitionWithdrawals(ex).reduce((n, w) => n + Number(w.quantity || 0), 0);
+                                return (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded border bg-emerald-50 text-emerald-700 border-emerald-200">
+                                    盤點中 · 已收回 {backQty} · 還差 {leftQty}
+                                    {ex.countingUpdatedAt ? ` · ${ex.countingUpdatedAt}` : ''}
+                                  </span>
+                                );
+                              }
                               const pend = exhibitionPending(ex);
                               const out = exhibitionWithdrawals(ex);
                               if (pend.size > 0) return (
@@ -13304,7 +13368,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                   onClick={() => setClosingEx(ex)}
                                   title="展覽結束，清點實際收回了哪些，其餘標記去向"
                                   className="text-[11px] px-2 py-1 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 whitespace-nowrap">
-                                  📦 結案盤點
+                                  📦 {ex.countingStarted ? '繼續盤點' : '結案盤點'}
                                 </button>
                               ) : exhibitionPending(ex).size > 0 ? (
                                 <button
@@ -14583,6 +14647,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
             withdrawals={withdrawals}
             locationOptions={locationOptions}
             onApply={(payload) => handleExhibitionClose(closingEx, payload)}
+            onPartial={(payload) => handleExhibitionPartialReturn(closingEx, payload)}
             onClose={() => setClosingEx(null)}
           />
         )}
@@ -15323,7 +15388,7 @@ const WHEREABOUTS = [
 ];
 const whereaboutsOf = (k) => WHEREABOUTS.find(w => w.key === k) || WHEREABOUTS[0];
 
-function ExhibitionCloseModal({ exhibition, samples, withdrawals, locationOptions = [], onApply, onClose }) {
+function ExhibitionCloseModal({ exhibition, samples, withdrawals, locationOptions = [], onApply, onPartial, onClose }) {
   const [step, setStep] = useState(1);
   const [search, setSearch] = useState('');
   const [back, setBack] = useState(() => new Map());      // withdrawalId → 回台數量
@@ -15346,6 +15411,10 @@ function ExhibitionCloseModal({ exhibition, samples, withdrawals, locationOption
   }, [list, search]);
 
   const takenTotal = list.reduce((n, { w }) => n + Number(w.quantity || 0), 0);
+  // 之前幾次已經收回的數量（來自已標記歸還的紀錄）
+  const collectedBefore = withdrawals
+    .filter(w => w.fromExhibitionId === exhibition.id && w.returned)
+    .reduce((n, w) => n + Number(w.quantity || 0), 0);
   const backTotal = [...back.values()].reduce((a, b) => a + b, 0);
   const leftovers = list.filter(({ w }) => (back.get(w.id) || 0) < Number(w.quantity || 0));
 
@@ -15381,7 +15450,7 @@ function ExhibitionCloseModal({ exhibition, samples, withdrawals, locationOption
             </h3>
             <p className="text-[11px] text-slate-400 mt-0.5">
               {step === 1
-                ? '只要登記「手上實際收到的數量」，沒登記的系統會自動算成沒回台灣。'
+                ? '登記「這次實際收到的數量」就好。可以分很多次做 —— 存檔後下次打開，清單只會剩還沒回來的。'
                 : '這些沒有回到台灣，選一個去向。在越南／中國仍算在外面，之後運回來再歸還即可。'}
             </p>
           </div>
@@ -15444,13 +15513,29 @@ function ExhibitionCloseModal({ exhibition, samples, withdrawals, locationOption
 
             <div className="px-4 py-3 border-t border-slate-100 flex items-center justify-between flex-shrink-0">
               <span className="text-xs text-slate-500">
-                已登記收回 <b className="text-emerald-700">{backTotal}</b> / 帶去 {takenTotal} 個
+                {collectedBefore > 0 && <span className="text-slate-400">先前已收回 {collectedBefore} 個 · </span>}
+                這次登記 <b className="text-emerald-700">{backTotal}</b> / 還在外面 {takenTotal} 個
                 {leftovers.length > 0 && <span className="text-slate-400"> · 還有 {leftovers.length} 項沒回台灣</span>}
               </span>
-              <button onClick={() => setStep(2)}
-                className="px-4 py-1.5 text-xs text-white bg-slate-900 rounded-lg hover:bg-slate-800">
-                下一步
-              </button>
+              <div className="flex items-center gap-2">
+                {/* 分次盤點：今天收到的先入庫，下次打開清單就只剩還沒回來的 */}
+                <button
+                  disabled={saving || backTotal === 0}
+                  onClick={async () => {
+                    setSaving(true);
+                    try {
+                      await onPartial({ putLocation, rows: list.map(({ w }) => ({ w, backQty: back.get(w.id) || 0 })) });
+                      onClose();
+                    } catch (e) { alert(`儲存失敗：${e.message}`); setSaving(false); }
+                  }}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40">
+                  {saving ? '儲存中…' : '先存這些，之後再繼續'}
+                </button>
+                <button onClick={() => setStep(2)}
+                  className="px-4 py-1.5 text-xs text-white bg-slate-900 rounded-lg hover:bg-slate-800">
+                  剩下的都不會回來了 →
+                </button>
+              </div>
             </div>
           </>
         ) : (

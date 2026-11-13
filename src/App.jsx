@@ -49,10 +49,20 @@ const USERS = {
   'sales': { password: 'sales2026', role: 'sales', name: '業務' },
 };
 
-const APP_VERSION = 'v1.84.0';
-const BUILD_ID = '20261005-1000';
+const APP_VERSION = 'v1.85.0';
+const BUILD_ID = '20261113-1000';
 
 const VERSION_HISTORY = [
+  {
+    version: 'v1.85.0',
+    date: '2026-11-13',
+    changes: [
+      '📦 展覽新增「結案盤點」取代原本的「全部歸還」：不必逐項回答帶回來沒有，只要登記手上實際收到的數量，其餘由系統算出來',
+      '🧭 沒回台灣的可指定去向：在越南／在中國／不確定（仍算在外，之後運回再歸還）、送客戶／損壞／遺失（永久扣除）',
+      '　· 去向可整批套用再個別微調；收回來的可順便一次指定放回哪一櫃',
+      '　· 領用紀錄會顯示去向徽章，之後查「東西到底在哪」一目了然',
+    ],
+  },
   {
     version: 'v1.84.0',
     date: '2026-10-05',
@@ -12399,6 +12409,7 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
   const [zoomImg, setZoomImg] = useState(null);                        // 放大檢視圖片：{ media, name }
   const [showRequestPaste, setShowRequestPaste] = useState(false);     // 貼上請購單批次建立樣品
   const [exportJob, setExportJob] = useState(null);                    // 匯出進度：{ label, done, total }
+  const [closingEx, setClosingEx] = useState(null);                    // 正在結案盤點的展覽
   const [addingBundleToExId, setAddingBundleToExId] = useState(null);   // 正在建組合品的展覽
 
   const locationOptions = useMemo(() => sortLocations([...new Set(samples.map(s => s.location).filter(Boolean))]), [samples]);
@@ -12585,7 +12596,64 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
     }
   };
 
-  // 展覽結束：把這場的領用一次標記歸還
+  // 展覽結案盤點：以「實際收回的數量」為準，其餘標記去向
+  const handleExhibitionClose = async (ex, { rows, putLocation }) => {
+    const now = new Date().toISOString().split('T')[0];
+    const base = Date.now();
+    let n = 0;
+    for (const { w, backQty, where } of rows) {
+      const took = Number(w.quantity || 0);
+      const wb = whereaboutsOf(where);
+      const miss = Math.max(0, took - backQty);
+
+      // 收回來的部分：留一筆已歸還的紀錄，數量才看得出來是收回多少
+      if (backQty > 0) {
+        const id = `w${base + n++}`;
+        await setDoc(doc(db, WITHDRAWALS_COL, id), {
+          ...Object.fromEntries(Object.entries(w).filter(([k, v]) => v !== undefined && v !== null && !k.startsWith('_'))),
+          id, quantity: backQty, returned: true, noReturn: false, returnedAt: Date.now(),
+          purpose: `${w.purpose || ''}｜展後收回 ${now}`,
+        });
+      }
+
+      if (miss === 0) {
+        await deleteDoc(doc(db, WITHDRAWALS_COL, w.id));     // 全數收回，原紀錄由上面那筆取代
+      } else {
+        // 沒回台灣的：在越南／中國／不確定仍算在外；送客戶／損壞／遺失則永久扣除
+        const updated = {
+          ...w,
+          quantity: miss,
+          whereabouts: wb.key,
+          returned: false,
+          noReturn: wb.kind === 'gone',
+          noReturnReason: wb.kind === 'gone' ? `${wb.label}（展後 ${now}）` : '',
+          purpose: `${w.purpose || ''}｜展後${wb.label}`,
+        };
+        const cleaned = {};
+        Object.keys(updated).forEach(k => { if (updated[k] !== undefined && updated[k] !== null && !k.startsWith('_')) cleaned[k] = updated[k]; });
+        await setDoc(doc(db, WITHDRAWALS_COL, w.id), cleaned);
+      }
+
+      // 收回來的順便改放置位置
+      if (backQty > 0 && putLocation) {
+        const smp = samples.find(x => x.id === w.sampleId);
+        if (smp && smp.location !== putLocation) {
+          const up = { ...smp, location: putLocation };
+          const c2 = {};
+          Object.keys(up).forEach(k => { if (up[k] !== undefined && !k.startsWith('_')) c2[k] = up[k]; });
+          await setDoc(doc(db, SAMPLES_COL, smp.id), c2);
+        }
+      }
+    }
+
+    // 標記結案：之後再編輯展覽清單也不會再動庫存
+    const cleanedEx = {};
+    Object.keys(ex).forEach(k => { if (ex[k] !== undefined && k !== '_docId') cleanedEx[k] = ex[k]; });
+    cleanedEx.stockClosed = true;
+    await setDoc(doc(db, EXHIBITIONS_COL, ex.id), cleanedEx);
+  };
+
+  // 展覽結束：把這場的領用一次標記歸還（保留給「確定全部都回來了」的簡單情況）
   const handleExhibitionReturn = async (ex) => {
     const list = exhibitionWithdrawals(ex);
     if (!list.length) { alert('這場展覽目前沒有未歸還的領用紀錄'); return; }
@@ -13036,7 +13104,9 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                     ? { label: '已歸還', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
                     : w.noReturn
                       ? { label: w.noReturnReason || '客戶未歸還', cls: 'bg-rose-50 text-rose-700 border-rose-200' }
-                      : { label: '在外', cls: 'bg-amber-50 text-amber-700 border-amber-200' };
+                      : w.whereabouts
+                        ? { label: whereaboutsOf(w.whereabouts).label, cls: whereaboutsOf(w.whereabouts).cls }
+                        : { label: '在外', cls: 'bg-amber-50 text-amber-700 border-amber-200' };
                   return (
                   <div key={w.id} className="group">
                     <div className={`flex items-center gap-3 px-3 h-12 hover:bg-slate-50/70 ${w.returned ? 'opacity-55' : ''}`}>
@@ -13231,10 +13301,10 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
                                 </span>
                               ) : exhibitionWithdrawals(ex).length > 0 ? (
                                 <button
-                                  onClick={() => handleExhibitionReturn(ex)}
-                                  title="展覽結束，把這場的領用全部標記歸還並結案"
+                                  onClick={() => setClosingEx(ex)}
+                                  title="展覽結束，清點實際收回了哪些，其餘標記去向"
                                   className="text-[11px] px-2 py-1 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 whitespace-nowrap">
-                                  ↩ 全部歸還
+                                  📦 結案盤點
                                 </button>
                               ) : exhibitionPending(ex).size > 0 ? (
                                 <button
@@ -14506,6 +14576,17 @@ function SampleLibraryModal({ samples, withdrawals, exhibitions = [], projects, 
           </div>
         )}
 
+        {closingEx && (
+          <ExhibitionCloseModal
+            exhibition={closingEx}
+            samples={samplesWithRemaining}
+            withdrawals={withdrawals}
+            locationOptions={locationOptions}
+            onApply={(payload) => handleExhibitionClose(closingEx, payload)}
+            onClose={() => setClosingEx(null)}
+          />
+        )}
+
         {showRequestPaste && (
           <SampleRequestPasteModal
             projects={projects}
@@ -15227,6 +15308,226 @@ function exportExhibitionPDF(exhibition, allSamples, withImages, onProgress) {
         if (pending === 0) { if (onProgress) onProgress(null); buildAndOpen(imgCache); }
       });
   });
+}
+
+// 展覽結案盤點。
+// 刻意不問「這一項帶回來了嗎」—— 展後東西被分送到越南／中國／台灣，沒有人能逐項回答。
+// 改成：登記「手上實際收到的」，剩下的由系統算出來，再一次指定去向。
+const WHEREABOUTS = [
+  { key: 'unknown',  label: '不確定', hint: '還沒確認在哪，先留著', kind: 'out',    cls: 'bg-slate-100 text-slate-600 border-slate-200' },
+  { key: 'vietnam',  label: '在越南', hint: '留在越南廠／倉',       kind: 'out',    cls: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { key: 'china',    label: '在中國', hint: '留在中國廠／倉',       kind: 'out',    cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  { key: 'customer', label: '送客戶', hint: '已送出，不會回來',     kind: 'gone',   cls: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { key: 'damaged',  label: '損壞',   hint: '壞了，報廢',           kind: 'gone',   cls: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { key: 'lost',     label: '遺失',   hint: '找不到了',             kind: 'gone',   cls: 'bg-rose-50 text-rose-700 border-rose-200' },
+];
+const whereaboutsOf = (k) => WHEREABOUTS.find(w => w.key === k) || WHEREABOUTS[0];
+
+function ExhibitionCloseModal({ exhibition, samples, withdrawals, locationOptions = [], onApply, onClose }) {
+  const [step, setStep] = useState(1);
+  const [search, setSearch] = useState('');
+  const [back, setBack] = useState(() => new Map());      // withdrawalId → 回台數量
+  const [fallback, setFallback] = useState('unknown');    // 未回台的預設去向
+  const [perItem, setPerItem] = useState(() => new Map()); // withdrawalId → 去向（個別覆蓋）
+  const [putLocation, setPutLocation] = useState('');      // 回台的要放回哪一櫃（選填）
+  const [saving, setSaving] = useState(false);
+
+  const list = useMemo(() => withdrawals
+    .filter(w => w.fromExhibitionId === exhibition.id && !w.returned && !w.noReturn)
+    .map(w => ({ w, s: samples.find(x => x.id === w.sampleId) }))
+    .sort((a, b) => (a.s?.location || '').localeCompare(b.s?.location || '') ||
+      String(a.w.sampleName).localeCompare(String(b.w.sampleName))),
+  [withdrawals, samples, exhibition.id]);
+
+  const shown = useMemo(() => {
+    const kw = search.trim();
+    if (!kw) return list;
+    return list.filter(({ w, s }) => (s ? sampleMatchesKeyword(s, kw) : (w.sampleName || '').includes(kw)));
+  }, [list, search]);
+
+  const takenTotal = list.reduce((n, { w }) => n + Number(w.quantity || 0), 0);
+  const backTotal = [...back.values()].reduce((a, b) => a + b, 0);
+  const leftovers = list.filter(({ w }) => (back.get(w.id) || 0) < Number(w.quantity || 0));
+
+  const setQty = (w, v) => setBack(prev => {
+    const next = new Map(prev);
+    const n = Math.max(0, Math.min(Number(w.quantity || 0), Number(v) || 0));
+    if (n === 0) next.delete(w.id); else next.set(w.id, n);
+    return next;
+  });
+
+  const apply = async () => {
+    setSaving(true);
+    try {
+      await onApply({
+        back, fallback, perItem, putLocation,
+        rows: list.map(({ w }) => ({ w, backQty: back.get(w.id) || 0, where: perItem.get(w.id) || fallback })),
+      });
+      onClose();
+    } catch (e) {
+      alert(`結案失敗：${e.message}`);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-anim backdrop-blur-sm fixed inset-0 bg-slate-900/60 z-[70] flex items-start sm:items-center justify-center p-3 overflow-y-auto">
+      <div className="bg-white rounded-xl w-full max-w-3xl my-auto max-h-[92vh] flex flex-col">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-start justify-between flex-shrink-0">
+          <div>
+            <h3 className="text-sm font-medium text-slate-800">
+              展覽結案盤點 · {exhibition.name}
+              <span className="ml-2 text-[11px] font-normal text-slate-400">步驟 {step} / 2</span>
+            </h3>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              {step === 1
+                ? '只要登記「手上實際收到的數量」，沒登記的系統會自動算成沒回台灣。'
+                : '這些沒有回到台灣，選一個去向。在越南／中國仍算在外面，之後運回來再歸還即可。'}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-4 h-4" /></button>
+        </div>
+
+        {step === 1 ? (
+          <>
+            <div className="px-4 pt-3 pb-2 flex items-center gap-2 flex-shrink-0">
+              <input autoFocus value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="搜尋名稱、編碼、料號…（邊點邊打最快）"
+                className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400" />
+              <button onClick={() => setBack(new Map(list.map(({ w }) => [w.id, Number(w.quantity || 0)])))}
+                className="text-[11px] px-2 py-1.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 whitespace-nowrap">
+                全部都回來了
+              </button>
+              <button onClick={() => setBack(new Map())}
+                className="text-[11px] px-2 py-1.5 rounded border border-slate-200 text-slate-400 hover:bg-slate-50 whitespace-nowrap">
+                全部清空
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 pb-2 space-y-1">
+              {shown.length === 0 && <p className="text-xs text-slate-400 text-center py-8">沒有符合的項目</p>}
+              {shown.map(({ w, s }) => {
+                const took = Number(w.quantity || 0);
+                const got = back.get(w.id) || 0;
+                const full = got >= took;
+                return (
+                  <div key={w.id}
+                    className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 ${
+                      got > 0 ? (full ? 'border-emerald-300 bg-emerald-50/50' : 'border-amber-300 bg-amber-50/50') : 'border-slate-200 bg-white'}`}>
+                    <span className="w-9 h-9 rounded border border-slate-100 bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
+                      <SampleMediaThumb media={(s?.images || [])[0]} className="w-full h-full object-contain" />
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-[12px] text-slate-800 truncate">{s?._displayName || w.sampleName || '(樣品已刪除)'}</span>
+                      <span className="block text-[10px] text-slate-400 truncate">
+                        {s && sampleCodeOf(s) ? <span className="font-mono">{sampleCodeOf(s)} · </span> : null}
+                        帶去 {took} 個{s?.notes ? ` · 📝 ${s.notes}` : ''}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-1 flex-shrink-0">
+                      <span className="text-[10px] text-slate-400">收到</span>
+                      <input type="number" min="0" max={took} value={got}
+                        onChange={e => setQty(w, e.target.value)}
+                        className="w-14 px-1 py-1 text-xs border border-slate-200 rounded text-center" />
+                      <span className="text-[10px] text-slate-400">/ {took}</span>
+                      <button onClick={() => setQty(w, full ? 0 : took)}
+                        title={full ? '清掉' : '全部都收到了'}
+                        className={`ml-1 text-[11px] px-1.5 py-1 rounded border ${
+                          full ? 'border-emerald-300 bg-emerald-100 text-emerald-700' : 'border-slate-200 text-slate-400 hover:bg-slate-50'}`}>
+                        ✓
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="px-4 py-3 border-t border-slate-100 flex items-center justify-between flex-shrink-0">
+              <span className="text-xs text-slate-500">
+                已登記收回 <b className="text-emerald-700">{backTotal}</b> / 帶去 {takenTotal} 個
+                {leftovers.length > 0 && <span className="text-slate-400"> · 還有 {leftovers.length} 項沒回台灣</span>}
+              </span>
+              <button onClick={() => setStep(2)}
+                className="px-4 py-1.5 text-xs text-white bg-slate-900 rounded-lg hover:bg-slate-800">
+                下一步
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="px-4 pt-3 pb-2 flex-shrink-0 space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] text-slate-500">沒回台灣的 {leftovers.length} 項，預設去向：</span>
+                {WHEREABOUTS.map(wb => (
+                  <button key={wb.key} onClick={() => { setFallback(wb.key); setPerItem(new Map()); }}
+                    title={wb.hint}
+                    className={`text-[11px] px-2 py-1 rounded border ${
+                      fallback === wb.key ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}>
+                    {wb.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-slate-400">
+                在越南／在中國／不確定 → 仍算「在外面」，庫存不加回，之後運回來再歸還。
+                送客戶／損壞／遺失 → 永久從總數扣掉。
+              </p>
+              {locationOptions.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-slate-500">收回來的放回：</span>
+                  <select value={putLocation} onChange={e => setPutLocation(e.target.value)}
+                    className="text-xs px-2 py-1 border border-slate-200 rounded bg-white">
+                    <option value="">不改位置</option>
+                    {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 pb-2 space-y-1">
+              {leftovers.length === 0 && (
+                <p className="text-xs text-emerald-700 text-center py-8">全部都收回來了，沒有需要標記去向的項目 🎉</p>
+              )}
+              {leftovers.map(({ w, s }) => {
+                const took = Number(w.quantity || 0);
+                const got = back.get(w.id) || 0;
+                const miss = took - got;
+                const cur = perItem.get(w.id) || fallback;
+                return (
+                  <div key={w.id} className="flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5">
+                    <span className="w-8 h-8 rounded border border-slate-100 bg-white overflow-hidden flex items-center justify-center flex-shrink-0">
+                      <SampleMediaThumb media={(s?.images || [])[0]} className="w-full h-full object-contain" />
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-[12px] text-slate-800 truncate">{s?._displayName || w.sampleName}</span>
+                      <span className="block text-[10px] text-slate-400">沒回來 {miss} 個{got > 0 ? `（已收回 ${got}）` : ''}</span>
+                    </span>
+                    <select value={cur}
+                      onChange={e => setPerItem(prev => new Map(prev).set(w.id, e.target.value))}
+                      className={`text-[11px] px-1.5 py-1 border rounded flex-shrink-0 ${whereaboutsOf(cur).cls}`}>
+                      {WHEREABOUTS.map(wb => <option key={wb.key} value={wb.key}>{wb.label}</option>)}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="px-4 py-3 border-t border-slate-100 flex items-center justify-between flex-shrink-0">
+              <button onClick={() => setStep(1)} className="text-xs text-slate-500 hover:underline">← 回上一步</button>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">
+                  收回 <b className="text-emerald-700">{backTotal}</b> 個 · 未回台 <b>{takenTotal - backTotal}</b> 個
+                </span>
+                <button onClick={apply} disabled={saving}
+                  className="px-4 py-1.5 text-xs text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-50">
+                  {saving ? '處理中…' : '完成結案'}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // === 建立組合品 Modal ===
